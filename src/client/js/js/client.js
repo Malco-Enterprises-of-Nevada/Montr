@@ -1,86 +1,13 @@
 // Media Playlist Client Application
 // Socket.IO is loaded via script tag in HTML
-
-// Declare global io function from Socket.IO
-declare const io: any;
-
-import MediaPlaybackEngine, { PlaybackOptions, PlaybackState, MediaType } from './media-playback-engine.js';
-import { PlaylistSynchronizer, PlaylistUpdate, SyncState } from './playlist-synchronizer.js';
-
-// Types (matching server-side types)
-interface Playlist {
-    id: string;
-    name: string;
-    description?: string;
-    items?: PlaylistItem[];
-    created_at: Date;
-    updated_at: Date;
-}
-
-interface PlaylistItem {
-    id: string;
-    playlist_id: string;
-    media_file_id: string;
-    order_index: number;
-    display_duration?: number;
-    media_file?: MediaFile | null;
-}
-
-interface MediaFile {
-    id: string;
-    filename: string;
-    original_name: string;
-    file_type: 'video' | 'image';
-    mime_type: string;
-    file_size: number;
-    duration?: number;
-    thumbnail_path?: string;
-    created_at: Date;
-}
-
-interface ClientState {
-    id: string;
-    currentPlaylist?: Playlist;
-    currentItemIndex: number;
-    playbackState: 'playing' | 'paused' | 'stopped';
-    connectionStatus: 'connected' | 'disconnected' | 'reconnecting' | 'connecting';
-    lastHeartbeat: Date;
-}
-
-// Connection configuration
-interface ConnectionConfig {
-    serverUrl: string;
-    reconnectionAttempts: number;
-    reconnectionDelay: number;
-    heartbeatInterval: number;
-    maxReconnectionDelay: number;
-}
-
+import MediaPlaybackEngine from './media-playback-engine.js';
+import { PlaylistSynchronizer } from './playlist-synchronizer.js';
 class MediaPlaylistClient {
-    private socket: any = null;
-    private clientState: ClientState;
-    private config: ConnectionConfig;
-    private heartbeatTimer: NodeJS.Timeout | null = null;
-    private reconnectionTimer: NodeJS.Timeout | null = null;
-    private reconnectionAttempts = 0;
-    private playbackEngine!: MediaPlaybackEngine;
-    private playlistSynchronizer!: PlaylistSynchronizer;
-
-    // DOM elements
-    private statusText!: HTMLElement;
-    private statusDot!: HTMLElement;
-    private videoPlayer!: HTMLVideoElement;
-    private imagePlayer!: HTMLImageElement;
-    private defaultScreen!: HTMLElement;
-    private loadingMessage!: HTMLElement;
-    private debugInfo!: HTMLElement;
-    private clientIdSpan!: HTMLElement;
-    private currentPlaylistSpan!: HTMLElement;
-    private currentItemSpan!: HTMLElement;
-    private cacheStatusSpan!: HTMLElement;
-    private mediaContainer!: HTMLElement;
-
     constructor() {
+        this.socket = null;
+        this.heartbeatTimer = null;
+        this.reconnectionTimer = null;
+        this.reconnectionAttempts = 0;
         this.config = {
             serverUrl: window.location.origin,
             reconnectionAttempts: 10,
@@ -88,7 +15,6 @@ class MediaPlaylistClient {
             heartbeatInterval: 30000, // 30 seconds
             maxReconnectionDelay: 30000 // 30 seconds max
         };
-
         this.clientState = {
             id: this.generateClientId(),
             currentItemIndex: 0,
@@ -96,64 +22,55 @@ class MediaPlaylistClient {
             connectionStatus: 'disconnected',
             lastHeartbeat: new Date()
         };
-
         this.initializeDOM();
         this.initializePlaylistSynchronizer();
         this.loadCachedPlaylist();
         this.connect();
         this.setupKeyboardShortcuts();
     }
-
-    private initializeDOM(): void {
-        this.statusText = document.getElementById('status-text')!;
-        this.statusDot = document.getElementById('status-dot')!;
-        this.videoPlayer = document.getElementById('video-player') as HTMLVideoElement;
-        this.imagePlayer = document.getElementById('image-player') as HTMLImageElement;
-        this.defaultScreen = document.getElementById('default-screen')!;
-        this.loadingMessage = document.getElementById('loading-message')!;
-        this.debugInfo = document.getElementById('debug-info')!;
-        this.clientIdSpan = document.getElementById('client-id')!;
-        this.currentPlaylistSpan = document.getElementById('current-playlist')!;
-        this.currentItemSpan = document.getElementById('current-item')!;
-        this.cacheStatusSpan = document.getElementById('cache-status')!;
-        this.mediaContainer = document.getElementById('media-container')!;
-
+    initializeDOM() {
+        this.statusText = document.getElementById('status-text');
+        this.statusDot = document.getElementById('status-dot');
+        this.videoPlayer = document.getElementById('video-player');
+        this.imagePlayer = document.getElementById('image-player');
+        this.defaultScreen = document.getElementById('default-screen');
+        this.loadingMessage = document.getElementById('loading-message');
+        this.debugInfo = document.getElementById('debug-info');
+        this.clientIdSpan = document.getElementById('client-id');
+        this.currentPlaylistSpan = document.getElementById('current-playlist');
+        this.currentItemSpan = document.getElementById('current-item');
+        this.cacheStatusSpan = document.getElementById('cache-status');
+        this.mediaContainer = document.getElementById('media-container');
         // Set initial client ID
         this.clientIdSpan.textContent = this.clientState.id;
-
         // Initialize the media playback engine
         this.initializePlaybackEngine();
     }
-
-    private initializePlaylistSynchronizer(): void {
+    initializePlaylistSynchronizer() {
         this.playlistSynchronizer = new PlaylistSynchronizer();
-        
         // Set up event handlers
-        this.playlistSynchronizer.on('onPlaylistUpdated', (playlist: Playlist, source: 'server' | 'cache') => {
+        this.playlistSynchronizer.on('onPlaylistUpdated', (playlist, source) => {
             console.log(`Playlist updated from ${source}:`, playlist.name);
             this.clientState.currentPlaylist = playlist;
             this.updateDebugInfo();
-            
             // Update cache status display
             if (source === 'cache') {
                 this.cacheStatusSpan.textContent = 'Loaded from Cache';
-            } else {
+            }
+            else {
                 this.cacheStatusSpan.textContent = 'Synced';
             }
-            
             // If we're currently playing this playlist, update the playback engine
             if (this.clientState.playbackState === 'playing') {
                 this.playbackEngine.setPlaylist(playlist);
             }
         });
-
-        this.playlistSynchronizer.on('onSyncStateChanged', (state: SyncState) => {
+        this.playlistSynchronizer.on('onSyncStateChanged', (state) => {
             console.log('Sync state changed:', state);
             // Update connection status based on sync state
             this.playlistSynchronizer.setOnlineStatus(this.clientState.connectionStatus === 'connected');
         });
-
-        this.playlistSynchronizer.on('onConflictDetected', (serverPlaylist: Playlist, localPlaylist: Playlist) => {
+        this.playlistSynchronizer.on('onConflictDetected', (serverPlaylist, localPlaylist) => {
             console.warn('Playlist conflict detected:', {
                 server: serverPlaylist.name,
                 local: localPlaylist.name,
@@ -162,15 +79,13 @@ class MediaPlaylistClient {
             });
             // For now, server wins - could be made configurable
         });
-
-        this.playlistSynchronizer.on('onSyncError', (error: Error) => {
+        this.playlistSynchronizer.on('onSyncError', (error) => {
             console.error('Sync error:', error);
             this.cacheStatusSpan.textContent = 'Sync Error';
         });
     }
-
-    private initializePlaybackEngine(): void {
-        const playbackOptions: PlaybackOptions = {
+    initializePlaybackEngine() {
+        const playbackOptions = {
             autoplay: true,
             loop: true,
             muted: true,
@@ -178,36 +93,25 @@ class MediaPlaylistClient {
             transitionDuration: 500,
             preloadNext: true
         };
-
-        this.playbackEngine = new MediaPlaybackEngine(
-            this.videoPlayer,
-            this.imagePlayer,
-            this.mediaContainer,
-            playbackOptions
-        );
-
+        this.playbackEngine = new MediaPlaybackEngine(this.videoPlayer, this.imagePlayer, this.mediaContainer, playbackOptions);
         // Set up event handlers
         this.playbackEngine.onMediaEnded(() => {
             console.log('Media ended from playback engine');
             // The engine handles advancing automatically
         });
-
         this.playbackEngine.onMediaError((error, item) => {
             console.error('Media error from playback engine:', error, item);
             // The engine handles skipping to next item automatically
         });
-
         this.playbackEngine.onPlaybackStateChange((state) => {
             // Update client state to match playback engine state
             this.clientState.playbackState = state.isPlaying ? 'playing' : 'stopped';
             this.clientState.currentItemIndex = state.currentIndex;
             this.updateDebugInfo();
         });
-
         this.playbackEngine.onTransitionStart((fromType, toType) => {
             console.log(`Transitioning from ${fromType} to ${toType}`);
         });
-
         this.playbackEngine.onTransitionComplete((mediaType) => {
             console.log(`Transition to ${mediaType} complete`);
             // Hide default screen when media starts playing
@@ -216,126 +120,101 @@ class MediaPlaylistClient {
             }
         });
     }
-
-    private generateClientId(): string {
+    generateClientId() {
         return 'client_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
     }
-
-    private connect(): void {
+    connect() {
         this.updateConnectionStatus('connecting');
         this.loadingMessage.textContent = 'Connecting to server...';
-
         try {
             this.socket = io(this.config.serverUrl, {
                 transports: ['websocket', 'polling'],
                 timeout: 10000,
                 forceNew: true
             });
-
             this.setupSocketEventHandlers();
-        } catch (error) {
+        }
+        catch (error) {
             console.error('Failed to create socket connection:', error);
             this.scheduleReconnection();
         }
     }
-
-    private setupSocketEventHandlers(): void {
-        if (!this.socket) return;
-
+    setupSocketEventHandlers() {
+        if (!this.socket)
+            return;
         this.socket.on('connect', () => {
             console.log('Connected to server');
             this.updateConnectionStatus('connected');
             this.reconnectionAttempts = 0;
             this.loadingMessage.textContent = 'Connected! Waiting for playlist...';
-            
             // Send client info
-            this.socket!.emit('client-info', {
+            this.socket.emit('client-info', {
                 userAgent: navigator.userAgent
             });
-
             // Request active playlist
-            this.socket!.emit('request-active-playlist');
-            
+            this.socket.emit('request-active-playlist');
             // Start heartbeat
             this.startHeartbeat();
         });
-
-        this.socket.on('disconnect', (reason: any) => {
+        this.socket.on('disconnect', (reason) => {
             console.log('Disconnected from server:', reason);
             this.updateConnectionStatus('disconnected');
             this.loadingMessage.textContent = 'Disconnected from server';
             this.stopHeartbeat();
-            
             // Don't auto-reconnect if disconnected by server
             if (reason !== 'io server disconnect') {
                 this.scheduleReconnection();
             }
         });
-
-        this.socket.on('connect_error', (error: any) => {
+        this.socket.on('connect_error', (error) => {
             console.error('Connection error:', error);
             this.updateConnectionStatus('disconnected');
             this.loadingMessage.textContent = 'Connection failed';
             this.scheduleReconnection();
         });
-
-        this.socket.on('playlist-activated', (playlist: Playlist | null) => {
+        this.socket.on('playlist-activated', (playlist) => {
             console.log('Playlist activated:', playlist);
             this.handlePlaylistActivated(playlist);
         });
-
-        this.socket.on('playlist-updated', (playlist: Playlist) => {
+        this.socket.on('playlist-updated', (playlist) => {
             console.log('Playlist updated:', playlist);
             this.handlePlaylistUpdated(playlist);
         });
-
-        this.socket.on('playlist-delta-update', (update: PlaylistUpdate) => {
+        this.socket.on('playlist-delta-update', (update) => {
             console.log('Playlist delta update received:', update);
             this.handlePlaylistDeltaUpdate(update);
         });
-
         this.socket.on('heartbeat-response', () => {
             this.clientState.lastHeartbeat = new Date();
         });
     }
-
-    private updateConnectionStatus(status: ClientState['connectionStatus']): void {
+    updateConnectionStatus(status) {
         this.clientState.connectionStatus = status;
         this.statusText.textContent = status.charAt(0).toUpperCase() + status.slice(1);
         this.statusDot.className = `status-dot ${status}`;
-        
         // Update synchronizer online status
         this.playlistSynchronizer.setOnlineStatus(status === 'connected');
     }
-
-    private scheduleReconnection(): void {
+    scheduleReconnection() {
         if (this.reconnectionTimer) {
             clearTimeout(this.reconnectionTimer);
         }
-
         if (this.reconnectionAttempts >= this.config.reconnectionAttempts) {
             console.log('Max reconnection attempts reached');
             this.loadingMessage.textContent = 'Connection failed. Using cached playlist if available.';
             this.tryPlayCachedPlaylist();
             return;
         }
-
-        const delay = Math.min(
-            this.config.reconnectionDelay * Math.pow(2, this.reconnectionAttempts),
-            this.config.maxReconnectionDelay
-        );
-
+        const delay = Math.min(this.config.reconnectionDelay * Math.pow(2, this.reconnectionAttempts), this.config.maxReconnectionDelay);
         this.reconnectionAttempts++;
         this.updateConnectionStatus('reconnecting');
         this.loadingMessage.textContent = `Reconnecting... (${this.reconnectionAttempts}/${this.config.reconnectionAttempts})`;
-
         this.reconnectionTimer = setTimeout(() => {
             console.log(`Reconnection attempt ${this.reconnectionAttempts}`);
             this.connect();
         }, delay);
     }
-
-    private startHeartbeat(): void {
+    startHeartbeat() {
         this.stopHeartbeat();
         this.heartbeatTimer = setInterval(() => {
             if (this.socket && this.socket.connected) {
@@ -343,94 +222,82 @@ class MediaPlaylistClient {
             }
         }, this.config.heartbeatInterval);
     }
-
-    private stopHeartbeat(): void {
+    stopHeartbeat() {
         if (this.heartbeatTimer) {
             clearInterval(this.heartbeatTimer);
             this.heartbeatTimer = null;
         }
     }
-
-    private handlePlaylistActivated(playlist: Playlist | null): void {
+    handlePlaylistActivated(playlist) {
         if (playlist) {
             // Use synchronizer to handle playlist caching and updates
             this.playlistSynchronizer.cachePlaylist(playlist);
             this.clientState.currentPlaylist = playlist;
             this.clientState.currentItemIndex = 0;
             this.startPlayback();
-        } else {
+        }
+        else {
             this.clientState.currentPlaylist = undefined;
             this.stopPlayback();
             this.showDefaultScreen();
         }
         this.updateDebugInfo();
     }
-
-    private handlePlaylistUpdated(playlist: Playlist): void {
+    handlePlaylistUpdated(playlist) {
         if (this.clientState.currentPlaylist && this.clientState.currentPlaylist.id === playlist.id) {
             // Create a playlist update object for the synchronizer
-            const update: PlaylistUpdate = {
+            const update = {
                 type: 'full',
                 playlist: playlist,
                 timestamp: new Date(),
                 version: 1 // Version will be calculated by synchronizer
             };
-            
             // Handle the update through the synchronizer
             this.playlistSynchronizer.handlePlaylistUpdate(update);
         }
     }
-
-    private handlePlaylistDeltaUpdate(update: PlaylistUpdate): void {
+    handlePlaylistDeltaUpdate(update) {
         // Handle delta updates through the synchronizer
         this.playlistSynchronizer.handlePlaylistUpdate(update);
     }
-
-    private startPlayback(): void {
+    startPlayback() {
         if (!this.clientState.currentPlaylist || !this.clientState.currentPlaylist.items) {
             this.showDefaultScreen();
             return;
         }
-
         // Use the playback engine to handle playback
         this.playbackEngine.setPlaylist(this.clientState.currentPlaylist);
         this.playbackEngine.play();
         this.clientState.playbackState = 'playing';
     }
-
-    private stopPlayback(): void {
+    stopPlayback() {
         this.playbackEngine.stop();
         this.clientState.playbackState = 'stopped';
         this.showDefaultScreen();
     }
-
-
-
-    private showDefaultScreen(): void {
+    showDefaultScreen() {
         this.defaultScreen.style.display = 'flex';
         this.loadingMessage.textContent = 'Waiting for playlist...';
     }
-
     // Load cached playlist using synchronizer
-    private loadCachedPlaylist(): void {
+    loadCachedPlaylist() {
         // Check if we have any cached playlists
         const cacheInfo = this.playlistSynchronizer.getCacheInfo();
         if (cacheInfo.length > 0) {
             console.log(`Found ${cacheInfo.length} cached playlists`);
             this.cacheStatusSpan.textContent = `${cacheInfo.length} Cached`;
-        } else {
+        }
+        else {
             this.cacheStatusSpan.textContent = 'No Cache';
         }
     }
-
-    private tryPlayCachedPlaylist(): void {
+    tryPlayCachedPlaylist() {
         // Try to find the most recently cached playlist
         const cacheInfo = this.playlistSynchronizer.getCacheInfo();
         if (cacheInfo.length > 0) {
             // Sort by cached date and get the most recent
             const mostRecent = cacheInfo.sort((a, b) => b.cachedAt.getTime() - a.cachedAt.getTime())[0];
             const cachedPlaylist = this.playlistSynchronizer.getCachedPlaylist(mostRecent.playlistId);
-            
             if (cachedPlaylist) {
                 console.log('Using cached playlist for offline playback:', cachedPlaylist.name);
                 this.handlePlaylistActivated(cachedPlaylist);
@@ -438,18 +305,15 @@ class MediaPlaylistClient {
                 return;
             }
         }
-        
         this.loadingMessage.textContent = 'No cached playlist available';
     }
-
-    private updateDebugInfo(): void {
+    updateDebugInfo() {
         const playlist = this.clientState.currentPlaylist;
         this.currentPlaylistSpan.textContent = playlist ? `${playlist.name} (${playlist.items?.length || 0} items)` : 'None';
-        this.currentItemSpan.textContent = playlist && playlist.items ? 
+        this.currentItemSpan.textContent = playlist && playlist.items ?
             `${this.clientState.currentItemIndex + 1}/${playlist.items.length}` : '-';
     }
-
-    private setupKeyboardShortcuts(): void {
+    setupKeyboardShortcuts() {
         document.addEventListener('keydown', (event) => {
             switch (event.key) {
                 case 'F11':
@@ -488,32 +352,31 @@ class MediaPlaylistClient {
                     event.preventDefault();
                     if (this.playbackEngine.isPlaying()) {
                         this.playbackEngine.pause();
-                    } else {
+                    }
+                    else {
                         this.playbackEngine.play();
                     }
                     break;
             }
         });
     }
-
-    private toggleFullscreen(): void {
+    toggleFullscreen() {
         if (!document.fullscreenElement) {
             document.documentElement.requestFullscreen().catch(err => {
                 console.error('Failed to enter fullscreen:', err);
             });
-        } else {
+        }
+        else {
             document.exitFullscreen().catch(err => {
                 console.error('Failed to exit fullscreen:', err);
             });
         }
     }
-
-    private toggleDebugInfo(): void {
+    toggleDebugInfo() {
         const isVisible = this.debugInfo.style.display !== 'none';
         this.debugInfo.style.display = isVisible ? 'none' : 'block';
     }
-
-    private reconnect(): void {
+    reconnect() {
         console.log('Manual reconnection requested');
         this.reconnectionAttempts = 0;
         if (this.socket) {
@@ -523,50 +386,40 @@ class MediaPlaylistClient {
             this.connect();
         }, 1000);
     }
-
     // Public methods for external control
-    public getClientState(): ClientState {
+    getClientState() {
         return { ...this.clientState };
     }
-
-    public getCurrentPlaylist(): Playlist | undefined {
+    getCurrentPlaylist() {
         return this.clientState.currentPlaylist;
     }
-
-    public isConnected(): boolean {
+    isConnected() {
         return this.clientState.connectionStatus === 'connected';
     }
-
-    public shutdown(): void {
+    shutdown() {
         console.log('Shutting down client');
         this.stopHeartbeat();
         this.stopPlayback();
-        
         if (this.reconnectionTimer) {
             clearTimeout(this.reconnectionTimer);
         }
-        
         if (this.socket) {
             this.socket.disconnect();
         }
-        
         // Shutdown the playlist synchronizer
         this.playlistSynchronizer.shutdown();
     }
 }
-
 // Initialize client when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Initializing Media Playlist Client');
     const client = new MediaPlaylistClient();
-    
     // Make client available globally for debugging
-    (window as any).mediaClient = client;
-    
+    window.mediaClient = client;
     // Handle page unload
     window.addEventListener('beforeunload', () => {
         client.shutdown();
     });
 });
-
 export default MediaPlaylistClient;
+//# sourceMappingURL=client.js.map

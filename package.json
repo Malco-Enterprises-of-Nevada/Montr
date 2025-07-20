@@ -4,7 +4,8 @@
   "description": "A Node.js application for managing and playing media playlists",
   "main": "dist/server/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run build:client",
+    "build:client": "npx tsc --project src/client/tsconfig.json",
     "dev": "ts-node-dev --respawn --transpile-only src/server/index.ts",
     "start": "node dist/server/index.js",
     "test": "jest",
@@ -29,9 +30,10 @@
     "express": "^4.18.2",
     "multer": "^1.4.5-lts.1",
     "socket.io": "^4.7.4",
-    "sqlite3": "^5.1.6",
+    "sqlite3": "^5.1.7",
     "ts-node": "^10.9.2",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "winston": "^3.17.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

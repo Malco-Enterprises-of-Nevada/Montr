@@ -6,7 +6,8 @@ import {
   validateStringLength,
   validateNumberRange,
   sanitizeInput,
-  rateLimit
+  rateLimit,
+  clearRateLimitData
 } from '../validationMiddleware';
 
 describe('Validation Middleware', () => {
@@ -308,6 +309,7 @@ describe('Validation Middleware', () => {
   describe('rateLimit', () => {
     beforeEach(() => {
       // Clear the rate limit map before each test
+      clearRateLimitData();
       jest.clearAllMocks();
     });
 

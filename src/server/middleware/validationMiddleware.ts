@@ -219,3 +219,8 @@ export const rateLimit = (maxRequests: number = 100, windowMs: number = 15 * 60 
     next();
   };
 };
+
+// Export function to clear rate limit data (for testing)
+export const clearRateLimitData = () => {
+  requestCounts.clear();
+};

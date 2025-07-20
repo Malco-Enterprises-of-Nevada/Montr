@@ -9,15 +9,25 @@ import {
   validateJsonBody, 
   rateLimit 
 } from './middleware';
+import { requestLogger, createGracefulShutdown } from './middleware/errorMiddleware.js';
 import { initializeDatabase } from './database';
 import { initializeWebSocket } from './websocket';
+import logger, { createComponentLogger } from './utils/logger.js';
+
+const serverLogger = createComponentLogger('server');
 
 const app = express();
 const server = createServer(app);
 const PORT = process.env.PORT || 3000;
 
-// Initialize database
-initializeDatabase().catch(console.error);
+// Track active connections for graceful shutdown
+const connections = new Set<any>();
+
+// Initialize database with error handling
+initializeDatabase().catch((error) => {
+  serverLogger.error('Database initialization failed', { error: error.message, stack: error.stack });
+  process.exit(1);
+});
 
 // Initialize WebSocket server
 const webSocketManager = initializeWebSocket(server);
@@ -36,10 +46,15 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Rate limiting
 app.use(rateLimit(100, 15 * 60 * 1000)); // 100 requests per 15 minutes
 
-// Request logging
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-  next();
+// Enhanced request logging
+app.use(requestLogger);
+
+// Track connections for graceful shutdown
+server.on('connection', (connection) => {
+  connections.add(connection);
+  connection.on('close', () => {
+    connections.delete(connection);
+  });
 });
 
 // Validate JSON content type for API routes
@@ -50,6 +65,14 @@ app.use('/api', apiRoutes);
 
 // Serve static files (for uploaded media)
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+// Serve web management interface
+app.use('/web', express.static(path.join(process.cwd(), 'src/web')));
+
+// Serve web interface at root
+app.get('/', (req, res) => {
+  res.sendFile(path.join(process.cwd(), 'src/web/index.html'));
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -69,28 +92,39 @@ app.use(errorHandler);
 
 // Start server
 server.listen(PORT, () => {
-  console.log(`Media Playlist System Server running on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`API base URL: http://localhost:${PORT}/api`);
+  serverLogger.info('Server started successfully', {
+    port: PORT,
+    environment: process.env.NODE_ENV || 'development',
+    healthCheck: `http://localhost:${PORT}/health`,
+    apiBaseUrl: `http://localhost:${PORT}/api`
+  });
 });
 
-// Graceful shutdown
+// Enhanced graceful shutdown
+const gracefulShutdown = createGracefulShutdown(server, connections);
+
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
+  serverLogger.info('SIGTERM received, initiating graceful shutdown');
   webSocketManager.shutdown();
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
-  });
+  gracefulShutdown('SIGTERM');
 });
 
 process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully');
+  serverLogger.info('SIGINT received, initiating graceful shutdown');
   webSocketManager.shutdown();
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
-  });
+  gracefulShutdown('SIGINT');
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  serverLogger.error('Uncaught Exception', { error: error.message, stack: error.stack });
+  process.exit(1);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  serverLogger.error('Unhandled Promise Rejection', { reason, promise });
+  process.exit(1);
 });
 
 export default app;
