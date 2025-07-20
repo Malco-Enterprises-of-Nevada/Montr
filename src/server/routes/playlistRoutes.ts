@@ -37,6 +37,90 @@ router.get('/', async (req: Request, res: Response, next: NextFunction): Promise
 });
 
 /**
+ * GET /api/playlists/clients - Get connected WebSocket clients
+ */
+router.get('/clients', async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+    try {
+        const wsManager = getWebSocketManager();
+        
+        if (!wsManager) {
+            return res.json({
+                success: true,
+                data: {
+                    clients: [],
+                    count: 0
+                },
+                message: 'WebSocket server not initialized'
+            });
+        }
+        
+        const clients = wsManager.getConnectedClients();
+        
+        res.json({
+            success: true,
+            data: {
+                clients: clients,
+                count: clients.length
+            },
+            message: 'Connected clients retrieved'
+        });
+    } catch (error) {
+        console.error('Error fetching connected clients:', error);
+        res.status(500).json({
+            error: {
+                code: 'FETCH_ERROR',
+                message: 'Failed to fetch connected clients',
+                timestamp: new Date()
+            }
+        });
+    }
+});
+
+/**
+ * GET /api/playlists/active - Get currently active playlist
+ */
+router.get('/active/current', async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+    try {
+        const activePlaylistId = await SystemStateModel.getActivePlaylistId();
+        
+        if (!activePlaylistId) {
+            return res.json({
+                success: true,
+                data: null,
+                message: 'No active playlist'
+            });
+        }
+        
+        const playlist = await PlaylistModel.findById(activePlaylistId, true);
+        
+        if (!playlist) {
+            // Clear invalid active playlist reference
+            await SystemStateModel.clearActivePlaylist();
+            return res.json({
+                success: true,
+                data: null,
+                message: 'No active playlist (cleared invalid reference)'
+            });
+        }
+        
+        res.json({
+            success: true,
+            data: playlist,
+            message: 'Active playlist retrieved'
+        });
+    } catch (error) {
+        console.error('Error fetching active playlist:', error);
+        res.status(500).json({
+            error: {
+                code: 'FETCH_ERROR',
+                message: 'Failed to fetch active playlist',
+                timestamp: new Date()
+            }
+        });
+    }
+});
+
+/**
  * GET /api/playlists/:id - Get playlist by ID
  */
 router.get('/:id', async (req: Request, res: Response, next: NextFunction): Promise<any> => {
@@ -287,83 +371,32 @@ router.post('/:id/activate', async (req: Request, res: Response, next: NextFunct
 });
 
 /**
- * GET /api/playlists/clients - Get connected WebSocket clients
+ * POST /api/playlists/active/clear - Deactivate current playlist
  */
-router.get('/clients', async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+router.post('/active/clear', async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
+        // Clear active playlist
+        await SystemStateModel.clearActivePlaylist();
+        
+        // Notify WebSocket clients about playlist deactivation
         const wsManager = getWebSocketManager();
-        
-        if (!wsManager) {
-            return res.json({
-                success: true,
-                data: {
-                    clients: [],
-                    count: 0
-                },
-                message: 'WebSocket server not initialized'
-            });
+        if (wsManager) {
+            await wsManager.broadcastPlaylistActivated(null);
         }
-        
-        const clients = wsManager.getConnectedClients();
         
         res.json({
             success: true,
             data: {
-                clients: clients,
-                count: clients.length
+                activePlaylistId: null
             },
-            message: 'Connected clients retrieved'
+            message: 'Playlist deactivated successfully'
         });
     } catch (error) {
-        console.error('Error fetching connected clients:', error);
+        console.error('Error deactivating playlist:', error);
         res.status(500).json({
             error: {
-                code: 'FETCH_ERROR',
-                message: 'Failed to fetch connected clients',
-                timestamp: new Date()
-            }
-        });
-    }
-});
-
-/**
- * GET /api/playlists/active - Get currently active playlist
- */
-router.get('/active/current', async (req: Request, res: Response, next: NextFunction): Promise<any> => {
-    try {
-        const activePlaylistId = await SystemStateModel.getActivePlaylistId();
-        
-        if (!activePlaylistId) {
-            return res.json({
-                success: true,
-                data: null,
-                message: 'No active playlist'
-            });
-        }
-        
-        const playlist = await PlaylistModel.findById(activePlaylistId, true);
-        
-        if (!playlist) {
-            // Clear invalid active playlist reference
-            await SystemStateModel.clearActivePlaylist();
-            return res.json({
-                success: true,
-                data: null,
-                message: 'No active playlist (cleared invalid reference)'
-            });
-        }
-        
-        res.json({
-            success: true,
-            data: playlist,
-            message: 'Active playlist retrieved'
-        });
-    } catch (error) {
-        console.error('Error fetching active playlist:', error);
-        res.status(500).json({
-            error: {
-                code: 'FETCH_ERROR',
-                message: 'Failed to fetch active playlist',
+                code: 'DEACTIVATION_ERROR',
+                message: 'Failed to deactivate playlist',
                 timestamp: new Date()
             }
         });

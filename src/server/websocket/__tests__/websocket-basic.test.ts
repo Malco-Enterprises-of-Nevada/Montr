@@ -85,19 +85,40 @@ describe('WebSocket Server Basic Tests', () => {
       description: 'Test Description'
     });
     
-    return new Promise<void>((resolve) => {
+    return new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Test timeout'));
+      }, 5000);
+
       clientSocket = Client(`http://localhost:${serverPort}`);
       
-      clientSocket.on('connect', async () => {
-        // Broadcast playlist activation
-        await wsManager.broadcastPlaylistActivated(playlist.id);
-      });
+      let receivedInitialPlaylist = false;
       
       clientSocket.on('playlist-activated', (receivedPlaylist: any) => {
-        expect(receivedPlaylist).toBeTruthy();
-        expect(receivedPlaylist.id).toBe(playlist.id);
-        expect(receivedPlaylist.name).toBe('Test Broadcast Playlist');
-        resolve();
+        if (!receivedInitialPlaylist) {
+          // This is the initial null playlist sent on connection
+          receivedInitialPlaylist = true;
+          // Now trigger the broadcast
+          setTimeout(async () => {
+            try {
+              await wsManager.broadcastPlaylistActivated(playlist.id);
+            } catch (error) {
+              clearTimeout(timeout);
+              reject(error);
+            }
+          }, 100);
+        } else {
+          // This should be our broadcast
+          clearTimeout(timeout);
+          try {
+            expect(receivedPlaylist).toBeTruthy();
+            expect(receivedPlaylist.id).toBe(playlist.id);
+            expect(receivedPlaylist.name).toBe('Test Broadcast Playlist');
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        }
       });
     });
   });

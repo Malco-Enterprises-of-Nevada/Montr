@@ -4,12 +4,48 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Media Playlist Client</title>
+    <link rel="stylesheet" href="css/client.css">
 </head>
 <body>
     <div id="app">
-        <h1>Media Playlist Client</h1>
-        <div id="media-container"></div>
+        <!-- Connection Status Indicator -->
+        <div id="connection-status" class="status-indicator">
+            <span id="status-text">Connecting...</span>
+            <div id="status-dot" class="status-dot connecting"></div>
+        </div>
+
+        <!-- Main Media Container -->
+        <div id="media-container" class="media-container">
+            <!-- Video Player -->
+            <video id="video-player" class="media-player" style="display: none;" autoplay muted>
+                Your browser does not support the video tag.
+            </video>
+            
+            <!-- Image Display -->
+            <img id="image-player" class="media-player" style="display: none;" alt="Playlist Image">
+            
+            <!-- Default/Loading Screen -->
+            <div id="default-screen" class="default-screen">
+                <div class="loading-content">
+                    <h1>Media Playlist Client</h1>
+                    <div id="loading-message">Waiting for playlist...</div>
+                    <div class="loading-spinner"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Debug Info (hidden by default) -->
+        <div id="debug-info" class="debug-info" style="display: none;">
+            <div>Client ID: <span id="client-id">-</span></div>
+            <div>Playlist: <span id="current-playlist">None</span></div>
+            <div>Item: <span id="current-item">-</span></div>
+            <div>Cache Status: <span id="cache-status">-</span></div>
+        </div>
     </div>
+
+    <!-- Socket.IO Client Library -->
+    <script src="/socket.io/socket.io.js"></script>
+    <!-- Client Application -->
     <script src="js/client.js"></script>
 </body>
 </html>

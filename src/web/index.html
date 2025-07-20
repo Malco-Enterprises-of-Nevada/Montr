@@ -4,19 +4,188 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Media Playlist Management</title>
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="/web/css/styles.css">
 </head>
 <body>
     <div id="app">
-        <header>
-            <h1>Media Playlist Management</h1>
+        <header class="header">
+            <div class="header-content">
+                <h1>Media Playlist Management</h1>
+                <div class="connection-status">
+                    <span id="connection-indicator" class="status-indicator disconnected"></span>
+                    <span id="connection-text">Connecting...</span>
+                </div>
+            </div>
         </header>
-        <main>
-            <div id="playlist-management"></div>
-            <div id="media-upload"></div>
-            <div id="control-panel"></div>
+        
+        <nav class="navigation">
+            <ul class="nav-list">
+                <li class="nav-item">
+                    <button id="nav-playlists" class="nav-button active" data-section="playlists">
+                        <span class="nav-icon">📋</span>
+                        Playlists
+                    </button>
+                </li>
+                <li class="nav-item">
+                    <button id="nav-media" class="nav-button" data-section="media">
+                        <span class="nav-icon">📁</span>
+                        Media Library
+                    </button>
+                </li>
+                <li class="nav-item">
+                    <button id="nav-control" class="nav-button" data-section="control">
+                        <span class="nav-icon">🎮</span>
+                        Control Panel
+                    </button>
+                </li>
+            </ul>
+        </nav>
+        
+        <main class="main-content">
+            <section id="playlists-section" class="content-section active">
+                <div class="section-header">
+                    <h2>Playlist Management</h2>
+                    <button id="create-playlist-btn" class="btn btn-primary">Create New Playlist</button>
+                </div>
+                <div id="playlist-management" class="content-area">
+                    <div class="loading">Loading playlists...</div>
+                </div>
+            </section>
+            
+            <section id="media-section" class="content-section">
+                <div class="section-header">
+                    <h2>Media Library</h2>
+                    <button id="upload-media-btn" class="btn btn-primary">Upload Media</button>
+                </div>
+                <div id="media-upload" class="content-area">
+                    <div class="loading">Loading media files...</div>
+                </div>
+            </section>
+            
+            <section id="control-section" class="content-section">
+                <div class="section-header">
+                    <h2>Control Panel</h2>
+                    <div class="control-actions">
+                        <button id="activate-playlist-btn" class="btn btn-primary">Activate Playlist</button>
+                        <button id="deactivate-playlist-btn" class="btn btn-danger" style="display: none;">Deactivate</button>
+                    </div>
+                </div>
+                <div id="control-panel" class="content-area">
+                    <div class="control-grid">
+                        <!-- Active Playlist Status -->
+                        <div class="control-card">
+                            <div class="card-header">
+                                <h3>Active Playlist</h3>
+                                <button id="refresh-playlist-btn" class="btn-icon" title="Refresh">🔄</button>
+                            </div>
+                            <div class="active-playlist-display">
+                                <div class="playlist-name-display">
+                                    <span class="label">Current:</span>
+                                    <span id="active-playlist-name" class="playlist-name">None</span>
+                                </div>
+                                <div id="playlist-status" class="status-info">
+                                    <div class="status-item">
+                                        <span>Status:</span>
+                                        <span class="status-value disconnected">No Active Playlist</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Connected Clients -->
+                        <div class="control-card">
+                            <div class="card-header">
+                                <h3>Connected Clients</h3>
+                                <button id="refresh-clients-btn" class="btn-icon" title="Refresh">🔄</button>
+                            </div>
+                            <div class="clients-display">
+                                <div id="client-count" class="metric">0</div>
+                                <div class="metric-label">Clients Connected</div>
+                                <div id="client-list" class="client-list">
+                                    <div class="no-clients">No clients connected</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- System Health -->
+                        <div class="control-card">
+                            <div class="card-header">
+                                <h3>System Health</h3>
+                                <button id="refresh-status-btn" class="btn-icon" title="Refresh">🔄</button>
+                            </div>
+                            <div id="system-status" class="status-info">
+                                <div class="status-item">
+                                    <span>Overall:</span>
+                                    <span id="overall-system-status" class="status-value connecting">Checking...</span>
+                                </div>
+                                <div class="status-item">
+                                    <span>Server:</span>
+                                    <span id="server-status" class="status-value connecting">Checking...</span>
+                                </div>
+                                <div class="status-item">
+                                    <span>WebSocket:</span>
+                                    <span id="websocket-status" class="status-value connecting">Connecting...</span>
+                                </div>
+                                <div class="status-item">
+                                    <span>Database:</span>
+                                    <span id="database-status" class="status-value connecting">Checking...</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Quick Actions -->
+                        <div class="control-card">
+                            <div class="card-header">
+                                <h3>Quick Actions</h3>
+                            </div>
+                            <div class="quick-actions">
+                                <button class="action-btn" onclick="window.controlPanel?.refreshConnectedClients()">
+                                    <span class="action-icon">👥</span>
+                                    <span class="action-text">Refresh Clients</span>
+                                </button>
+                                <button class="action-btn" onclick="window.controlPanel?.refreshSystemStatus()">
+                                    <span class="action-icon">🔍</span>
+                                    <span class="action-text">Check Health</span>
+                                </button>
+                                <button class="action-btn" onclick="window.wsClient?.forceReconnect()">
+                                    <span class="action-icon">🔌</span>
+                                    <span class="action-text">Reconnect WS</span>
+                                </button>
+                                <button class="action-btn" onclick="window.location.reload()">
+                                    <span class="action-icon">🔄</span>
+                                    <span class="action-text">Reload Page</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
         </main>
+        
+        <!-- Loading overlay -->
+        <div id="loading-overlay" class="overlay hidden">
+            <div class="loading-spinner"></div>
+        </div>
+        
+        <!-- Error toast -->
+        <div id="error-toast" class="toast error hidden">
+            <span id="error-message"></span>
+            <button id="close-error" class="toast-close">&times;</button>
+        </div>
+        
+        <!-- Success toast -->
+        <div id="success-toast" class="toast success hidden">
+            <span id="success-message"></span>
+            <button id="close-success" class="toast-close">&times;</button>
+        </div>
     </div>
-    <script src="js/app.js"></script>
+    
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/web/js/api-client.js"></script>
+    <script src="/web/js/websocket-client.js"></script>
+    <script src="/web/js/playlist-manager.js"></script>
+    <script src="/web/js/media-manager.js"></script>
+    <script src="/web/js/control-panel.js"></script>
+    <script src="/web/js/app.js"></script>
 </body>
 </html>

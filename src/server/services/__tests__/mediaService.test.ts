@@ -76,11 +76,11 @@ describe('MediaService', () => {
       const mediaFile = {
         id: 'test-id',
         filename: 'test.mp4',
-        originalName: 'original.mp4',
-        fileType: 'video' as const,
-        mimeType: 'video/mp4',
-        fileSize: 1000000,
-        createdAt: new Date()
+        original_name: 'original.mp4',
+        file_type: 'video' as const,
+        mime_type: 'video/mp4',
+        file_size: 1000000,
+        created_at: new Date()
       };
 
       const mimeType = mediaService.getMimeType(mediaFile);
@@ -93,11 +93,11 @@ describe('MediaService', () => {
       const mediaFile = {
         id: 'test-id',
         filename: 'test.mp4',
-        originalName: 'original.mp4',
-        fileType: 'video' as const,
-        mimeType: 'video/mp4',
-        fileSize: 1000000,
-        createdAt: new Date()
+        original_name: 'original.mp4',
+        file_type: 'video' as const,
+        mime_type: 'video/mp4',
+        file_size: 1000000,
+        created_at: new Date()
       };
 
       const filePath = mediaService.getFilePath(mediaFile);
@@ -109,11 +109,11 @@ describe('MediaService', () => {
       const mediaFile = {
         id: 'test-id',
         filename: 'test.jpg',
-        originalName: 'original.jpg',
-        fileType: 'image' as const,
-        mimeType: 'image/jpeg',
-        fileSize: 500000,
-        createdAt: new Date()
+        original_name: 'original.jpg',
+        file_type: 'image' as const,
+        mime_type: 'image/jpeg',
+        file_size: 500000,
+        created_at: new Date()
       };
 
       const filePath = mediaService.getFilePath(mediaFile);
