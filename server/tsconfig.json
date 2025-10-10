@@ -1,46 +1,33 @@
 {
   "compilerOptions": {
-    /* Language and Environment */
-    "target": "ES2022",
-    "lib": ["ES2022"],
-
-    /* Modules */
+    "target": "ES2020",
     "module": "commonjs",
-    "rootDir": "./src",
-    "moduleResolution": "node",
-    "baseUrl": "./src",
-    "paths": {
-      "@/api/*": ["api/*"],
-      "@/database/*": ["database/*"],
-      "@/services/*": ["services/*"],
-      "@/websocket/*": ["websocket/*"],
-      "@/utils/*": ["utils/*"],
-      "@/config/*": ["config/*"]
-    },
-    "resolveJsonModule": true,
-
-    /* Emit */
-    "declaration": true,
+    "lib": ["ES2020"],
     "outDir": "./dist",
-    "removeComments": true,
-    "sourceMap": true,
-
-    /* Interop Constraints */
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "allowSyntheticDefaultImports": true,
-
-    /* Type Checking */
+    "rootDir": "./src",
     "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "node",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedIndexedAccess": true,
-    "noImplicitOverride": true,
-
-    /* Completeness */
-    "skipLibCheck": true
+    "allowSyntheticDefaultImports": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "types": ["node", "jest"]
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "tests"]
