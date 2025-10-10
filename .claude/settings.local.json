@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"C:\\Users\\e.aldrich\\Montr\\server\")",
+      "Bash(npm install)",
+      "Bash(npm run build)",
+      "Bash(timeout 10 npm start:*)",
+      "Bash(curl:*)",
+      "Bash(npm run format)",
+      "Bash(npm run lint)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run format:check:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
