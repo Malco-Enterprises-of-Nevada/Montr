@@ -1,2 +1,0 @@
-This is a test file to simulate media upload functionality.
-It will be used to test the drag-and-drop and file upload features.

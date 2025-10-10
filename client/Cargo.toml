@@ -1,0 +1,73 @@
+[package]
+name = "montr-client"
+version = "1.0.0"
+edition = "2021"
+authors = ["Montr Contributors"]
+description = "Montr media playlist client for automated playback"
+license = "MIT"
+rust-version = "1.75"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.36", features = ["full"] }
+tokio-util = "0.7"
+
+# Media playback
+libmpv = "2.0"
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json", "stream"] }
+
+# WebSocket
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+futures-util = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Configuration
+toml = "0.8"
+clap = { version = "4.5", features = ["derive"] }
+
+# UUID
+uuid = { version = "1.7", features = ["v4", "serde"] }
+
+# Hashing for checksums
+sha2 = "0.10"
+hex = "0.4"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Paths and filesystem
+directories = "5.0"
+
+[target.'cfg(windows)'.dependencies]
+# Windows-specific dependencies for service support
+windows-service = "0.6"
+
+[target.'cfg(unix)'.dependencies]
+# Unix-specific dependencies (if needed)
+
+[dev-dependencies]
+mockall = "0.12"
+tempfile = "3.9"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+
+[[bin]]
+name = "montr-client"
+path = "src/main.rs"
