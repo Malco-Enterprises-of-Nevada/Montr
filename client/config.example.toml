@@ -1,70 +1,27 @@
-# Montr Client Configuration
-
 [server]
-# Server URL (required)
 url = "http://192.168.1.100:3000"
-
-# Optional API key for authentication
 api_key = ""
-
-# Reconnection interval in seconds
 reconnect_interval = 5
-
-# Heartbeat interval in seconds
 heartbeat_interval = 30
 
 [client]
-# Client ID (auto-generated on first run if not set)
-id = ""
-
-# Client display name
+id = "de863e20-55ed-4b89-85ed-ac6efa1b9b67"
 name = "Client-01"
 
 [playback]
-# Default duration for images in seconds
 default_image_duration = 5
-
-# Whether to loop the playlist
 loop_playlist = true
-
-# Media cache directory
-# Linux: /var/lib/montr-client/cache
-# Windows: C:\ProgramData\Montr\cache
-media_cache_dir = "./cache"
-
-# Maximum cache size in MB
+media_cache_dir = "/home/stripcheese/.cache/montr-client"
 max_cache_size_mb = 5000
-
-# Number of upcoming items to pre-fetch
 preload_next_items = 2
 
 [system]
-# Enable auto-start on system boot
 auto_start = true
-
-# Log level: error, warn, info, debug, trace
 log_level = "info"
-
-# Log file path
-# Linux: /var/log/montr-client/client.log
-# Windows: C:\ProgramData\Montr\logs\client.log
-log_file = "./client.log"
-
-# Maximum log file size in MB
+log_file = "/home/stripcheese/.local/share/montr-client/logs/client.log"
 log_max_size_mb = 100
-
-# Maximum number of log files to keep
 log_max_files = 5
 
 [display]
-# Run in fullscreen mode
 fullscreen = true
-
-# Screen index for multi-monitor setups (0-indexed)
 screen_index = 0
-
-# Window width (if not fullscreen)
-# window_width = 1920
-
-# Window height (if not fullscreen)
-# window_height = 1080
