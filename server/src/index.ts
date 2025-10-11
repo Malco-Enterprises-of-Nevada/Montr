@@ -1,10 +1,16 @@
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import path from 'path';
 import { createServer, Server as HTTPServer } from 'http';
 import { config } from './config/config';
 import { initLogger, getLogger } from './utils/logger';
 import { errorHandler, notFoundHandler, successResponse } from './api/middleware/error-handler';
+import { getDatabase, closeDatabase } from './database/connection';
+import mediaRoutes from './api/routes/media.routes';
+import playlistRoutes from './api/routes/playlist.routes';
+import clientRoutes from './api/routes/client.routes';
+import { webSocketServer } from './websocket/server';
 
 /**
  * Montr Server Application
@@ -35,8 +41,19 @@ class MontrServer {
    * Configures Express middleware
    */
   private configureMiddleware(): void {
-    // Security middleware
-    this.app.use(helmet());
+    // Security middleware - configure helmet to allow inline scripts for web UI
+    this.app.use(
+      helmet({
+        contentSecurityPolicy: {
+          directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'"],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            imgSrc: ["'self'", 'data:', 'blob:'],
+          },
+        },
+      })
+    );
     this.app.use(
       cors({
         origin: true, // Allow all origins for now
@@ -49,6 +66,10 @@ class MontrServer {
     this.app.use(
       express.urlencoded({ extended: true, limit: `${config.storage.maxUploadSizeMB}mb` })
     );
+
+    // Serve static files from web/public directory
+    const publicPath = path.join(__dirname, 'web', 'public');
+    this.app.use(express.static(publicPath));
 
     // Request logging middleware
     this.app.use((req, _res, next) => {
@@ -72,6 +93,7 @@ class MontrServer {
           timestamp: new Date().toISOString(),
           uptime: process.uptime(),
           environment: config.server.environment,
+          websocket: webSocketServer.getStats(),
         })
       );
     });
@@ -86,24 +108,15 @@ class MontrServer {
       );
     });
 
-    // Root endpoint
+    // Root endpoint - serve web UI
     this.app.get('/', (_req: Request, res: Response) => {
-      res.json(
-        successResponse({
-          message: 'Montr Media Playlist Server',
-          version: '1.0.0',
-          endpoints: {
-            health: '/api/health',
-            version: '/api/version',
-          },
-        })
-      );
+      res.sendFile(path.join(__dirname, 'web', 'public', 'index.html'));
     });
 
-    // Future route registrations will go here:
-    // this.app.use('/api/media', mediaRoutes);
-    // this.app.use('/api/playlists', playlistRoutes);
-    // this.app.use('/api/clients', clientRoutes);
+    // API routes
+    this.app.use('/api/media', mediaRoutes);
+    this.app.use('/api/playlists', playlistRoutes);
+    this.app.use('/api/clients', clientRoutes);
   }
 
   /**
@@ -122,7 +135,16 @@ class MontrServer {
    */
   public async start(): Promise<void> {
     try {
+      // Initialize database connection
+      await getDatabase();
+      this.logger.info('Database connection established');
+
+      // Create HTTP server
       this.server = createServer(this.app);
+
+      // Initialize WebSocket server
+      webSocketServer.initialize(this.server);
+      this.logger.info('WebSocket server initialized');
 
       // Start listening
       await new Promise<void>((resolve, reject) => {
@@ -151,6 +173,9 @@ class MontrServer {
       this.logger.info(
         `Health check: http://${config.server.host}:${config.server.port}/api/health`
       );
+      this.logger.info(
+        `WebSocket endpoint: ws://${config.server.host}:${config.server.port}/ws`
+      );
     } catch (error) {
       this.logger.error('Failed to start server:', error);
       throw error;
@@ -162,6 +187,13 @@ class MontrServer {
    */
   public async shutdown(): Promise<void> {
     this.logger.info('Shutting down server gracefully...');
+
+    // Shutdown WebSocket server first
+    try {
+      await webSocketServer.shutdown();
+    } catch (error) {
+      this.logger.error('Error shutting down WebSocket server:', error);
+    }
 
     if (this.server) {
       await new Promise<void>((resolve, reject) => {
@@ -177,9 +209,8 @@ class MontrServer {
       });
     }
 
-    // Close database connections, WebSocket connections, etc.
-    // await this.database?.close();
-    // await this.websocketServer?.close();
+    // Close database connection
+    await closeDatabase();
   }
 
   /**
