@@ -32,14 +32,24 @@ export enum ErrorCode {
   // Playlist errors
   PLAYLIST_NOT_FOUND = 'PLAYLIST_NOT_FOUND',
   PLAYLIST_ITEM_NOT_FOUND = 'PLAYLIST_ITEM_NOT_FOUND',
+  PLAYLIST_EMPTY = 'PLAYLIST_EMPTY',
+  INVALID_PLAYLIST_ORDER = 'INVALID_PLAYLIST_ORDER',
 
   // Client errors
   CLIENT_NOT_FOUND = 'CLIENT_NOT_FOUND',
   CLIENT_ALREADY_REGISTERED = 'CLIENT_ALREADY_REGISTERED',
+  CLIENT_OFFLINE = 'CLIENT_OFFLINE',
+  INVALID_CLIENT_STATUS = 'INVALID_CLIENT_STATUS',
 
   // Database errors
   DATABASE_ERROR = 'DATABASE_ERROR',
   DATABASE_CONNECTION_FAILED = 'DATABASE_CONNECTION_FAILED',
+  DUPLICATE_ENTRY = 'DUPLICATE_ENTRY',
+
+  // Storage errors
+  STORAGE_ERROR = 'STORAGE_ERROR',
+  FILE_NOT_FOUND = 'FILE_NOT_FOUND',
+  INSUFFICIENT_STORAGE = 'INSUFFICIENT_STORAGE',
 }
 
 /**
@@ -118,7 +128,7 @@ export function errorResponse(code: string, message: string, details?: unknown):
  * Handles Zod validation errors
  */
 function handleZodError(error: ZodError): { statusCode: number; response: ApiResponse<null> } {
-  const errors = error.errors.map((err) => ({
+  const errors = error.issues.map((err) => ({
     field: err.path.join('.'),
     message: err.message,
   }));
@@ -203,6 +213,47 @@ export function asyncHandler(
 export function notFoundHandler(req: Request, res: Response): void {
   const response = errorResponse(ErrorCode.NOT_FOUND, `Route ${req.method} ${req.path} not found`);
   res.status(404).json(response);
+}
+
+// Utility functions for creating common errors
+
+/**
+ * Creates a "resource not found" error
+ */
+export function createNotFoundError(resource: string, id: string | number): AppError {
+  return new AppError(
+    ErrorCode.RESOURCE_NOT_FOUND,
+    `${resource} with ID ${id} not found`,
+    404
+  );
+}
+
+/**
+ * Creates a validation error
+ */
+export function createValidationError(message: string, details?: unknown): AppError {
+  return new AppError(ErrorCode.VALIDATION_ERROR, message, 400, true, details);
+}
+
+/**
+ * Creates a bad request error
+ */
+export function createBadRequestError(message: string): AppError {
+  return new AppError(ErrorCode.BAD_REQUEST, message, 400);
+}
+
+/**
+ * Creates a database error
+ */
+export function createDatabaseError(message: string, details?: unknown): AppError {
+  return new AppError(ErrorCode.DATABASE_ERROR, message, 500, true, details);
+}
+
+/**
+ * Creates a storage error
+ */
+export function createStorageError(message: string, details?: unknown): AppError {
+  return new AppError(ErrorCode.STORAGE_ERROR, message, 500, true, details);
 }
 
 export default errorHandler;
