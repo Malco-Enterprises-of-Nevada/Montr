@@ -72,20 +72,52 @@ pub enum MontrError {
         source: io::Error,
     },
 
-    // Network errors (for future use in Phase 3, Task 2)
+    // Network errors
     /// WebSocket connection failed
     #[error("WebSocket connection failed: {0}")]
     WebSocketConnection(String),
+
+    /// WebSocket send error
+    #[error("Failed to send WebSocket message: {0}")]
+    WebSocketSend(String),
+
+    /// WebSocket receive error
+    #[error("Failed to receive WebSocket message: {0}")]
+    WebSocketReceive(String),
 
     /// HTTP request failed
     #[error("HTTP request failed: {0}")]
     HttpRequest(String),
 
+    /// HTTP request from reqwest
+    #[error("HTTP request error: {0}")]
+    Reqwest(#[from] reqwest::Error),
+
     /// Network timeout
     #[error("Network operation timed out: {0}")]
     NetworkTimeout(String),
 
-    // Playback errors (for future use in Phase 3, Task 3)
+    /// Message serialization error
+    #[error("Failed to serialize message: {0}")]
+    MessageSerialization(#[from] serde_json::Error),
+
+    /// Message deserialization error
+    #[error("Failed to deserialize message: {0}")]
+    MessageDeserialization(String),
+
+    /// Registration with server failed
+    #[error("Client registration failed: {0}")]
+    RegistrationFailed(String),
+
+    /// Protocol error - unexpected message type
+    #[error("Protocol error: {0}")]
+    ProtocolError(String),
+
+    /// Connection closed unexpectedly
+    #[error("Connection closed: {0}")]
+    ConnectionClosed(String),
+
+    // Playback errors
     /// Media playback error
     #[error("Media playback error: {0}")]
     Playback(String),
@@ -94,6 +126,18 @@ pub enum MontrError {
     #[error("MPV initialization failed: {0}")]
     MpvInit(String),
 
+    /// MPV command error
+    #[error("MPV command failed: {0}")]
+    MpvCommand(String),
+
+    /// MPV property error
+    #[error("MPV property error: {0}")]
+    MpvProperty(String),
+
+    /// MPV event error
+    #[error("MPV event error: {0}")]
+    MpvEvent(String),
+
     /// Media file not found
     #[error("Media file not found: {0}")]
     MediaNotFound(PathBuf),
@@ -101,6 +145,60 @@ pub enum MontrError {
     /// Unsupported media format
     #[error("Unsupported media format: {0}")]
     UnsupportedFormat(String),
+
+    /// Playlist error
+    #[error("Playlist error: {0}")]
+    PlaylistError(String),
+
+    /// Playlist is empty
+    #[error("Playlist is empty")]
+    PlaylistEmpty,
+
+    /// Invalid playlist item
+    #[error("Invalid playlist item: {0}")]
+    InvalidPlaylistItem(String),
+
+    // Cache and download errors
+    /// Download failed
+    #[error("Failed to download media from {url}: {reason}")]
+    DownloadFailed { url: String, reason: String },
+
+    /// Checksum verification failed
+    #[error("Checksum verification failed for {path}: expected {expected}, got {actual}")]
+    ChecksumMismatch {
+        path: PathBuf,
+        expected: String,
+        actual: String,
+    },
+
+    /// Cache is full
+    #[error("Media cache is full (max size: {max_size_mb} MB)")]
+    CacheFull { max_size_mb: u64 },
+
+    /// Failed to write to cache
+    #[error("Failed to write to cache at {path}: {source}")]
+    CacheWrite {
+        path: PathBuf,
+        source: io::Error,
+    },
+
+    /// Failed to read from cache
+    #[error("Failed to read from cache at {path}: {source}")]
+    CacheRead {
+        path: PathBuf,
+        source: io::Error,
+    },
+
+    /// File corruption detected
+    #[error("File corruption detected at {0}")]
+    FileCorruption(PathBuf),
+
+    /// Insufficient disk space
+    #[error("Insufficient disk space: required {required_mb} MB, available {available_mb} MB")]
+    InsufficientDiskSpace {
+        required_mb: u64,
+        available_mb: u64,
+    },
 
     // Generic errors
     /// Generic IO error wrapper

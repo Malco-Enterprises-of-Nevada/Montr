@@ -48,6 +48,18 @@ thiserror = "1.0"
 # Paths and filesystem
 directories = "5.0"
 
+# Progress bars and indicators
+indicatif = "0.17"
+
+# Caching
+lru = "0.12"
+
+# System information
+sysinfo = "0.30"
+
+# Random number generation (for jitter)
+rand = "0.8"
+
 [target.'cfg(windows)'.dependencies]
 # Windows-specific dependencies for service support
 windows-service = "0.6"
@@ -58,6 +70,7 @@ windows-service = "0.6"
 [dev-dependencies]
 mockall = "0.12"
 tempfile = "3.9"
+mockito = "1.2"
 
 [profile.release]
 opt-level = 3
