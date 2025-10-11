@@ -1,7 +1,12 @@
 // Re-export common types and modules for easier access
+pub mod cache;
 pub mod config;
 pub mod error;
 pub mod logging;
+pub mod network;
+pub mod playback;
+pub mod state;
+pub mod status;
 
 // Re-export commonly used types at crate root for convenience
 pub use error::{MontrError, Result};
