@@ -152,7 +152,9 @@ impl PlaylistQueue {
         Ok(&self.items[index])
     }
 
-    /// Reset to beginning
+    /// Reset to beginning (at first item)
+    ///
+    /// Sets current_index to 0 so current() returns the first item.
     pub fn reset(&mut self) {
         if !self.items.is_empty() {
             self.current_index = Some(0);
@@ -173,11 +175,11 @@ impl PlaylistQueue {
 
     /// Update playlist items
     ///
-    /// Replaces all items and resets to beginning.
+    /// Replaces all items and positions before first item (so next() will return the first item).
     pub fn update_items(&mut self, items: Vec<PlaylistItem>, playlist_id: u32) {
         self.items = items;
         self.playlist_id = Some(playlist_id);
-        self.reset();
+        self.current_index = None; // Position before first item
     }
 
     /// Clear all items
@@ -224,18 +226,13 @@ mod tests {
         PlaylistItem {
             id,
             media_id,
+            filename: format!("test_{}.mp4", media_id),
+            download_url: format!("http://localhost:3000/api/media/{}/download", media_id),
+            media_type: "video".to_string(),
+            duration: Some(120.0),
+            checksum: Some(format!("checksum_{}", media_id)),
             order_index,
-            media: MediaInfo {
-                id: media_id,
-                filename: format!("test_{}.mp4", media_id),
-                filepath: format!("/storage/test_{}.mp4", media_id),
-                media_type: "video".to_string(),
-                duration: Some(120.0),
-                resolution: Some("1920x1080".to_string()),
-                file_size: 1024000,
-                checksum: format!("checksum_{}", media_id),
-            },
-            image_duration: None,
+            image_duration: 5,
         }
     }
 
@@ -460,7 +457,7 @@ mod tests {
         queue.update_items(new_items, 2);
 
         assert_eq!(queue.len(), 2);
-        assert_eq!(queue.current_index(), Some(0));
+        assert_eq!(queue.current_index(), None); // After update, positioned before first item (next() will return first)
         assert_eq!(queue.playlist_id(), Some(2));
     }
 

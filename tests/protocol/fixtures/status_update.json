@@ -1,0 +1,11 @@
+{
+  "type": "status_update",
+  "clientId": "550e8400-e29b-41d4-a716-446655440000",
+  "currentMedia": {
+    "id": 42,
+    "filename": "video.mp4"
+  },
+  "position": 15.5,
+  "isPlaying": true,
+  "timestamp": 1704067200000
+}

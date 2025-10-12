@@ -177,9 +177,9 @@ impl CacheManager {
         tracing::info!("Starting batch download of {} items", total);
 
         for item in items {
-            let media_id = item.media.id;
-            let filename = item.media.filename.clone();
-            let checksum = item.media.checksum.clone();
+            let media_id = item.media_id;
+            let filename = item.filename.clone();
+            let checksum = item.checksum.clone().unwrap_or_default();
             let manager = self.clone();
             let progress_tx = progress_tx.clone();
             let cancel_token = self.cancel_token.clone();

@@ -154,7 +154,7 @@ impl StateCoordinator {
                 // Check if we need to stop current playback
                 let current_media_id = self.state.current_media_id().await;
                 let new_items_have_current = current_media_id
-                    .map(|id| msg.items.iter().any(|item| item.media.id == id))
+                    .map(|id| msg.items.iter().any(|item| item.media_id == id))
                     .unwrap_or(false);
 
                 // Update playlist
@@ -316,8 +316,8 @@ impl StateCoordinator {
 
     /// Play a specific media item
     async fn play_media(&self, item: PlaylistItem) -> Result<()> {
-        let media_id = item.media.id;
-        let filename = &item.media.filename;
+        let media_id = item.media_id;
+        let filename = &item.filename;
 
         tracing::info!("Playing media {}: {}", media_id, filename);
 
@@ -346,8 +346,8 @@ impl StateCoordinator {
         self.playback_tx
             .send(PlaybackCommand::Play {
                 path: cache_path,
-                is_video: item.media.media_type == "video",
-                image_duration: item.image_duration,
+                is_video: item.media_type == "video",
+                image_duration: Some(item.image_duration),
             })
             .map_err(|e| MontrError::Playback(format!("Failed to send play command: {}", e)))?;
 
@@ -366,18 +366,13 @@ mod tests {
         PlaylistItem {
             id,
             media_id,
+            filename: format!("test_{}.mp4", media_id),
+            download_url: format!("http://localhost:3000/api/media/{}/download", media_id),
+            media_type: "video".to_string(),
+            duration: Some(120.0),
+            checksum: Some(format!("checksum_{}", media_id)),
             order_index: id - 1,
-            media: MediaInfo {
-                id: media_id,
-                filename: format!("test_{}.mp4", media_id),
-                filepath: format!("/storage/test_{}.mp4", media_id),
-                media_type: "video".to_string(),
-                duration: Some(120.0),
-                resolution: Some("1920x1080".to_string()),
-                file_size: 1024000,
-                checksum: format!("checksum_{}", media_id),
-            },
-            image_duration: None,
+            image_duration: 5,
         }
     }
 

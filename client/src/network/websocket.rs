@@ -17,13 +17,15 @@ use tokio_util::sync::CancellationToken;
 
 /// WebSocket client with auto-reconnect capabilities
 pub struct WebSocketClient {
-    /// Server WebSocket URL
+    /// Server WebSocket URL (for future reconnection logic)
+    #[allow(dead_code)]
     ws_url: String,
 
     /// Connection state machine
     state: Arc<RwLock<ConnectionState>>,
 
-    /// Reconnection strategy
+    /// Reconnection strategy (for future automatic reconnection)
+    #[allow(dead_code)]
     reconnect: Arc<RwLock<ReconnectStrategy>>,
 
     /// Channel for sending messages to WebSocket
@@ -35,7 +37,8 @@ pub struct WebSocketClient {
     /// Cancellation token for graceful shutdown
     cancel_token: CancellationToken,
 
-    /// Heartbeat interval (seconds)
+    /// Heartbeat interval in seconds (for future heartbeat implementation)
+    #[allow(dead_code)]
     heartbeat_interval: u64,
 }
 

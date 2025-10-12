@@ -123,7 +123,7 @@ const mediaAPI = {
 
     async upload(file, onProgress) {
         const formData = new FormData();
-        formData.append('file', file);
+        formData.append('files', file);
 
         return new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
@@ -362,9 +362,10 @@ async function loadMedia() {
     emptyEl.style.display = 'none';
 
     try {
-        const media = await mediaAPI.list();
-        state.media = media || [];
-        renderMediaGrid(media || []);
+        const response = await mediaAPI.list();
+        const media = response?.data || [];
+        state.media = media;
+        renderMediaGrid(media);
     } catch (error) {
         console.error('Failed to load media:', error);
         showToast('Failed to load media files', 'error');
@@ -449,7 +450,12 @@ function initMediaUpload() {
     const fileInput = document.getElementById('fileInput');
     const browseBtn = document.getElementById('browseBtn');
 
-    uploadBtn.addEventListener('click', () => openModal('uploadModal'));
+    console.log('initMediaUpload:', { uploadBtn, uploadModal, closeModalBtn, uploadZone, fileInput, browseBtn });
+
+    uploadBtn.addEventListener('click', () => {
+        console.log('Upload button clicked!');
+        openModal('uploadModal');
+    });
     closeModalBtn.addEventListener('click', () => closeModal('uploadModal'));
     browseBtn.addEventListener('click', () => fileInput.click());
 
@@ -959,8 +965,15 @@ function initAssignPlaylistModal() {
 // ===== Modal Management =====
 
 function openModal(modalId) {
+    console.log('openModal called for:', modalId);
     const modal = document.getElementById(modalId);
-    modal.classList.add('active');
+    console.log('Modal element:', modal);
+    if (modal) {
+        modal.classList.add('active');
+        console.log('Modal opened, classList:', modal.classList.toString());
+    } else {
+        console.error('Modal not found:', modalId);
+    }
 }
 
 function closeModal(modalId) {
