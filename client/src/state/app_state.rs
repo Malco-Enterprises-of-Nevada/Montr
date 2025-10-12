@@ -316,7 +316,7 @@ pub struct StateSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{MediaInfo, PlaylistItem};
+    use crate::network::PlaylistItem;
 
     fn create_test_item(id: u32, media_id: u32) -> PlaylistItem {
         PlaylistItem {

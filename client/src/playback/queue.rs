@@ -220,7 +220,7 @@ impl Default for PlaylistQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::MediaInfo;
+    
 
     fn create_test_item(id: u32, media_id: u32, order_index: u32) -> PlaylistItem {
         PlaylistItem {

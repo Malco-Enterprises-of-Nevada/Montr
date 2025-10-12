@@ -231,7 +231,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_status_update() {
-        use crate::network::protocol::{MediaInfo, PlaylistItem};
+        use crate::network::protocol::PlaylistItem;
 
         let state = Arc::new(AppState::new("test-id".to_string(), "Test Client".to_string()));
         let (ws_tx, mut ws_rx) = mpsc::unbounded_channel();

@@ -12,6 +12,9 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
+#[cfg(test)]
+use mockall::automock;
+
 /// Commands that can be sent to the playback engine
 #[derive(Debug, Clone)]
 pub enum PlaybackCommand {
@@ -27,6 +30,14 @@ pub enum PlaybackCommand {
     Resume,
     /// Stop playback
     Stop,
+}
+
+/// Trait for playback engine operations
+/// This allows for mocking in tests without requiring actual mpv initialization
+#[cfg_attr(test, automock)]
+pub trait PlaybackEngineOps: Send + Sync {
+    /// Get a sender for sending commands to the playback engine
+    fn command_sender(&self) -> mpsc::UnboundedSender<PlaybackCommand>;
 }
 
 /// MPV playback engine
@@ -115,6 +126,13 @@ impl Default for PlaybackState {
     }
 }
 
+impl PlaybackEngineOps for PlaybackEngine {
+    /// Get a sender for sending commands to the playback engine
+    fn command_sender(&self) -> mpsc::UnboundedSender<PlaybackCommand> {
+        self.command_tx.clone()
+    }
+}
+
 impl PlaybackEngine {
     /// Create a new playback engine
     pub fn new(cancel_token: CancellationToken) -> Result<Self> {
@@ -170,11 +188,6 @@ impl PlaybackEngine {
 
         tracing::info!("MPV configured successfully");
         Ok(())
-    }
-
-    /// Get a sender for sending commands to the playback engine
-    pub fn command_sender(&self) -> mpsc::UnboundedSender<PlaybackCommand> {
-        self.command_tx.clone()
     }
 
     /// Run the playback engine command loop
