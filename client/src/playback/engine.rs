@@ -54,7 +54,8 @@ pub struct PlaybackEngine {
     /// Default image duration (seconds)
     default_image_duration: u64,
 
-    /// Fullscreen mode
+    /// Fullscreen mode (for future display configuration)
+    #[allow(dead_code)]
     fullscreen: bool,
 }
 
@@ -217,10 +218,115 @@ impl PlaybackEngine {
     }
 
     /// Subscribe to playback events
+    ///
+    /// Returns a receiver for playback events. The events are polled from libmpv
+    /// in a background blocking task and converted to our PlaybackEvent enum.
     pub fn subscribe_events(&self) -> mpsc::Receiver<PlaybackEvent> {
-        let (_tx, rx) = mpsc::channel(100);
-        // Store the tx for later use
-        // In a real implementation, we'd spawn a task to poll MPV events
+        let (tx, rx) = mpsc::channel(100);
+        let mpv_handle = self.mpv.clone();
+        let cancel = self.cancel_token.clone();
+
+        // Spawn blocking task for MPV event polling
+        // MPV's event API is blocking, so we need to use spawn_blocking
+        tokio::task::spawn_blocking(move || {
+            tracing::info!("MPV event polling loop started");
+
+            // Create event context from MPV handle
+            // This creates a context for receiving events from libmpv
+            let mut event_ctx = mpv_handle.create_event_context();
+
+            // Main event polling loop
+            loop {
+                // Check if we should shutdown
+                if cancel.is_cancelled() {
+                    tracing::info!("MPV event polling loop shutting down");
+                    break;
+                }
+
+                // Wait for next event with timeout
+                // Using 1.0 second timeout to allow checking cancellation token periodically
+                match event_ctx.wait_event(1.0) {
+                    Some(Ok(event)) => {
+                        // Convert libmpv event to our PlaybackEvent
+                        let playback_event = match event {
+                            libmpv::events::Event::EndFile(_) => {
+                                tracing::debug!("MPV EndFile event");
+                                Some(PlaybackEvent::EndFile)
+                            }
+
+                            libmpv::events::Event::FileLoaded => {
+                                tracing::debug!("MPV FileLoaded event");
+                                // We don't have a direct FileLoaded event in PlaybackEvent
+                                // This is already handled by the play() method sending Started event
+                                None
+                            }
+
+                            libmpv::events::Event::PropertyChange { name, change, .. } => {
+                                // We're interested in time-pos changes for position updates
+                                if name == "time-pos" {
+                                    if let libmpv::events::PropertyData::Double(position) = change {
+                                        tracing::trace!("MPV time-pos changed: {:.2}s", position);
+                                        Some(PlaybackEvent::PositionChanged { position })
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+
+                            libmpv::events::Event::PlaybackRestart => {
+                                tracing::debug!("MPV PlaybackRestart event");
+                                None
+                            }
+
+                            libmpv::events::Event::Shutdown => {
+                                tracing::info!("MPV Shutdown event received");
+                                break;
+                            }
+
+                            _ => {
+                                // Ignore other events we don't care about
+                                None
+                            }
+                        };
+
+                        // Send event to channel if we have one
+                        if let Some(event) = playback_event {
+                            // Try to send, but don't block if channel is full
+                            // Use try_send to avoid blocking the event loop
+                            match tx.try_send(event.clone()) {
+                                Ok(_) => {
+                                    tracing::trace!("Sent event: {:?}", event);
+                                }
+                                Err(mpsc::error::TrySendError::Full(_)) => {
+                                    tracing::warn!("Event channel full, dropping event: {:?}", event);
+                                }
+                                Err(mpsc::error::TrySendError::Closed(_)) => {
+                                    tracing::info!("Event channel closed, stopping event loop");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    Some(Err(e)) => {
+                        tracing::error!("MPV event error: {}", e);
+                        // Don't break on errors, just log and continue
+                        // The error might be transient
+                    }
+
+                    None => {
+                        // Timeout reached, no event available
+                        // This is expected - just continue the loop
+                        tracing::trace!("MPV event poll timeout (normal)");
+                    }
+                }
+            }
+
+            tracing::info!("MPV event polling loop exited");
+        });
+
         rx
     }
 

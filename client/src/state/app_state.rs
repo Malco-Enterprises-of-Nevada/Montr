@@ -186,10 +186,10 @@ impl AppState {
         let item = state.queue.next().cloned();
 
         if let Some(ref item) = item {
-            state.current_media_id = Some(item.media.id);
+            state.current_media_id = Some(item.media_id);
             state.current_position = Some(0.0);
-            tracing::debug!("Advanced to next item: media {}", item.media.id);
-        } else {
+            tracing::debug!("Advanced to next item: media {}", item.media_id);
+        } else{
             state.current_media_id = None;
             state.current_position = None;
             tracing::debug!("No next item available");
@@ -205,9 +205,9 @@ impl AppState {
         let item = state.queue.previous().cloned();
 
         if let Some(ref item) = item {
-            state.current_media_id = Some(item.media.id);
+            state.current_media_id = Some(item.media_id);
             state.current_position = Some(0.0);
-            tracing::debug!("Moved to previous item: media {}", item.media.id);
+            tracing::debug!("Moved to previous item: media {}", item.media_id);
         }
 
         item
@@ -218,10 +218,10 @@ impl AppState {
         let mut state = self.inner.write().await;
 
         let item = state.queue.jump_to(index)?.clone();
-        state.current_media_id = Some(item.media.id);
+        state.current_media_id = Some(item.media_id);
         state.current_position = Some(0.0);
 
-        tracing::info!("Jumped to index {}: media {}", index, item.media.id);
+        tracing::info!("Jumped to index {}: media {}", index, item.media_id);
 
         Ok(item)
     }
@@ -233,7 +233,7 @@ impl AppState {
         state.current_position = Some(0.0);
 
         if let Some(item) = state.queue.current() {
-            state.current_media_id = Some(item.media.id);
+            state.current_media_id = Some(item.media_id);
         }
 
         tracing::info!("Reset queue to beginning");
@@ -322,18 +322,13 @@ mod tests {
         PlaylistItem {
             id,
             media_id,
+            filename: format!("test_{}.mp4", media_id),
+            download_url: format!("http://localhost:3000/api/media/{}/download", media_id),
+            media_type: "video".to_string(),
+            duration: Some(120.0),
+            checksum: Some(format!("checksum_{}", media_id)),
             order_index: id - 1,
-            media: MediaInfo {
-                id: media_id,
-                filename: format!("test_{}.mp4", media_id),
-                filepath: format!("/storage/test_{}.mp4", media_id),
-                media_type: "video".to_string(),
-                duration: Some(120.0),
-                resolution: Some("1920x1080".to_string()),
-                file_size: 1024000,
-                checksum: format!("checksum_{}", media_id),
-            },
-            image_duration: None,
+            image_duration: 5,
         }
     }
 
@@ -378,13 +373,13 @@ mod tests {
         // First call returns first item
         let item = state.next_item().await;
         assert!(item.is_some());
-        assert_eq!(item.unwrap().media.id, 10);
+        assert_eq!(item.unwrap().media_id, 10);
         assert_eq!(state.current_media_id().await, Some(10));
 
         // Second call returns second item
         let item = state.next_item().await;
         assert!(item.is_some());
-        assert_eq!(item.unwrap().media.id, 20);
+        assert_eq!(item.unwrap().media_id, 20);
     }
 
     #[tokio::test]
@@ -470,7 +465,7 @@ mod tests {
         state.update_playlist(1, items, false).await.unwrap();
 
         let item = state.jump_to(2).await.unwrap();
-        assert_eq!(item.media.id, 30);
+        assert_eq!(item.media_id, 30);
         assert_eq!(state.current_media_id().await, Some(30));
         assert_eq!(state.playlist_index().await, Some(2));
     }
@@ -485,6 +480,7 @@ mod tests {
         ];
 
         state.update_playlist(1, items, false).await.unwrap();
+        state.next_item().await; // Move to index 0
         state.next_item().await; // Move to index 1
 
         assert_eq!(state.playlist_index().await, Some(1));

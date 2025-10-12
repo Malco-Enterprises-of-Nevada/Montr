@@ -141,25 +141,39 @@ impl StatusReporter {
     async fn send_status_update(&self) -> Result<()> {
         let snapshot = self.state.snapshot().await;
 
+        // Build CurrentMediaInfo from current queue item if available
+        let current_media = if let Some(media_id) = snapshot.current_media_id {
+            // Get current queue item to extract filename
+            if let Some(item) = self.state.current_queue_item().await {
+                Some(crate::network::protocol::CurrentMediaInfo {
+                    id: media_id,
+                    filename: item.filename.clone(),
+                })
+            } else {
+                // Fallback: we have media_id but no queue item
+                // This shouldn't happen in normal operation, but handle gracefully
+                None
+            }
+        } else {
+            None
+        };
+
+        tracing::trace!(
+            "Status update sent: media={:?}, playing={}",
+            current_media,
+            snapshot.is_playing
+        );
+
         let message = ClientMessage::status_update(
             snapshot.client_id,
-            snapshot.current_media_id,
+            current_media,
             snapshot.current_position,
             snapshot.is_playing,
-            snapshot.playlist_id,
-            snapshot.playlist_index,
         );
 
         self.ws_tx
             .send(message)
             .map_err(|e| crate::error::MontrError::WebSocketSend(format!("Status send failed: {}", e)))?;
-
-        tracing::trace!(
-            "Status update sent: media={:?}, playing={}, playlist={:?}",
-            snapshot.current_media_id,
-            snapshot.is_playing,
-            snapshot.playlist_id
-        );
 
         Ok(())
     }
@@ -217,12 +231,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_status_update() {
+        use crate::network::protocol::{MediaInfo, PlaylistItem};
+
         let state = Arc::new(AppState::new("test-id".to_string(), "Test Client".to_string()));
         let (ws_tx, mut ws_rx) = mpsc::unbounded_channel();
         let cancel_token = CancellationToken::new();
 
+        // Set up a playlist with an item so we have a filename
+        let items = vec![PlaylistItem {
+            id: 1,
+            media_id: 42,
+            filename: "test.mp4".to_string(),
+            download_url: "http://localhost:3000/api/media/42/download".to_string(),
+            media_type: "video".to_string(),
+            duration: Some(120.0),
+            checksum: Some("abc123".to_string()),
+            order_index: 0,
+            image_duration: 5,
+        }];
+
+        state.update_playlist(1, items, false).await.unwrap();
+        state.next_item().await; // Advance to first item
         state.set_playing(true).await;
-        state.set_current_media(Some(42)).await;
 
         let reporter = StatusReporter::new(state, ws_tx, 30, 10, cancel_token);
 
@@ -233,7 +263,11 @@ mod tests {
         match message {
             ClientMessage::StatusUpdate(status) => {
                 assert_eq!(status.client_id, "test-id");
-                assert_eq!(status.current_media_id, Some(42));
+                assert!(status.current_media.is_some());
+                if let Some(media) = status.current_media {
+                    assert_eq!(media.id, 42);
+                    assert_eq!(media.filename, "test.mp4");
+                }
                 assert_eq!(status.is_playing, true);
             }
             _ => panic!("Expected StatusUpdate message"),

@@ -58,7 +58,7 @@ export interface StatusUpdateMessage {
   type: 'status_update';
   clientId: string;
   currentMedia: CurrentMediaInfo | null;
-  position: number;
+  position: number | null;
   isPlaying: boolean;
   timestamp: number;
 }
@@ -181,7 +181,7 @@ export const statusUpdateMessageSchema = z.object({
   type: z.literal('status_update'),
   clientId: z.string().uuid('Client ID must be a valid UUID'),
   currentMedia: currentMediaInfoSchema.nullable(),
-  position: z.number().min(0, 'Position must be non-negative'),
+  position: z.number().min(0, 'Position must be non-negative').nullable(),
   isPlaying: z.boolean(),
   timestamp: z.number(),
 });

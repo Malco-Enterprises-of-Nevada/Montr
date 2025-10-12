@@ -59,6 +59,12 @@ export async function handleRegister(
           capabilities: capabilitiesJson,
         });
 
+        // Set status to online after registration
+        client = await clientService.updateClient(clientId, {
+          status: 'online',
+          last_seen: new Date().toISOString(),
+        });
+
         logger.info(`New client registered: ${clientId} - ${client.name}`);
       } else {
         throw error;
@@ -108,8 +114,8 @@ export async function handleStatusUpdate(
     // Record status in database
     await clientService.recordClientStatus({
       client_id: clientId,
-      current_media_id: currentMedia?.id,
-      position,
+      current_media_id: currentMedia?.id ?? undefined,
+      position: position ?? undefined,
       is_playing: isPlaying,
     });
 

@@ -56,17 +56,15 @@ impl MpvEventHandler {
 
     /// Start event processing loop
     ///
-    /// This would normally poll libmpv for events in a loop.
-    /// Simplified for now since libmpv event handling requires careful setup.
+    /// NOTE: The actual MPV event polling is now implemented in the
+    /// PlaybackEngine's `subscribe_events()` method in engine.rs.
+    /// This handler is kept for manual event injection in tests.
     pub async fn start(self) -> Result<()> {
-        // In a full implementation, this would:
-        // 1. Create an event context from libmpv
-        // 2. Loop forever polling for events
-        // 3. Match on event types and send to channel
-        // 4. Handle shutdown gracefully
+        // This is intentionally minimal - the real event polling happens
+        // in PlaybackEngine::subscribe_events() which uses libmpv's event
+        // context in a spawn_blocking task.
         //
-        // For now, this is a placeholder that can be filled in
-        // during integration testing.
+        // This handler is primarily used for test event injection via emit().
 
         Ok(())
     }

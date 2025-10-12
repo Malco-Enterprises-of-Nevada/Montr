@@ -1,0 +1,22 @@
+[server]
+url = "http://localhost:3001"
+reconnect_interval = 1
+heartbeat_interval = 5
+
+[client]
+id = "550e8400-e29b-41d4-a716-446655440000"
+name = "Test Client"
+
+[playback]
+default_image_duration = 5
+loop_playlist = true
+media_cache_dir = "/tmp/montr-test-cache"
+max_cache_size_mb = 100
+
+[system]
+auto_start = false
+log_level = "debug"
+log_file = "/tmp/montr-test.log"
+
+[display]
+fullscreen = false

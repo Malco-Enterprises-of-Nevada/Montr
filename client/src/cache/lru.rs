@@ -23,7 +23,8 @@ struct CacheEntry {
     size: u64,
     /// Last access time (Unix timestamp)
     last_access: u64,
-    /// Media ID
+    /// Media ID (for future use in cache invalidation)
+    #[allow(dead_code)]
     media_id: u32,
 }
 

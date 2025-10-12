@@ -142,17 +142,13 @@ async fn run_client(config: config::Config) -> Result<()> {
 
     // Send registration message
     let capabilities = ClientCapabilities {
-        video_formats: vec!["mp4".to_string(), "mkv".to_string(), "webm".to_string()],
-        image_formats: vec!["jpg".to_string(), "jpeg".to_string(), "png".to_string()],
-        max_resolution: "1920x1080".to_string(),
-        hardware_acceleration: true,
+        video: true,
+        image: true,
     };
 
     let register_msg = ClientMessage::register(
         config.client.id.clone(),
-        config.client.name.clone(),
         montr_client::VERSION.to_string(),
-        std::env::consts::OS.to_string(),
         capabilities,
     );
 
