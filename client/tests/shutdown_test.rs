@@ -167,7 +167,7 @@ fn test_client_cleanup_on_shutdown() {
     };
 
     // Start the client
-    let mut child = Command::new(binary_path)
+    let child = Command::new(binary_path)
         .arg("--config")
         .arg(&config_path)
         .stdout(Stdio::piped())

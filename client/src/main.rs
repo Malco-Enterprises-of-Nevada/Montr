@@ -162,7 +162,7 @@ async fn run_client(config: config::Config) -> Result<()> {
     let coordinator = StateCoordinator::new(
         (*app_state).clone(),
         cache_manager.clone(),
-        &playback_engine,
+        playback_engine.as_ref(),
         cancel_token.clone(),
     );
 

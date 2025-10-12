@@ -10,7 +10,7 @@
 use crate::cache::CacheManager;
 use crate::error::{MontrError, Result};
 use crate::network::{PlaylistItem, ServerMessage};
-use crate::playback::engine::{PlaybackCommand, PlaybackEngine};
+use crate::playback::engine::{PlaybackCommand, PlaybackEngineOps};
 use crate::state::app_state::AppState;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -63,7 +63,7 @@ impl StateCoordinator {
     pub fn new(
         state: AppState,
         cache_manager: Arc<CacheManager>,
-        playback_engine: &PlaybackEngine,
+        playback_engine: &impl PlaybackEngineOps,
         cancel_token: CancellationToken,
     ) -> Self {
         let (message_tx, message_rx) = mpsc::unbounded_channel();
@@ -359,7 +359,8 @@ impl StateCoordinator {
 mod tests {
     use super::*;
     use crate::network::HttpClient;
-    use crate::network::{MediaInfo, PlaylistAssignedMessage};
+    use crate::network::PlaylistAssignedMessage;
+    use crate::playback::engine::MockPlaybackEngineOps;
     use tempfile::TempDir;
 
     fn create_test_item(id: u32, media_id: u32) -> PlaylistItem {
@@ -374,6 +375,25 @@ mod tests {
             order_index: id - 1,
             image_duration: 5,
         }
+    }
+
+    fn create_mock_playback_engine() -> MockPlaybackEngineOps {
+        let mut mock = MockPlaybackEngineOps::new();
+
+        // Create a channel that persists across calls
+        let (tx, mut rx) = mpsc::unbounded_channel::<PlaybackCommand>();
+
+        // Spawn a task to consume commands so the channel doesn't fill up
+        tokio::spawn(async move {
+            while let Some(_cmd) = rx.recv().await {
+                // Just consume the commands in tests
+            }
+        });
+
+        mock.expect_command_sender()
+            .returning(move || tx.clone());
+
+        mock
     }
 
     #[tokio::test]
@@ -391,7 +411,7 @@ mod tests {
             .unwrap(),
         );
 
-        let playback_engine = PlaybackEngine::new(cancel_token.clone()).unwrap();
+        let playback_engine = create_mock_playback_engine();
         let coordinator = StateCoordinator::new(
             state,
             cache_manager,
@@ -418,15 +438,22 @@ mod tests {
             .unwrap(),
         );
 
-        let playback_engine = PlaybackEngine::new(cancel_token.clone()).unwrap();
+        let playback_engine = create_mock_playback_engine();
         let mut coordinator = StateCoordinator::new(
             state.clone(),
-            cache_manager,
+            cache_manager.clone(),
             &playback_engine,
             cancel_token,
         );
 
         let items = vec![create_test_item(1, 1), create_test_item(2, 2)];
+
+        // Create dummy media files in cache
+        for item in &items {
+            let cache_path = cache_manager.get_cache_path(item.media_id, &item.filename);
+            std::fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+            std::fs::write(&cache_path, b"dummy video data").unwrap();
+        }
 
         let message = ServerMessage::PlaylistAssigned(PlaylistAssignedMessage {
             playlist_id: 42,
@@ -461,25 +488,49 @@ mod tests {
             .unwrap(),
         );
 
-        let playback_engine = PlaybackEngine::new(cancel_token.clone()).unwrap();
+        let playback_engine = create_mock_playback_engine();
         let mut coordinator = StateCoordinator::new(
             state.clone(),
-            cache_manager,
+            cache_manager.clone(),
             &playback_engine,
             cancel_token,
         );
 
         // Set up playlist
         let items = vec![create_test_item(1, 1), create_test_item(2, 2)];
+
+        // Create dummy media files in cache
+        for item in &items {
+            let cache_path = cache_manager.get_cache_path(item.media_id, &item.filename);
+            std::fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+            std::fs::write(&cache_path, b"dummy video data").unwrap();
+        }
+
         state.update_playlist(1, items, false).await.unwrap();
+        state.set_current_media(Some(1)).await;
         state.set_playing(true).await;
+
+        // Verify initial state
+        assert_eq!(state.current_media_id().await, Some(1));
+        assert_eq!(state.is_playing().await, true);
 
         // Handle media finished event
         let event = PlaybackEventMessage::MediaFinished { media_id: 1 };
         coordinator.handle_playback_event(event).await.unwrap();
 
-        // State should advance to next
+        // After handling MediaFinished:
+        // - Playing should be set to false
+        // - A PlaybackCommand should have been sent (we can't verify this directly in this test)
+        // - The current_media_id won't change until MediaStarted event is received
+        assert_eq!(state.is_playing().await, false);
+
+        // Simulate the MediaStarted event that would come from the playback engine
+        let started_event = PlaybackEventMessage::MediaStarted { media_id: 2 };
+        coordinator.handle_playback_event(started_event).await.unwrap();
+
+        // Now state should reflect the next media
         assert_eq!(state.current_media_id().await, Some(2));
+        assert_eq!(state.is_playing().await, true);
     }
 
     #[tokio::test]
@@ -497,7 +548,7 @@ mod tests {
             .unwrap(),
         );
 
-        let playback_engine = PlaybackEngine::new(cancel_token.clone()).unwrap();
+        let playback_engine = create_mock_playback_engine();
         let coordinator = StateCoordinator::new(
             state,
             cache_manager,
