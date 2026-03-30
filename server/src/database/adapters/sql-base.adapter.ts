@@ -1,0 +1,563 @@
+/**
+ * Abstract base class for SQL-based database adapters.
+ * Provides shared business logic (filtering, pagination, field validation)
+ * that MySQL, MSSQL, and SQLite adapters all inherit.
+ */
+
+import { DatabaseAdapter } from './base.adapter';
+import {
+  MediaFile,
+  CreateMediaInput,
+  Playlist,
+  CreatePlaylistInput,
+  UpdatePlaylistInput,
+  PlaylistItem,
+  AddPlaylistItemInput,
+  UpdatePlaylistItemInput,
+  PlaylistWithItems,
+  Client,
+  CreateClientInput,
+  UpdateClientInput,
+  ClientStatus,
+  CreateClientStatusInput,
+  ClientWithStatus,
+  PaginationParams,
+  PaginatedResult,
+  MediaFilter,
+  ClientFilter,
+  PlaylistItemWithMedia,
+} from '../types';
+import { MigrationExecutor } from '../migrations/runner';
+
+/** Fields that can be updated on media_files */
+const MEDIA_UPDATABLE_FIELDS = new Set([
+  'filename', 'original_filename', 'filepath', 'type', 'mime_type',
+  'file_size', 'duration', 'width', 'height', 'checksum',
+]);
+
+/** Row result from a query with execution metadata */
+export interface ExecuteResult {
+  lastInsertId: number;
+  affectedRows: number;
+}
+
+/**
+ * Abstract SQL adapter base class.
+ * Subclasses must implement the raw database access methods and
+ * provide dialect-specific SQL where needed.
+ */
+export abstract class SqlBaseAdapter implements DatabaseAdapter {
+  // ── Abstract methods (dialect-specific) ──────────────────────────────────
+
+  abstract connect(): Promise<void>;
+  abstract disconnect(): Promise<void>;
+  abstract isConnected(): boolean;
+
+  /** Execute a query that returns rows */
+  abstract rawQuery<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+
+  /** Execute a query that returns a single row */
+  abstract rawQueryOne<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T | null>;
+
+  /** Execute a statement (INSERT/UPDATE/DELETE) */
+  abstract rawExecute(sql: string, params?: unknown[]): Promise<ExecuteResult>;
+
+  /** Execute multiple statements inside a transaction */
+  abstract rawTransaction(fn: () => Promise<void>): Promise<void>;
+
+  /** Returns a MigrationExecutor for use by the migration runner */
+  abstract getMigrationExecutor(): MigrationExecutor;
+
+  /**
+   * Dialect-specific placeholder for parameterized queries.
+   * SQLite/MySQL use `?`, MSSQL uses `@p1`, `@p2`, etc.
+   * Override in MSSQL adapter.
+   */
+  protected placeholder(_index: number): string {
+    return '?';
+  }
+
+  /**
+   * Dialect-specific function for current timestamp in SQL.
+   * SQLite: CURRENT_TIMESTAMP, MySQL: NOW(), MSSQL: GETUTCDATE()
+   */
+  protected abstract currentTimestampFn(): string;
+
+  /**
+   * Build a pagination clause.
+   * SQLite/MySQL: LIMIT ? OFFSET ?
+   * MSSQL: OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+   */
+  protected paginationClause(paramStartIndex: number): string {
+    return `LIMIT ${this.placeholder(paramStartIndex)} OFFSET ${this.placeholder(paramStartIndex + 1)}`;
+  }
+
+  /** Pagination params order: [limit, offset] for SQLite/MySQL, [offset, limit] for MSSQL */
+  protected paginationParams(limit: number, offset: number): unknown[] {
+    return [limit, offset];
+  }
+
+  // ── Media operations ─────────────────────────────────────────────────────
+
+  async createMedia(input: CreateMediaInput): Promise<MediaFile> {
+    const p = this.placeholder;
+    const result = await this.rawExecute(
+      `INSERT INTO media_files (
+        filename, original_filename, filepath, type, mime_type,
+        file_size, duration, width, height, checksum
+      ) VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)}, ${p(10)})`,
+      [
+        input.filename, input.original_filename, input.filepath, input.type,
+        input.mime_type || null, input.file_size || null, input.duration || null,
+        input.width || null, input.height || null, input.checksum || null,
+      ],
+    );
+
+    const media = await this.getMediaById(result.lastInsertId);
+    if (!media) throw new Error('Failed to retrieve created media');
+    return media;
+  }
+
+  async getMediaById(id: number): Promise<MediaFile | null> {
+    return this.rawQueryOne<MediaFile>(
+      `SELECT * FROM media_files WHERE id = ${this.placeholder(1)}`,
+      [id],
+    );
+  }
+
+  async getAllMedia(
+    pagination: PaginationParams,
+    filter?: MediaFilter,
+  ): Promise<PaginatedResult<MediaFile>> {
+    const { page, limit } = pagination;
+    const offset = (page - 1) * limit;
+
+    let whereClause = '';
+    const params: unknown[] = [];
+    let paramIndex = 1;
+
+    if (filter) {
+      const conditions: string[] = [];
+      if (filter.type) {
+        conditions.push(`type = ${this.placeholder(paramIndex++)}`);
+        params.push(filter.type);
+      }
+      if (filter.search) {
+        conditions.push(`(original_filename LIKE ${this.placeholder(paramIndex++)} OR filename LIKE ${this.placeholder(paramIndex++)})`);
+        params.push(`%${filter.search}%`, `%${filter.search}%`);
+      }
+      if (conditions.length > 0) {
+        whereClause = `WHERE ${conditions.join(' AND ')}`;
+      }
+    }
+
+    const countRows = await this.rawQuery<{ count: number }>(
+      `SELECT COUNT(*) as count FROM media_files ${whereClause}`,
+      params,
+    );
+    const count = countRows[0]?.count ?? 0;
+
+    const data = await this.rawQuery<MediaFile>(
+      `SELECT * FROM media_files ${whereClause} ORDER BY created_at DESC ${this.paginationClause(paramIndex)}`,
+      [...params, ...this.paginationParams(limit, offset)],
+    );
+
+    return {
+      data,
+      pagination: {
+        page,
+        limit,
+        total: count,
+        totalPages: Math.ceil(count / limit),
+      },
+    };
+  }
+
+  async updateMedia(id: number, updates: Partial<CreateMediaInput>): Promise<MediaFile> {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    let paramIndex = 1;
+
+    Object.entries(updates).forEach(([key, value]) => {
+      if (!MEDIA_UPDATABLE_FIELDS.has(key)) {
+        throw new Error(`Invalid field name: ${key}`);
+      }
+      fields.push(`${key} = ${this.placeholder(paramIndex++)}`);
+      values.push(value);
+    });
+
+    if (fields.length === 0) {
+      const media = await this.getMediaById(id);
+      if (!media) throw new Error(`Media with ID ${id} not found`);
+      return media;
+    }
+
+    values.push(id);
+    await this.rawExecute(
+      `UPDATE media_files SET ${fields.join(', ')} WHERE id = ${this.placeholder(paramIndex)}`,
+      values,
+    );
+
+    const media = await this.getMediaById(id);
+    if (!media) throw new Error(`Media with ID ${id} not found`);
+    return media;
+  }
+
+  async deleteMedia(id: number): Promise<void> {
+    await this.rawExecute(
+      `DELETE FROM media_files WHERE id = ${this.placeholder(1)}`,
+      [id],
+    );
+  }
+
+  async getMediaByChecksum(checksum: string): Promise<MediaFile | null> {
+    return this.rawQueryOne<MediaFile>(
+      `SELECT * FROM media_files WHERE checksum = ${this.placeholder(1)}`,
+      [checksum],
+    );
+  }
+
+  // ── Playlist operations ──────────────────────────────────────────────────
+
+  async createPlaylist(input: CreatePlaylistInput): Promise<Playlist> {
+    const result = await this.rawExecute(
+      `INSERT INTO playlists (name, description) VALUES (${this.placeholder(1)}, ${this.placeholder(2)})`,
+      [input.name, input.description || null],
+    );
+
+    const playlist = await this.getPlaylistById(result.lastInsertId);
+    if (!playlist) throw new Error('Failed to retrieve created playlist');
+    return playlist;
+  }
+
+  async getPlaylistById(id: number): Promise<Playlist | null> {
+    return this.rawQueryOne<Playlist>(
+      `SELECT * FROM playlists WHERE id = ${this.placeholder(1)}`,
+      [id],
+    );
+  }
+
+  async getPlaylistWithItems(id: number): Promise<PlaylistWithItems | null> {
+    const playlist = await this.getPlaylistById(id);
+    if (!playlist) return null;
+
+    const rows = await this.rawQuery<PlaylistItem & {
+      media_id: number;
+      filename: string;
+      original_filename: string;
+      filepath: string;
+      type: 'video' | 'image';
+      mime_type: string | null;
+      file_size: number | null;
+      duration: number | null;
+      width: number | null;
+      height: number | null;
+      checksum: string | null;
+      media_created_at: string;
+      media_updated_at: string;
+    }>(
+      `SELECT
+        pi.id, pi.playlist_id, pi.media_id, pi.order_index, pi.image_duration, pi.created_at,
+        mf.id as media_id, mf.filename, mf.original_filename, mf.filepath, mf.type,
+        mf.mime_type, mf.file_size, mf.duration, mf.width, mf.height, mf.checksum,
+        mf.created_at as media_created_at, mf.updated_at as media_updated_at
+      FROM playlist_items pi
+      JOIN media_files mf ON pi.media_id = mf.id
+      WHERE pi.playlist_id = ${this.placeholder(1)}
+      ORDER BY pi.order_index ASC`,
+      [id],
+    );
+
+    const items: PlaylistItemWithMedia[] = rows.map((row) => ({
+      id: row.id,
+      playlist_id: row.playlist_id,
+      media_id: row.media_id,
+      order_index: row.order_index,
+      image_duration: row.image_duration,
+      created_at: row.created_at,
+      media: {
+        id: row.media_id,
+        filename: row.filename,
+        original_filename: row.original_filename,
+        filepath: row.filepath,
+        type: row.type,
+        mime_type: row.mime_type,
+        file_size: row.file_size,
+        duration: row.duration,
+        width: row.width,
+        height: row.height,
+        checksum: row.checksum,
+        created_at: row.media_created_at,
+        updated_at: row.media_updated_at,
+      },
+    }));
+
+    return { ...playlist, items };
+  }
+
+  async getAllPlaylists(): Promise<Playlist[]> {
+    return this.rawQuery<Playlist>('SELECT * FROM playlists ORDER BY created_at DESC');
+  }
+
+  async updatePlaylist(id: number, input: UpdatePlaylistInput): Promise<Playlist> {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    let paramIndex = 1;
+
+    if (input.name !== undefined) {
+      fields.push(`name = ${this.placeholder(paramIndex++)}`);
+      values.push(input.name);
+    }
+    if (input.description !== undefined) {
+      fields.push(`description = ${this.placeholder(paramIndex++)}`);
+      values.push(input.description);
+    }
+
+    if (fields.length === 0) {
+      const playlist = await this.getPlaylistById(id);
+      if (!playlist) throw new Error(`Playlist with ID ${id} not found`);
+      return playlist;
+    }
+
+    values.push(id);
+    await this.rawExecute(
+      `UPDATE playlists SET ${fields.join(', ')} WHERE id = ${this.placeholder(paramIndex)}`,
+      values,
+    );
+
+    const playlist = await this.getPlaylistById(id);
+    if (!playlist) throw new Error(`Playlist with ID ${id} not found`);
+    return playlist;
+  }
+
+  async deletePlaylist(id: number): Promise<void> {
+    await this.rawExecute(
+      `DELETE FROM playlists WHERE id = ${this.placeholder(1)}`,
+      [id],
+    );
+  }
+
+  // ── Playlist item operations ─────────────────────────────────────────────
+
+  async addPlaylistItem(input: AddPlaylistItemInput): Promise<PlaylistItem> {
+    const result = await this.rawExecute(
+      `INSERT INTO playlist_items (playlist_id, media_id, order_index, image_duration)
+       VALUES (${this.placeholder(1)}, ${this.placeholder(2)}, ${this.placeholder(3)}, ${this.placeholder(4)})`,
+      [input.playlist_id, input.media_id, input.order_index, input.image_duration || 5],
+    );
+
+    const item = await this.getPlaylistItemById(result.lastInsertId);
+    if (!item) throw new Error('Failed to retrieve created playlist item');
+    return item;
+  }
+
+  async getPlaylistItems(playlistId: number): Promise<PlaylistItem[]> {
+    return this.rawQuery<PlaylistItem>(
+      `SELECT * FROM playlist_items WHERE playlist_id = ${this.placeholder(1)} ORDER BY order_index ASC`,
+      [playlistId],
+    );
+  }
+
+  async getPlaylistItemById(itemId: number): Promise<PlaylistItem | null> {
+    return this.rawQueryOne<PlaylistItem>(
+      `SELECT * FROM playlist_items WHERE id = ${this.placeholder(1)}`,
+      [itemId],
+    );
+  }
+
+  async updatePlaylistItem(itemId: number, input: UpdatePlaylistItemInput): Promise<PlaylistItem> {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    let paramIndex = 1;
+
+    if (input.order_index !== undefined) {
+      fields.push(`order_index = ${this.placeholder(paramIndex++)}`);
+      values.push(input.order_index);
+    }
+    if (input.image_duration !== undefined) {
+      fields.push(`image_duration = ${this.placeholder(paramIndex++)}`);
+      values.push(input.image_duration);
+    }
+
+    if (fields.length === 0) {
+      const item = await this.getPlaylistItemById(itemId);
+      if (!item) throw new Error(`Playlist item with ID ${itemId} not found`);
+      return item;
+    }
+
+    values.push(itemId);
+    await this.rawExecute(
+      `UPDATE playlist_items SET ${fields.join(', ')} WHERE id = ${this.placeholder(paramIndex)}`,
+      values,
+    );
+
+    const item = await this.getPlaylistItemById(itemId);
+    if (!item) throw new Error(`Playlist item with ID ${itemId} not found`);
+    return item;
+  }
+
+  async deletePlaylistItem(itemId: number): Promise<void> {
+    await this.rawExecute(
+      `DELETE FROM playlist_items WHERE id = ${this.placeholder(1)}`,
+      [itemId],
+    );
+  }
+
+  async reorderPlaylistItems(_playlistId: number, itemIds: number[]): Promise<void> {
+    await this.rawTransaction(async () => {
+      // First, set all to negative temporary values to avoid UNIQUE constraint violations
+      for (let i = 0; i < itemIds.length; i++) {
+        await this.rawExecute(
+          `UPDATE playlist_items SET order_index = ${this.placeholder(1)} WHERE id = ${this.placeholder(2)}`,
+          [-(i + 1), itemIds[i]],
+        );
+      }
+      // Then set to final values
+      for (let i = 0; i < itemIds.length; i++) {
+        await this.rawExecute(
+          `UPDATE playlist_items SET order_index = ${this.placeholder(1)} WHERE id = ${this.placeholder(2)}`,
+          [i, itemIds[i]],
+        );
+      }
+    });
+  }
+
+  // ── Client operations ────────────────────────────────────────────────────
+
+  async createClient(input: CreateClientInput): Promise<Client> {
+    await this.rawExecute(
+      `INSERT INTO clients (id, name, version, capabilities, last_seen)
+       VALUES (${this.placeholder(1)}, ${this.placeholder(2)}, ${this.placeholder(3)}, ${this.placeholder(4)}, ${this.currentTimestampFn()})`,
+      [input.id, input.name, input.version || null, input.capabilities || null],
+    );
+
+    const client = await this.getClientById(input.id);
+    if (!client) throw new Error('Failed to retrieve created client');
+    return client;
+  }
+
+  async getClientById(id: string): Promise<Client | null> {
+    return this.rawQueryOne<Client>(
+      `SELECT * FROM clients WHERE id = ${this.placeholder(1)}`,
+      [id],
+    );
+  }
+
+  async getAllClients(filter?: ClientFilter): Promise<Client[]> {
+    let whereClause = '';
+    const params: unknown[] = [];
+    let paramIndex = 1;
+
+    if (filter) {
+      const conditions: string[] = [];
+      if (filter.status) {
+        conditions.push(`status = ${this.placeholder(paramIndex++)}`);
+        params.push(filter.status);
+      }
+      if (filter.assigned_playlist_id !== undefined) {
+        conditions.push(`assigned_playlist_id = ${this.placeholder(paramIndex++)}`);
+        params.push(filter.assigned_playlist_id);
+      }
+      if (conditions.length > 0) {
+        whereClause = `WHERE ${conditions.join(' AND ')}`;
+      }
+    }
+
+    return this.rawQuery<Client>(
+      `SELECT * FROM clients ${whereClause} ORDER BY created_at DESC`,
+      params,
+    );
+  }
+
+  async updateClient(id: string, input: UpdateClientInput): Promise<Client> {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    let paramIndex = 1;
+
+    if (input.name !== undefined) {
+      fields.push(`name = ${this.placeholder(paramIndex++)}`);
+      values.push(input.name);
+    }
+    if (input.assigned_playlist_id !== undefined) {
+      fields.push(`assigned_playlist_id = ${this.placeholder(paramIndex++)}`);
+      values.push(input.assigned_playlist_id);
+    }
+    if (input.status !== undefined) {
+      fields.push(`status = ${this.placeholder(paramIndex++)}`);
+      values.push(input.status);
+    }
+    if (input.last_seen !== undefined) {
+      fields.push(`last_seen = ${this.placeholder(paramIndex++)}`);
+      values.push(input.last_seen);
+    }
+    if (input.version !== undefined) {
+      fields.push(`version = ${this.placeholder(paramIndex++)}`);
+      values.push(input.version);
+    }
+    if (input.capabilities !== undefined) {
+      fields.push(`capabilities = ${this.placeholder(paramIndex++)}`);
+      values.push(input.capabilities);
+    }
+
+    if (fields.length === 0) {
+      const client = await this.getClientById(id);
+      if (!client) throw new Error(`Client with ID ${id} not found`);
+      return client;
+    }
+
+    values.push(id);
+    await this.rawExecute(
+      `UPDATE clients SET ${fields.join(', ')} WHERE id = ${this.placeholder(paramIndex)}`,
+      values,
+    );
+
+    const client = await this.getClientById(id);
+    if (!client) throw new Error(`Client with ID ${id} not found`);
+    return client;
+  }
+
+  async deleteClient(id: string): Promise<void> {
+    await this.rawExecute(
+      `DELETE FROM clients WHERE id = ${this.placeholder(1)}`,
+      [id],
+    );
+  }
+
+  // ── Client status operations ─────────────────────────────────────────────
+
+  async createClientStatus(input: CreateClientStatusInput): Promise<ClientStatus> {
+    const result = await this.rawExecute(
+      `INSERT INTO client_status (client_id, current_media_id, position, is_playing, error_message)
+       VALUES (${this.placeholder(1)}, ${this.placeholder(2)}, ${this.placeholder(3)}, ${this.placeholder(4)}, ${this.placeholder(5)})`,
+      [
+        input.client_id,
+        input.current_media_id || null,
+        input.position || null,
+        input.is_playing ? 1 : 0,
+        input.error_message || null,
+      ],
+    );
+
+    const status = await this.rawQueryOne<ClientStatus>(
+      `SELECT * FROM client_status WHERE id = ${this.placeholder(1)}`,
+      [result.lastInsertId],
+    );
+    if (!status) throw new Error('Failed to retrieve created client status');
+    return status;
+  }
+
+  async getLatestClientStatus(clientId: string): Promise<ClientStatus | null> {
+    return this.rawQueryOne<ClientStatus>(
+      `SELECT * FROM client_status WHERE client_id = ${this.placeholder(1)} ORDER BY timestamp DESC, id DESC LIMIT 1`,
+      [clientId],
+    );
+  }
+
+  async getClientWithStatus(clientId: string): Promise<ClientWithStatus | null> {
+    const client = await this.getClientById(clientId);
+    if (!client) return null;
+
+    const status = await this.getLatestClientStatus(clientId);
+    return { ...client, current_status: status };
+  }
+}

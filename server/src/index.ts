@@ -109,6 +109,16 @@ class MontrServer {
       );
     });
 
+    // UI configuration endpoint (no auth required)
+    this.app.get('/api/ui-config', (_req: Request, res: Response) => {
+      res.json(
+        successResponse({
+          dashboardRefreshInterval: parseInt(process.env.UI_DASHBOARD_REFRESH_MS || '30000', 10),
+          toastDisplayDuration: parseInt(process.env.UI_TOAST_DURATION_MS || '3000', 10),
+        })
+      );
+    });
+
     // Root endpoint - serve web UI
     this.app.get('/', (_req: Request, res: Response) => {
       res.sendFile(path.join(__dirname, 'web', 'public', 'index.html'));
@@ -177,6 +187,13 @@ class MontrServer {
       this.logger.info(
         `WebSocket endpoint: ws://${config.server.host}:${config.server.port}/ws`
       );
+
+      // Warn about API key misconfiguration
+      if (config.security.apiKeyRequired && !config.security.apiKey) {
+        this.logger.warn(
+          'API_KEY_REQUIRED is true but API_KEY is empty. All authenticated API requests will be rejected.'
+        );
+      }
     } catch (error) {
       this.logger.error('Failed to start server:', error);
       throw error;

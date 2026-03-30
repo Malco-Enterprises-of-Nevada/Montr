@@ -4,6 +4,12 @@
 const API_BASE = window.location.origin + '/api';
 const WS_URL = `ws://${window.location.host}/ws`;
 
+// UI configuration (loaded from server, with fallback defaults)
+let UI_CONFIG = {
+    dashboardRefreshInterval: 30000,
+    toastDisplayDuration: 3000,
+};
+
 // State management
 const state = {
     currentView: 'dashboard',
@@ -29,7 +35,7 @@ function showToast(message, type = 'info') {
 
     setTimeout(() => {
         toast.classList.remove('show');
-    }, 3000);
+    }, UI_CONFIG.toastDisplayDuration);
 }
 
 // Format file size
@@ -993,6 +999,17 @@ document.addEventListener('click', (e) => {
 async function init() {
     console.log('Initializing Montr Web UI...');
 
+    // Load UI config from server
+    try {
+        const configResp = await fetch(API_BASE + '/ui-config');
+        const configData = await configResp.json();
+        if (configData.success && configData.data) {
+            UI_CONFIG = { ...UI_CONFIG, ...configData.data };
+        }
+    } catch (e) {
+        console.warn('Failed to load UI config, using defaults:', e);
+    }
+
     // Initialize navigation
     initNavigation();
 
@@ -1011,14 +1028,12 @@ async function init() {
     // Load initial view
     loadDashboard();
 
-    // TODO: This 30s refresh interval and the 3s toast timeout (line 32) are hardcoded.
-    // Consider making UI refresh intervals configurable or at least defined as constants.
-    // Auto-refresh dashboard every 30 seconds
+    // Auto-refresh dashboard
     setInterval(() => {
         if (state.currentView === 'dashboard') {
             checkHealth();
         }
-    }, 30000);
+    }, UI_CONFIG.dashboardRefreshInterval);
 
     console.log('Montr Web UI initialized successfully');
 }

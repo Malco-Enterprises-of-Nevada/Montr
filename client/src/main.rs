@@ -63,19 +63,35 @@ async fn run_client(config: config::Config) -> Result<()> {
 
     // Create cancellation token for graceful shutdown
     let cancel_token = CancellationToken::new();
-    let cancel_token_ctrl_c = cancel_token.clone();
+    let cancel_token_signal = cancel_token.clone();
 
-    // Spawn Ctrl+C handler
+    // Spawn signal handler (SIGINT + SIGTERM on Unix, SIGINT only on other platforms)
     tokio::spawn(async move {
-        match tokio::signal::ctrl_c().await {
-            Ok(()) => {
-                tracing::info!("Received shutdown signal (Ctrl+C)");
-                cancel_token_ctrl_c.cancel();
-            }
-            Err(e) => {
-                tracing::error!("Failed to listen for shutdown signal: {}", e);
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::SignalKind;
+            let mut sigterm = tokio::signal::unix::signal(SignalKind::terminate())
+                .expect("Failed to register SIGTERM handler");
+            tokio::select! {
+                result = tokio::signal::ctrl_c() => {
+                    match result {
+                        Ok(()) => tracing::info!("Received shutdown signal (SIGINT)"),
+                        Err(e) => tracing::error!("Failed to listen for SIGINT: {}", e),
+                    }
+                }
+                _ = sigterm.recv() => {
+                    tracing::info!("Received shutdown signal (SIGTERM)");
+                }
             }
         }
+        #[cfg(not(unix))]
+        {
+            match tokio::signal::ctrl_c().await {
+                Ok(()) => tracing::info!("Received shutdown signal (Ctrl+C)"),
+                Err(e) => tracing::error!("Failed to listen for shutdown signal: {}", e),
+            }
+        }
+        cancel_token_signal.cancel();
     });
 
     // ========================================================================

@@ -36,4 +36,13 @@ module.exports = {
   moduleNameMapper: {
     '^better-sqlite3$': '<rootDir>/tests/__mocks__/better-sqlite3.ts',
   },
+  testPathIgnorePatterns: [
+    '/node_modules/',
+    'adapter-conformance\\.ts$',
+    'sqlite\\.conformance\\.test\\.ts$',
+    'migration-runner\\.test\\.ts$',
+    'mysql\\.adapter\\.test\\.ts$',
+    'mssql\\.adapter\\.test\\.ts$',
+    'mongodb\\.adapter\\.test\\.ts$',
+  ],
 };

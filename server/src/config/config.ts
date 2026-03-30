@@ -70,6 +70,13 @@ export interface Config {
     level: string;
     logFile?: string;
   };
+
+  // WebSocket configuration
+  websocket: {
+    healthCheckInterval: number;
+    staleTimeout: number;
+    heartbeatTimeout: number;
+  };
 }
 
 /**
@@ -160,6 +167,12 @@ function loadConfig(): Config {
     logging: {
       level: process.env.LOG_LEVEL || 'info',
       logFile: process.env.LOG_FILE,
+    },
+
+    websocket: {
+      healthCheckInterval: parseInt(process.env.WS_HEALTH_CHECK_INTERVAL || '30000', 10),
+      staleTimeout: parseInt(process.env.WS_STALE_TIMEOUT || '300000', 10),
+      heartbeatTimeout: parseInt(process.env.WS_HEARTBEAT_TIMEOUT || '60000', 10),
     },
   };
 

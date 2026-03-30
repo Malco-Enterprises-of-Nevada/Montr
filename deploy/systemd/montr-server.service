@@ -1,0 +1,31 @@
+[Unit]
+Description=Montr Media Server
+Documentation=https://github.com/montr/montr
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=montr
+Group=montr
+WorkingDirectory=/opt/montr-server
+EnvironmentFile=/etc/montr-server/montr-server.env
+ExecStart=/usr/bin/node /opt/montr-server/dist/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# Security hardening
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+ReadWritePaths=/opt/montr-server/data /opt/montr-server/storage /opt/montr-server/logs
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=montr-server
+
+[Install]
+WantedBy=multi-user.target
