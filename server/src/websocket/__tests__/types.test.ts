@@ -184,6 +184,22 @@ describe('WebSocket Message Types', () => {
       expect(result.success).toBe(true);
     });
 
+    it('should validate error message with optional timestamp', () => {
+      const message = {
+        type: 'error',
+        clientId: '550e8400-e29b-41d4-a716-446655440000',
+        error: 'Playback failed',
+        context: { mediaId: 1 },
+        timestamp: 1704067200000,
+      };
+
+      const result = errorMessageSchema.safeParse(message);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.timestamp).toBe(1704067200000);
+      }
+    });
+
     it('should reject empty error message', () => {
       const message = {
         type: 'error',

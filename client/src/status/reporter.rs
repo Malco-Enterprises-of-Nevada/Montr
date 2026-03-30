@@ -179,7 +179,7 @@ impl StatusReporter {
     }
 
     /// Send an error report
-    pub async fn send_error(&self, error: String, context: Option<String>) -> Result<()> {
+    pub async fn send_error(&self, error: String, context: Option<std::collections::HashMap<String, serde_json::Value>>) -> Result<()> {
         let client_id = self.state.client_id().await;
 
         let message = ClientMessage::error(client_id, error, context);
@@ -282,10 +282,12 @@ mod tests {
 
         let reporter = StatusReporter::new(state, ws_tx, 30, 10, cancel_token);
 
+        let mut ctx = std::collections::HashMap::new();
+        ctx.insert("detail".to_string(), serde_json::json!("Test context"));
         reporter
             .send_error(
                 "Test error".to_string(),
-                Some("Test context".to_string()),
+                Some(ctx.clone()),
             )
             .await
             .unwrap();
@@ -296,7 +298,7 @@ mod tests {
             ClientMessage::Error(err) => {
                 assert_eq!(err.client_id, "test-id");
                 assert_eq!(err.error, "Test error");
-                assert_eq!(err.context, Some("Test context".to_string()));
+                assert_eq!(err.context, Some(ctx));
             }
             _ => panic!("Expected Error message"),
         }

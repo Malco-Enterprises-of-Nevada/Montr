@@ -1,0 +1,18 @@
+{
+  "type": "playlist_updated",
+  "playlistId": 1,
+  "loopPlaylist": true,
+  "items": [
+    {
+      "id": 1,
+      "mediaId": 42,
+      "filename": "video.mp4",
+      "downloadUrl": "http://localhost:3000/api/media/42/download",
+      "type": "video",
+      "duration": 120.5,
+      "checksum": "abc123def456",
+      "orderIndex": 0,
+      "imageDuration": 5
+    }
+  ]
+}

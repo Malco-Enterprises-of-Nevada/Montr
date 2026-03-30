@@ -82,7 +82,7 @@ pub struct StatusUpdateMessage {
     #[serde(rename = "isPlaying")]
     pub is_playing: bool,
 
-    /// Timestamp (Unix epoch seconds)
+    /// Timestamp (Unix epoch milliseconds)
     pub timestamp: u64,
 }
 
@@ -95,7 +95,7 @@ pub struct HeartbeatMessage {
     #[serde(rename = "clientId")]
     pub client_id: String,
 
-    /// Timestamp (Unix epoch seconds)
+    /// Timestamp (Unix epoch milliseconds)
     pub timestamp: u64,
 }
 
@@ -113,9 +113,9 @@ pub struct ErrorMessage {
 
     /// Additional context (e.g., media ID, file path)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub context: Option<String>,
+    pub context: Option<HashMap<String, serde_json::Value>>,
 
-    /// Timestamp (Unix epoch seconds)
+    /// Timestamp (Unix epoch milliseconds)
     pub timestamp: u64,
 }
 
@@ -290,7 +290,7 @@ impl ClientMessage {
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs(),
+                .as_millis() as u64,
         })
     }
 
@@ -301,12 +301,12 @@ impl ClientMessage {
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs(),
+                .as_millis() as u64,
         })
     }
 
     /// Create an error report message
-    pub fn error(client_id: String, error: String, context: Option<String>) -> Self {
+    pub fn error(client_id: String, error: String, context: Option<HashMap<String, serde_json::Value>>) -> Self {
         Self::Error(ErrorMessage {
             client_id,
             error,
@@ -314,7 +314,7 @@ impl ClientMessage {
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs(),
+                .as_millis() as u64,
         })
     }
 
@@ -389,16 +389,18 @@ mod tests {
 
     #[test]
     fn test_error_message_serialization() {
+        let mut ctx = HashMap::new();
+        ctx.insert("media_id".to_string(), serde_json::json!(42));
         let msg = ClientMessage::error(
             "test-id".to_string(),
             "Playback failed".to_string(),
-            Some("media_id:42".to_string()),
+            Some(ctx),
         );
 
         let json = msg.to_json().unwrap();
         assert!(json.contains(r#""type":"error"#));
         assert!(json.contains(r#""error":"Playback failed"#));
-        assert!(json.contains(r#""context":"media_id:42"#));
+        assert!(json.contains(r#""context":{#));
     }
 
     #[test]
