@@ -32,6 +32,11 @@ import { getLogger } from '../../utils/logger';
 
 const logger = getLogger();
 
+const MEDIA_UPDATABLE_FIELDS = new Set([
+  'filename', 'original_filename', 'filepath', 'type', 'mime_type',
+  'file_size', 'duration', 'width', 'height', 'checksum',
+]);
+
 export class SQLiteAdapter implements DatabaseAdapter {
   private db: Database.Database | null = null;
 
@@ -180,16 +185,15 @@ export class SQLiteAdapter implements DatabaseAdapter {
     };
   }
 
-  // TODO: SECURITY - SQL injection via dynamic field names. Object.entries(updates) interpolates
-  // keys directly into SQL (e.g. `${key} = ?`). While values are parameterized, field names are
-  // not whitelisted. An attacker-controlled key like "name = ?, version = ? OR 1=1 --" would be
-  // injected. Add an allowlist of valid column names and reject anything not in it.
   async updateMedia(id: number, updates: Partial<CreateMediaInput>): Promise<MediaFile> {
     const db = this.getDb();
     const fields: string[] = [];
     const values: unknown[] = [];
 
     Object.entries(updates).forEach(([key, value]) => {
+      if (!MEDIA_UPDATABLE_FIELDS.has(key)) {
+        throw new Error(`Invalid field name: ${key}`);
+      }
       fields.push(`${key} = ?`);
       values.push(value);
     });

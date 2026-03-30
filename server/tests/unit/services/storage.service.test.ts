@@ -241,14 +241,9 @@ describe('StorageService', () => {
     });
 
     it('should prevent path traversal', async () => {
-      mockFs.unlink = jest.fn().mockResolvedValue(undefined);
-
-      // Attempt to delete outside storage
-      await storageService.deleteFile('../../../etc/passwd');
-
-      // Should still call unlink but with safe path
-      expect(mockFs.unlink).toHaveBeenCalled();
-      // Note: Current implementation doesn't prevent this - SECURITY GAP!
+      await expect(storageService.deleteFile('../../../etc/passwd'))
+        .rejects
+        .toThrow('path traversal detected');
     });
   });
 
@@ -272,6 +267,11 @@ describe('StorageService', () => {
       const fullPath = storageService.getFullPath('media\\test.mp4');
 
       expect(fullPath).toBeDefined();
+    });
+
+    it('should reject path traversal attempts', () => {
+      expect(() => storageService.getFullPath('../../../etc/passwd'))
+        .toThrow('path traversal detected');
     });
   });
 

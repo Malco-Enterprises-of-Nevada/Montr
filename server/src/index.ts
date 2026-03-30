@@ -54,12 +54,9 @@ class MontrServer {
         },
       })
     );
-    // TODO: SECURITY - Replace origin: true with a whitelist of allowed origins.
-    // origin: true with credentials: true allows any website to make authenticated
-    // cross-origin requests, enabling CSRF attacks.
     this.app.use(
       cors({
-        origin: true,
+        origin: config.security.allowedOrigins,
         credentials: true,
       })
     );

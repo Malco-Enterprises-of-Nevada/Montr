@@ -9,6 +9,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { config } from '../config/config';
 import { getLogger } from '../utils/logger';
+import { AppError, ErrorCode } from '../api/middleware/error-handler';
 
 const logger = getLogger();
 
@@ -23,7 +24,7 @@ export class StorageService {
   private storagePath: string;
 
   constructor() {
-    this.storagePath = config.storage.path;
+    this.storagePath = path.resolve(config.storage.path);
     this.initializeStorage();
   }
 
@@ -103,7 +104,7 @@ export class StorageService {
    * @param filepath - Relative file path in storage
    */
   async deleteFile(filepath: string): Promise<void> {
-    const fullPath = path.join(this.storagePath, filepath);
+    const fullPath = this.getFullPath(filepath);
 
     try {
       await fs.unlink(fullPath);
@@ -122,7 +123,12 @@ export class StorageService {
    * @returns Full file system path
    */
   getFullPath(filepath: string): string {
-    return path.join(this.storagePath, filepath);
+    const fullPath = path.resolve(this.storagePath, filepath);
+    const storageDir = path.resolve(this.storagePath);
+    if (!fullPath.startsWith(storageDir + path.sep) && fullPath !== storageDir) {
+      throw new AppError(ErrorCode.FORBIDDEN, 'Invalid file path: path traversal detected', 403);
+    }
+    return fullPath;
   }
 
   /**

@@ -4,7 +4,7 @@
  */
 
 import { promisify } from 'util';
-import { exec as execCallback } from 'child_process';
+import { execFile as execFileCallback } from 'child_process';
 import path from 'path';
 import sharp from 'sharp';
 import { getDatabase } from '../database/connection';
@@ -19,7 +19,7 @@ import {
 import { getLogger } from '../utils/logger';
 import { AppError, ErrorCode } from '../api/middleware/error-handler';
 
-const exec = promisify(execCallback);
+const execFile = promisify(execFileCallback);
 const logger = getLogger();
 
 export interface MediaMetadata {
@@ -49,12 +49,9 @@ export class MediaService {
    */
   private async extractVideoMetadata(filePath: string): Promise<MediaMetadata> {
     try {
-      // TODO: SECURITY - Replace exec() with execFile() to prevent command injection.
-      // A malicious filename containing backticks or shell metacharacters (e.g. $(rm -rf /))
-      // will be executed by the shell. execFile() bypasses the shell entirely.
-      const { stdout } = await exec(
-        `ffprobe -v quiet -print_format json -show_format -show_streams "${filePath}"`
-      );
+      const { stdout } = await execFile('ffprobe', [
+        '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', filePath,
+      ]);
 
       const data = JSON.parse(stdout);
       const videoStream = data.streams?.find((s: { codec_type: string }) => s.codec_type === 'video');
@@ -101,9 +98,9 @@ export class MediaService {
       const tempOutput = path.join(storageService.getFullPath('temp'), `thumb_${Date.now()}.jpg`);
 
       // Extract frame at 1 second (or 10% of duration)
-      await exec(
-        `ffmpeg -i "${filePath}" -ss 00:00:01.000 -vframes 1 -vf scale=320:-1 "${tempOutput}"`
-      );
+      await execFile('ffmpeg', [
+        '-i', filePath, '-ss', '00:00:01.000', '-vframes', '1', '-vf', 'scale=320:-1', tempOutput,
+      ]);
 
       // Read the generated thumbnail and save it properly
       const sharp_instance = sharp(tempOutput);

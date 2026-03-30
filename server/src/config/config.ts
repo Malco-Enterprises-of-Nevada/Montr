@@ -62,6 +62,7 @@ export interface Config {
   security: {
     apiKeyRequired: boolean;
     apiKey?: string;
+    allowedOrigins: string[];
   };
 
   // Logging configuration
@@ -151,6 +152,9 @@ function loadConfig(): Config {
     security: {
       apiKeyRequired: process.env.API_KEY_REQUIRED === 'true',
       apiKey: process.env.API_KEY,
+      allowedOrigins: process.env.ALLOWED_ORIGINS
+        ? process.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)
+        : ['http://localhost:3000'],
     },
 
     logging: {
