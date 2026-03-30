@@ -120,6 +120,8 @@ impl HttpClient {
 
         // Build request with headers
         let mut headers = HeaderMap::new();
+        // TODO: Replace unwrap() calls with proper error handling. Invalid API key characters
+        // or malformed range headers will panic instead of returning a meaningful error.
         if let Some(ref api_key) = options.api_key {
             headers.insert("X-API-Key", HeaderValue::from_str(api_key).unwrap());
         }

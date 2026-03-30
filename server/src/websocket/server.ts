@@ -48,6 +48,8 @@ export class MontrWebSocketServer {
     this.wss.on('connection', this.handleConnection.bind(this));
     this.wss.on('error', this.handleServerError.bind(this));
 
+    // TODO: These intervals are hardcoded magic numbers. Make them configurable via
+    // server config (e.g. WS_HEALTH_CHECK_INTERVAL, WS_STALE_TIMEOUT).
     // Start health check interval (every 30 seconds)
     this.healthCheckInterval = setInterval(() => {
       clientConnectionManager.healthCheck();
