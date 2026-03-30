@@ -294,6 +294,18 @@ describe('SQLiteAdapter', () => {
         expect(unchanged).toEqual(created);
       });
 
+      it('should reject invalid field names', async () => {
+        const created = await adapter.createMedia({
+          filename: 'test.mp4',
+          original_filename: 'test.mp4',
+          filepath: 'media/test.mp4',
+          type: 'video',
+        });
+
+        await expect(adapter.updateMedia(created.id, { 'invalid_field': 'value' } as any))
+          .rejects.toThrow('Invalid field name: invalid_field');
+      });
+
       it('should throw error when updating non-existent media', async () => {
         await expect(adapter.updateMedia(99999, { duration: 60 }))
           .rejects.toThrow('Media with ID 99999 not found');
