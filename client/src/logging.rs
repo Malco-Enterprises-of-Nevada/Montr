@@ -3,7 +3,7 @@ use crate::error::{MontrError, Result};
 use std::fs;
 use std::path::Path;
 use tracing::Level;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Initialize the logging system with dual output (console + file)
 ///
@@ -29,14 +29,32 @@ pub fn init_logging(config: &Config) -> Result<()> {
         .or_else(|_| EnvFilter::try_new(&config.system.log_level))
         .map_err(|e| MontrError::LoggingInit(format!("Invalid log level: {}", e)))?;
 
-    // Initialize subscriber with console output
-    // NOTE: For Phase 3 Task 1, we're using console-only logging for simplicity
-    // File logging will be enhanced in a future phase with proper dual-output support
-    fmt()
-        .with_env_filter(env_filter)
+    // Console layer
+    let console_layer = fmt::layer()
         .with_target(true)
         .with_line_number(true)
-        .with_ansi(true)
+        .with_ansi(true);
+
+    // File layer
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&config.system.log_file)
+        .map_err(|e| MontrError::FileAccess {
+            path: config.system.log_file.clone(),
+            source: e,
+        })?;
+
+    let file_layer = fmt::layer()
+        .with_writer(std::sync::Mutex::new(log_file))
+        .with_ansi(false)
+        .with_target(true)
+        .with_line_number(true);
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(console_layer)
+        .with(file_layer)
         .init();
 
     tracing::info!(

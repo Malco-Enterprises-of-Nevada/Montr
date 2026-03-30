@@ -10,6 +10,7 @@ import { getDatabase, closeDatabase } from './database/connection';
 import mediaRoutes from './api/routes/media.routes';
 import playlistRoutes from './api/routes/playlist.routes';
 import clientRoutes from './api/routes/client.routes';
+import { apiKeyAuth } from './api/middleware/auth';
 import { webSocketServer } from './websocket/server';
 
 /**
@@ -84,8 +85,6 @@ class MontrServer {
   /**
    * Configures application routes
    */
-  // TODO: Auth middleware is planned (project.md lists src/api/middleware/auth.ts) but not
-  // implemented. API endpoints are currently unprotected. Add API key or session-based auth.
   private configureRoutes(): void {
     // Health check endpoint
     this.app.get('/api/health', (_req: Request, res: Response) => {
@@ -115,10 +114,10 @@ class MontrServer {
       res.sendFile(path.join(__dirname, 'web', 'public', 'index.html'));
     });
 
-    // API routes
-    this.app.use('/api/media', mediaRoutes);
-    this.app.use('/api/playlists', playlistRoutes);
-    this.app.use('/api/clients', clientRoutes);
+    // API routes (with optional API key auth)
+    this.app.use('/api/media', apiKeyAuth(), mediaRoutes);
+    this.app.use('/api/playlists', apiKeyAuth(), playlistRoutes);
+    this.app.use('/api/clients', apiKeyAuth(), clientRoutes);
   }
 
   /**
