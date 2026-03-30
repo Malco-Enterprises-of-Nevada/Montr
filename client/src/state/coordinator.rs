@@ -13,7 +13,7 @@ use crate::network::{PlaylistItem, ServerMessage};
 use crate::playback::engine::{PlaybackCommand, PlaybackEngineOps};
 use crate::state::app_state::AppState;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 use tokio_util::sync::CancellationToken;
 
 /// Message types for internal communication
@@ -56,6 +56,8 @@ pub struct StateCoordinator {
     message_tx: mpsc::UnboundedSender<CoordinatorMessage>,
     /// Cancellation token
     cancel_token: CancellationToken,
+    /// Notify signal for download completion events
+    download_notify: Arc<Notify>,
 }
 
 impl StateCoordinator {
@@ -76,6 +78,7 @@ impl StateCoordinator {
             message_rx,
             message_tx,
             cancel_token,
+            download_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -276,10 +279,20 @@ impl StateCoordinator {
         tracing::info!("Starting download of {} media files", items.len());
 
         let cache_manager = self.cache_manager.clone();
+        let notify = self.download_notify.clone();
 
-        // Spawn background task for downloads
         tokio::spawn(async move {
-            let results = cache_manager.download_batch(items, None).await;
+            let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+
+            // Relay task: notify waiters after each individual download completes
+            let notify_clone = notify.clone();
+            let relay_handle = tokio::spawn(async move {
+                while (progress_rx.recv().await).is_some() {
+                    notify_clone.notify_waiters();
+                }
+            });
+
+            let results = cache_manager.download_batch(items, Some(progress_tx)).await;
 
             let success_count = results.iter().filter(|(_, r)| r.is_ok()).count();
             let failure_count = results.len() - success_count;
@@ -289,6 +302,10 @@ impl StateCoordinator {
                 success_count,
                 failure_count
             );
+
+            // Final notify in case play_media is still waiting
+            notify.notify_waiters();
+            let _ = relay_handle.await;
         });
 
         Ok(())
@@ -328,17 +345,19 @@ impl StateCoordinator {
         if !cache_path.exists() {
             tracing::info!("Media {} not cached, waiting for download", media_id);
 
-            // TODO: Implement proper wait mechanism
-            // For now, just check periodically
-            for _ in 0..30 {
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(60);
+            loop {
                 if cache_path.exists() {
                     break;
                 }
-            }
-
-            if !cache_path.exists() {
-                return Err(MontrError::MediaNotFound(cache_path.clone()));
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(MontrError::MediaNotFound(cache_path.clone()));
+                }
+                tokio::select! {
+                    _ = self.download_notify.notified() => {}
+                    _ = tokio::time::sleep(remaining) => {}
+                }
             }
         }
 
