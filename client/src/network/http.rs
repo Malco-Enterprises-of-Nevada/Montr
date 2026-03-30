@@ -7,6 +7,7 @@ use crate::error::{MontrError, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_LENGTH, RANGE};
 use reqwest::Client;
+use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
 use tokio::fs::File;
@@ -120,16 +121,24 @@ impl HttpClient {
 
         // Build request with headers
         let mut headers = HeaderMap::new();
-        // TODO: Replace unwrap() calls with proper error handling. Invalid API key characters
-        // or malformed range headers will panic instead of returning a meaningful error.
         if let Some(ref api_key) = options.api_key {
-            headers.insert("X-API-Key", HeaderValue::from_str(api_key).unwrap());
+            headers.insert(
+                "X-API-Key",
+                HeaderValue::from_str(api_key).map_err(|e| {
+                    MontrError::HttpRequest(format!("Invalid API key header value: {}", e))
+                })?,
+            );
         }
 
         // Add Range header for resume
         if start_byte > 0 {
             let range_value = format!("bytes={}-", start_byte);
-            headers.insert(RANGE, HeaderValue::from_str(&range_value).unwrap());
+            headers.insert(
+                RANGE,
+                HeaderValue::from_str(&range_value).map_err(|e| {
+                    MontrError::HttpRequest(format!("Invalid Range header value: {}", e))
+                })?,
+            );
         }
 
         // Send request
@@ -176,12 +185,12 @@ impl HttpClient {
                     .template(
                         "{msg}\n[{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})"
                     )
-                    .unwrap()
+                    .unwrap_or_else(|_| ProgressStyle::default_bar())
                     .progress_chars("#>-")
             );
             pb.set_message(format!(
                 "Downloading {}",
-                dest_path.file_name().unwrap().to_string_lossy()
+                dest_path.file_name().unwrap_or(OsStr::new("unknown")).to_string_lossy()
             ));
             if start_byte > 0 {
                 pb.set_position(start_byte);
@@ -248,7 +257,7 @@ impl HttpClient {
         if let Some(pb) = progress {
             pb.finish_with_message(format!(
                 "Downloaded {}",
-                dest_path.file_name().unwrap().to_string_lossy()
+                dest_path.file_name().unwrap_or(OsStr::new("unknown")).to_string_lossy()
             ));
         }
 
@@ -269,7 +278,12 @@ impl HttpClient {
 
         let mut headers = HeaderMap::new();
         if let Some(key) = api_key {
-            headers.insert("X-API-Key", HeaderValue::from_str(key).unwrap());
+            headers.insert(
+                "X-API-Key",
+                HeaderValue::from_str(key).map_err(|e| {
+                    MontrError::HttpRequest(format!("Invalid API key header value: {}", e))
+                })?,
+            );
         }
 
         let response = self

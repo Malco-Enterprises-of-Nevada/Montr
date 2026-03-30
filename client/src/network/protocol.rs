@@ -289,7 +289,7 @@ impl ClientMessage {
             is_playing,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_millis() as u64,
         })
     }
@@ -300,7 +300,7 @@ impl ClientMessage {
             client_id,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_millis() as u64,
         })
     }
@@ -313,7 +313,7 @@ impl ClientMessage {
             context,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_millis() as u64,
         })
     }
@@ -400,7 +400,7 @@ mod tests {
         let json = msg.to_json().unwrap();
         assert!(json.contains(r#""type":"error"#));
         assert!(json.contains(r#""error":"Playback failed"#));
-        assert!(json.contains(r#""context":{#));
+        assert!(json.contains(r#""context":{"#));
     }
 
     #[test]
