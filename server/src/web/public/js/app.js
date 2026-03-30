@@ -1011,6 +1011,8 @@ async function init() {
     // Load initial view
     loadDashboard();
 
+    // TODO: This 30s refresh interval and the 3s toast timeout (line 32) are hardcoded.
+    // Consider making UI refresh intervals configurable or at least defined as constants.
     // Auto-refresh dashboard every 30 seconds
     setInterval(() => {
         if (state.currentView === 'dashboard') {

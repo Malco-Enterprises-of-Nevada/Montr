@@ -54,9 +54,12 @@ class MontrServer {
         },
       })
     );
+    // TODO: SECURITY - Replace origin: true with a whitelist of allowed origins.
+    // origin: true with credentials: true allows any website to make authenticated
+    // cross-origin requests, enabling CSRF attacks.
     this.app.use(
       cors({
-        origin: true, // Allow all origins for now
+        origin: true,
         credentials: true,
       })
     );
@@ -84,6 +87,8 @@ class MontrServer {
   /**
    * Configures application routes
    */
+  // TODO: Auth middleware is planned (project.md lists src/api/middleware/auth.ts) but not
+  // implemented. API endpoints are currently unprotected. Add API key or session-based auth.
   private configureRoutes(): void {
     // Health check endpoint
     this.app.get('/api/health', (_req: Request, res: Response) => {

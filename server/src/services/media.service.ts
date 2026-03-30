@@ -49,6 +49,9 @@ export class MediaService {
    */
   private async extractVideoMetadata(filePath: string): Promise<MediaMetadata> {
     try {
+      // TODO: SECURITY - Replace exec() with execFile() to prevent command injection.
+      // A malicious filename containing backticks or shell metacharacters (e.g. $(rm -rf /))
+      // will be executed by the shell. execFile() bypasses the shell entirely.
       const { stdout } = await exec(
         `ffprobe -v quiet -print_format json -show_format -show_streams "${filePath}"`
       );
@@ -207,6 +210,8 @@ export class MediaService {
 
   /**
    * Generates thumbnail asynchronously (fire and forget)
+   * TODO: Thumbnail failures are silently swallowed (only logged). Consider adding a
+   * thumbnail_status field to media_files so the UI can show a retry/placeholder state.
    */
   private generateThumbnailAsync(
     mediaId: number,

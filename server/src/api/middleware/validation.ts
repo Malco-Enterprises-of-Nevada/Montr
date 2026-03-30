@@ -48,6 +48,8 @@ export function validateQuery<T extends ZodSchema>(schema: T) {
       const validated = schema.parse(req.query);
       // Store validated query in a custom property since req.query has getters/setters
       // that may coerce types (especially in test environments)
+      // TODO: Replace (req as any) casts with a properly typed request extension interface
+      // to preserve TypeScript safety (e.g. declare module 'express' { interface Request { validatedQuery?: T } })
       (req as any).validatedQuery = validated;
       // Also try to update req.query for backwards compatibility
       // Note: In some environments (like tests), req.query properties may be read-only or have coercion

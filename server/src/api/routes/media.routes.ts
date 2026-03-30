@@ -163,6 +163,9 @@ router.delete(
  * GET /api/media/:id/download
  * Download a media file
  */
+// TODO: SECURITY - Add path traversal protection. Validate that the resolved filePath
+// is within the expected STORAGE_PATH directory before calling res.download()/res.sendFile().
+// A corrupted or malicious filepath in the database could serve arbitrary files.
 router.get(
   '/:id/download',
   validateParams(idParamSchema),
