@@ -133,6 +133,22 @@ impl AppState {
         state.queue.items().to_vec()
     }
 
+    /// Get upcoming items from the queue without advancing
+    pub async fn get_upcoming_items(&self, count: usize) -> Vec<crate::network::PlaylistItem> {
+        let state = self.inner.read().await;
+        let current_idx = match state.queue.current_index() {
+            Some(idx) => idx,
+            None => return Vec::new(),
+        };
+        let mut items = Vec::new();
+        for offset in 1..=count {
+            if let Some(item) = state.queue.get(current_idx + offset) {
+                items.push(item.clone());
+            }
+        }
+        items
+    }
+
     /// Check if looping
     pub async fn is_looping(&self) -> bool {
         let state = self.inner.read().await;

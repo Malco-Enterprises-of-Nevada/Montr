@@ -122,7 +122,11 @@ async fn run_client(config: config::Config) -> Result<()> {
     // Initialize Playback Engine
     // ========================================================================
     tracing::info!("Initializing playback engine");
-    let playback_engine = Arc::new(PlaybackEngine::new(cancel_token.clone())?);
+    let playback_engine = Arc::new(PlaybackEngine::new(
+        cancel_token.clone(),
+        config.display.fullscreen,
+        config.display.screen_index,
+    )?);
 
     // Start playback event loop
     let playback_event_handle = {
@@ -164,6 +168,7 @@ async fn run_client(config: config::Config) -> Result<()> {
         cache_manager.clone(),
         playback_engine.as_ref(),
         cancel_token.clone(),
+        config.playback.preload_next_items,
     );
 
     let coordinator_tx = coordinator.message_sender();

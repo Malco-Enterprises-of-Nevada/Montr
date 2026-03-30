@@ -65,8 +65,6 @@ pub struct PlaybackConfig {
     pub max_cache_size_mb: u64,
 
     /// Number of upcoming items to pre-fetch
-    /// TODO: This config option is parsed but never actually used anywhere in the codebase.
-    /// Implement pre-fetching in the cache/download layer or remove this field.
     #[serde(default = "default_preload_next_items")]
     pub preload_next_items: usize,
 }
@@ -102,8 +100,6 @@ pub struct DisplayConfig {
     pub fullscreen: bool,
 
     /// Screen index for multi-monitor setups (0-indexed)
-    /// TODO: This config option is parsed but never passed to mpv. Implement by passing
-    /// --screen=N or --fs-screen=N to the mpv initialization in playback/engine.rs.
     #[serde(default)]
     pub screen_index: u32,
 

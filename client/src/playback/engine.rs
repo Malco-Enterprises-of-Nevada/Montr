@@ -135,11 +135,11 @@ impl PlaybackEngineOps for PlaybackEngine {
 
 impl PlaybackEngine {
     /// Create a new playback engine
-    pub fn new(cancel_token: CancellationToken) -> Result<Self> {
+    pub fn new(cancel_token: CancellationToken, fullscreen: bool, screen_index: u32) -> Result<Self> {
         let mpv = Mpv::new().map_err(|e| MontrError::MpvInit(e.to_string()))?;
 
         // Configure MPV with basic settings
-        Self::configure_mpv(&mpv, true)?;
+        Self::configure_mpv(&mpv, fullscreen, screen_index)?;
 
         let (event_tx, _rx) = mpsc::channel(100);
         let (command_tx, command_rx) = mpsc::unbounded_channel();
@@ -152,12 +152,12 @@ impl PlaybackEngine {
             command_rx: Arc::new(RwLock::new(Some(command_rx))),
             cancel_token,
             default_image_duration: 5,
-            fullscreen: true,
+            fullscreen,
         })
     }
 
     /// Configure MPV with optimal settings
-    fn configure_mpv(mpv: &Mpv, fullscreen: bool) -> Result<()> {
+    fn configure_mpv(mpv: &Mpv, fullscreen: bool, screen_index: u32) -> Result<()> {
         // Video output
         mpv.set_property("vo", "gpu")
             .map_err(|e| MontrError::MpvProperty(e.to_string()))?;
@@ -176,6 +176,10 @@ impl PlaybackEngine {
 
         // Fullscreen
         mpv.set_property("fullscreen", fullscreen)
+            .map_err(|e| MontrError::MpvProperty(e.to_string()))?;
+
+        // Screen selection for multi-monitor setups
+        mpv.set_property("fs-screen", screen_index as i64)
             .map_err(|e| MontrError::MpvProperty(e.to_string()))?;
 
         // Keep open after playback

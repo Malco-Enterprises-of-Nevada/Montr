@@ -58,6 +58,8 @@ pub struct StateCoordinator {
     cancel_token: CancellationToken,
     /// Notify signal for download completion events
     download_notify: Arc<Notify>,
+    /// Number of upcoming items to pre-fetch
+    preload_next_items: usize,
 }
 
 impl StateCoordinator {
@@ -67,6 +69,7 @@ impl StateCoordinator {
         cache_manager: Arc<CacheManager>,
         playback_engine: &impl PlaybackEngineOps,
         cancel_token: CancellationToken,
+        preload_next_items: usize,
     ) -> Self {
         let (message_tx, message_rx) = mpsc::unbounded_channel();
         let playback_tx = playback_engine.command_sender();
@@ -79,6 +82,7 @@ impl StateCoordinator {
             message_tx,
             cancel_token,
             download_notify: Arc::new(Notify::new()),
+            preload_next_items,
         }
     }
 
@@ -148,6 +152,7 @@ impl StateCoordinator {
 
                 // Start playback once downloads are ready
                 self.start_playback().await?;
+                self.preload_upcoming();
 
                 Ok(())
             }
@@ -199,6 +204,7 @@ impl StateCoordinator {
                     "skip" => {
                         if let Some(next_item) = self.state.next_item().await {
                             self.play_media(next_item).await?;
+                            self.preload_upcoming();
                         }
                     }
                     "previous" => {
@@ -227,6 +233,7 @@ impl StateCoordinator {
                 // Advance to next item
                 if let Some(next_item) = self.state.next_item().await {
                     self.play_media(next_item).await?;
+                    self.preload_upcoming();
                 } else {
                     tracing::info!("Playlist finished (not looping)");
                 }
@@ -309,6 +316,32 @@ impl StateCoordinator {
         });
 
         Ok(())
+    }
+
+    /// Pre-download upcoming items in the background
+    fn preload_upcoming(&self) {
+        if self.preload_next_items == 0 {
+            return;
+        }
+        let state = self.state.clone();
+        let cache_manager = self.cache_manager.clone();
+        let count = self.preload_next_items;
+
+        tokio::spawn(async move {
+            let upcoming = state.get_upcoming_items(count).await;
+            for item in upcoming {
+                if !cache_manager.is_cached(item.media_id, &item.filename).await {
+                    tracing::debug!("Preloading media {}: {}", item.media_id, item.filename);
+                    let checksum = item.checksum.clone().unwrap_or_default();
+                    let cm = cache_manager.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = cm.download_media(item.media_id, &item.filename, &checksum).await {
+                            tracing::warn!("Preload failed for media {}: {}", item.media_id, e);
+                        }
+                    });
+                }
+            }
+        });
     }
 
     /// Start playback from current queue position
@@ -436,6 +469,7 @@ mod tests {
             cache_manager,
             &playback_engine,
             cancel_token,
+            2,
         );
 
         // Should be able to get message sender
@@ -463,6 +497,7 @@ mod tests {
             cache_manager.clone(),
             &playback_engine,
             cancel_token,
+            2,
         );
 
         let items = vec![create_test_item(1, 1), create_test_item(2, 2)];
@@ -513,6 +548,7 @@ mod tests {
             cache_manager.clone(),
             &playback_engine,
             cancel_token,
+            2,
         );
 
         // Set up playlist
@@ -573,6 +609,7 @@ mod tests {
             cache_manager,
             &playback_engine,
             cancel_token,
+            2,
         );
 
         let sender = coordinator.message_sender();
