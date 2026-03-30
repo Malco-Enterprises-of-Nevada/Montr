@@ -218,10 +218,11 @@ export async function sendPlaylistToClient(
       imageDuration: item.image_duration,
     }));
 
-    // Send playlist assigned message
     const sent = clientConnectionManager.sendToClient(clientId, {
       type: 'playlist_assigned',
       playlistId: playlist.id,
+      playlistName: playlist.name,
+      loopPlaylist: true,
       items,
     });
 
@@ -258,10 +259,10 @@ export async function broadcastPlaylistUpdate(playlistId: number): Promise<void>
       imageDuration: item.image_duration,
     }));
 
-    // Broadcast to all clients with this playlist
     const sentCount = await clientConnectionManager.broadcastToPlaylist(playlistId, {
       type: 'playlist_updated',
       playlistId: playlist.id,
+      loopPlaylist: true,
       items,
     });
 

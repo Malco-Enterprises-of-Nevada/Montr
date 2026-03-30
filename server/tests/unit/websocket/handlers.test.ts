@@ -437,6 +437,8 @@ describe('WebSocket Handlers', () => {
       expect(mockClientManager.sendToClient).toHaveBeenCalledWith('test-client-123', {
         type: 'playlist_assigned',
         playlistId: 5,
+        playlistName: 'Test Playlist',
+        loopPlaylist: true,
         items: [
           {
             id: 1,
@@ -495,6 +497,8 @@ describe('WebSocket Handlers', () => {
       expect(mockClientManager.sendToClient).toHaveBeenCalledWith('test-client-123', {
         type: 'playlist_assigned',
         playlistId: 5,
+        playlistName: 'Image Playlist',
+        loopPlaylist: true,
         items: [
           expect.objectContaining({
             type: 'image',
@@ -557,6 +561,7 @@ describe('WebSocket Handlers', () => {
       expect(mockClientManager.broadcastToPlaylist).toHaveBeenCalledWith(5, {
         type: 'playlist_updated',
         playlistId: 5,
+        loopPlaylist: true,
         items: [],
       });
     });

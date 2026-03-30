@@ -1,0 +1,10 @@
+{
+  "type": "error",
+  "clientId": "550e8400-e29b-41d4-a716-446655440000",
+  "error": "Playback failed",
+  "context": {
+    "media_id": 42,
+    "reason": "codec not supported"
+  },
+  "timestamp": 1704067200000
+}

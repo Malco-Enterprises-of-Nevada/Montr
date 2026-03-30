@@ -80,6 +80,7 @@ export interface ErrorMessage {
   clientId: string;
   error: string;
   context?: Record<string, unknown>;
+  timestamp?: number;
 }
 
 /**
@@ -97,6 +98,8 @@ export type ClientMessage = RegisterMessage | StatusUpdateMessage | HeartbeatMes
 export interface PlaylistAssignedMessage {
   type: 'playlist_assigned';
   playlistId: number;
+  playlistName: string;
+  loopPlaylist: boolean;
   items: PlaylistMediaItem[];
 }
 
@@ -106,6 +109,7 @@ export interface PlaylistAssignedMessage {
 export interface PlaylistUpdatedMessage {
   type: 'playlist_updated';
   playlistId: number;
+  loopPlaylist: boolean;
   items: PlaylistMediaItem[];
 }
 
@@ -203,6 +207,7 @@ export const errorMessageSchema = z.object({
   clientId: z.string().uuid('Client ID must be a valid UUID'),
   error: z.string().min(1, 'Error message is required'),
   context: z.record(z.string(), z.unknown()).optional(),
+  timestamp: z.number().optional(),
 });
 
 /**
