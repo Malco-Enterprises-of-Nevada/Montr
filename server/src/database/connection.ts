@@ -5,6 +5,9 @@
 
 import { DatabaseAdapter } from './adapters/base.adapter';
 import { SQLiteAdapter } from './adapters/sqlite.adapter';
+import { MySQLAdapter } from './adapters/mysql.adapter';
+import { MSSQLAdapter } from './adapters/mssql.adapter';
+import { MongoDBAdapter } from './adapters/mongodb.adapter';
 import { config, DatabaseType } from '../config/config';
 import { getLogger } from '../utils/logger';
 
@@ -36,16 +39,22 @@ function createAdapter(): DatabaseAdapter {
       return new SQLiteAdapter(config.database.sqlite.path);
 
     case DatabaseType.MYSQL:
-      // TODO: Implement MySQL adapter
-      throw new Error('MySQL adapter not yet implemented');
+      if (!config.database.mysql) {
+        throw new Error('MySQL configuration is missing');
+      }
+      return new MySQLAdapter(config.database.mysql);
 
     case DatabaseType.MSSQL:
-      // TODO: Implement MSSQL adapter
-      throw new Error('MSSQL adapter not yet implemented');
+      if (!config.database.mssql) {
+        throw new Error('MSSQL configuration is missing');
+      }
+      return new MSSQLAdapter(config.database.mssql);
 
     case DatabaseType.MONGODB:
-      // TODO: Implement MongoDB adapter
-      throw new Error('MongoDB adapter not yet implemented');
+      if (!config.database.mongodb) {
+        throw new Error('MongoDB configuration is missing');
+      }
+      return new MongoDBAdapter(config.database.mongodb.uri);
 
     default:
       throw new Error(`Unsupported database type: ${String(config.database.type)}`);

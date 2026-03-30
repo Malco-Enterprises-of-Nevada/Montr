@@ -235,9 +235,9 @@ export class ClientConnectionManager {
    * Performs health check on all connections
    * Marks connections as alive/dead based on heartbeat
    */
-  healthCheck(): void {
+  healthCheck(heartbeatTimeout: number = 60000): void {
     const now = Date.now();
-    const timeout = 60000; // 60 seconds timeout
+    const timeout = heartbeatTimeout;
 
     this.connections.forEach((ws, clientId) => {
       if (!ws.isAlive) {

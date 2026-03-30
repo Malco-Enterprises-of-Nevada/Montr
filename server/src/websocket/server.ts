@@ -6,6 +6,7 @@
 import { Server as HTTPServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { getLogger } from '../utils/logger';
+import { config } from '../config/config';
 import { clientConnectionManager } from './client-manager';
 import {
   ExtendedWebSocket,
@@ -48,20 +49,18 @@ export class MontrWebSocketServer {
     this.wss.on('connection', this.handleConnection.bind(this));
     this.wss.on('error', this.handleServerError.bind(this));
 
-    // TODO: These intervals are hardcoded magic numbers. Make them configurable via
-    // server config (e.g. WS_HEALTH_CHECK_INTERVAL, WS_STALE_TIMEOUT).
-    // Start health check interval (every 30 seconds)
+    // Start health check interval
     this.healthCheckInterval = setInterval(() => {
-      clientConnectionManager.healthCheck();
-    }, 30000);
+      clientConnectionManager.healthCheck(config.websocket.heartbeatTimeout);
+    }, config.websocket.healthCheckInterval);
 
-    // Start stale connection cleanup (every 5 minutes)
+    // Start stale connection cleanup
     this.staleConnectionInterval = setInterval(() => {
-      const removed = clientConnectionManager.removeStaleConnections();
+      const removed = clientConnectionManager.removeStaleConnections(config.websocket.staleTimeout);
       if (removed > 0) {
         logger.info(`Removed ${removed} stale connections`);
       }
-    }, 300000);
+    }, config.websocket.staleTimeout);
 
     logger.info('WebSocket server initialized successfully');
   }

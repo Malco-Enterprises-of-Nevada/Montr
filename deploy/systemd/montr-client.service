@@ -1,0 +1,32 @@
+[Unit]
+Description=Montr Media Client
+Documentation=https://github.com/montr/montr
+After=network-online.target graphical-session.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=montr
+Group=montr
+Environment=DISPLAY=:0
+# For Wayland, uncomment the following and comment out DISPLAY above:
+# Environment=WAYLAND_DISPLAY=wayland-0
+ExecStart=/usr/bin/montr-client --config /etc/montr-client/config.toml
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=10
+
+# Security hardening
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+ReadWritePaths=/var/cache/montr-client /var/log/montr-client
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=montr-client
+
+[Install]
+WantedBy=graphical-session.target

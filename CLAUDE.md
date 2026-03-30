@@ -48,10 +48,10 @@ cargo check              # Type-check without building
 
 Request flow: **Route → Validation Middleware → Service → Database Adapter**
 
-- **Routes** (`src/api/routes/`): Express handlers for media, playlist, client endpoints
+- **Routes** (`src/api/routes/`): Express 5 handlers for media, playlist, client endpoints
 - **Validation** (`src/api/middleware/validation.ts`): Zod schemas validate all input
 - **Services** (`src/services/`): Business logic — MediaService, PlaylistService, ClientService, StorageService
-- **Database** (`src/database/adapters/`): Abstract adapter interface (`base.adapter.ts`) with SQLite implementation. Factory in `connection.ts`
+- **Database** (`src/database/adapters/`): Abstract adapter interface (`base.adapter.ts`) with SQLite as the only implemented adapter. Factory in `connection.ts`
 - **WebSocket** (`src/websocket/`): Real-time bidirectional communication at `ws://server:3000/ws`
   - `server.ts` — WebSocket server setup
   - `client-manager.ts` — Connection tracking with health monitoring (30s heartbeat, 5min stale timeout)
@@ -89,11 +89,15 @@ STARTING → CONNECTING → REGISTERING → WAITING_PLAYLIST → DOWNLOADING →
 Tests live in `server/tests/` (unit, integration, fixtures, utils) and `server/src/websocket/__tests__/`.
 
 Key test setup details (`tests/setup.ts`):
-- Uses in-memory SQLite for tests (DB_TYPE=sqlite, no file)
+- Uses in-memory SQLite for tests (DB_TYPE=sqlite, DB_PATH=:memory:)
 - **`sharp` is mocked globally** — returns fake image buffer/metadata. If adding image processing tests, be aware of this mock
 - `better-sqlite3` is mocked via Jest moduleNameMapper
 - Test timeout: 10 seconds
 - LOG_LEVEL set to `error` to reduce noise
+- `clearMocks`, `resetMocks`, `restoreMocks` all enabled — mocks auto-reset between tests
+- ts-jest suppresses TS diagnostics 6133, 18046, 2322, 2352, 2540
+
+`MontrServer` class exports `getApp()` for supertest integration tests.
 
 Run a single test file: `npx jest tests/unit/services/media.service.test.ts`
 Run tests matching a name: `npx jest -t "should create playlist"`
@@ -127,7 +131,7 @@ Targets Debian, Arch Linux, and Windows. Uses conditional compilation for platfo
 
 ## Configuration
 
-- Server: `.env` file (see `server/.env.example`). Key vars: PORT, DB_TYPE, DB_PATH, STORAGE_PATH
+- Server: `.env` file (see `server/.env.example`). Key vars: PORT, DB_TYPE, DB_PATH, STORAGE_PATH. API key auth is off by default (API_KEY_REQUIRED=false). Requires Node.js 20+
 - Client: TOML config (see `client/config.example.toml`). Key sections: [server], [client], [playback], [display]
 
 ## Documentation
