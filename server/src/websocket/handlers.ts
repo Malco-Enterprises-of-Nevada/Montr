@@ -340,3 +340,90 @@ export async function sendCommandToGroup(
   logger.info(`Sent ${command} command to ${sentCount} clients in group ${groupId}`);
   return sentCount;
 }
+
+/**
+ * Sends a playlist interrupt message to a client
+ */
+export async function sendPlaylistInterrupt(
+  clientId: string,
+  playlistId: number,
+  previousPlaylistId: number | null
+): Promise<boolean> {
+  try {
+    const playlist = await playlistService.getPlaylistWithItems(playlistId);
+
+    const items: PlaylistMediaItem[] = playlist.items.map((item) => ({
+      id: item.id,
+      mediaId: item.media_id,
+      filename: item.media.filename,
+      downloadUrl: `${config.server.publicUrl || `http://localhost:${config.server.port}`}/api/media/${item.media_id}/download`,
+      type: item.media.type,
+      duration: item.media.type === 'image' ? item.image_duration : item.media.duration || 0,
+      checksum: item.media.checksum,
+      orderIndex: item.order_index,
+      imageDuration: item.image_duration,
+    }));
+
+    const sent = clientConnectionManager.sendToClient(clientId, {
+      type: 'playlist_interrupt',
+      playlistId: playlist.id,
+      playlistName: playlist.name,
+      loopPlaylist: true,
+      items,
+      previousPlaylistId,
+    });
+
+    if (sent) {
+      logger.info(`Sent playlist interrupt ${playlistId} to client ${clientId}`);
+    }
+    return sent;
+  } catch (error) {
+    logger.error(`Error sending playlist interrupt to client ${clientId}:`, error);
+    return false;
+  }
+}
+
+/**
+ * Sends a playlist resume message to a client
+ */
+export async function sendPlaylistResume(
+  clientId: string,
+  playlistId: number | null
+): Promise<boolean> {
+  try {
+    let items: PlaylistMediaItem[] = [];
+    let playlistName: string | null = null;
+
+    if (playlistId) {
+      const playlist = await playlistService.getPlaylistWithItems(playlistId);
+      playlistName = playlist.name;
+      items = playlist.items.map((item) => ({
+        id: item.id,
+        mediaId: item.media_id,
+        filename: item.media.filename,
+        downloadUrl: `${config.server.publicUrl || `http://localhost:${config.server.port}`}/api/media/${item.media_id}/download`,
+        type: item.media.type,
+        duration: item.media.type === 'image' ? item.image_duration : item.media.duration || 0,
+        checksum: item.media.checksum,
+        orderIndex: item.order_index,
+        imageDuration: item.image_duration,
+      }));
+    }
+
+    const sent = clientConnectionManager.sendToClient(clientId, {
+      type: 'playlist_resume',
+      playlistId,
+      playlistName,
+      loopPlaylist: true,
+      items,
+    });
+
+    if (sent) {
+      logger.info(`Sent playlist resume to client ${clientId} (playlist: ${playlistId})`);
+    }
+    return sent;
+  } catch (error) {
+    logger.error(`Error sending playlist resume to client ${clientId}:`, error);
+    return false;
+  }
+}

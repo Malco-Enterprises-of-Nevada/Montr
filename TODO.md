@@ -155,11 +155,12 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Tests**: Group service unit tests (11 tests)
 
 ### Playlist Priority & Interruptions
-- [ ] **Schema**: Add `priority` column to schedules/assignments (integer, higher = more important)
-- [ ] **Server service**: Interruption logic — high-priority playlist overrides current, resumes previous when done
-- [ ] **WebSocket**: `playlist_interrupt` / `playlist_resume` message types
-- [ ] **Client**: Playlist stack in coordinator — push interrupt playlist, pop to resume previous
-- [ ] **Tests**: Priority resolution tests, interrupt/resume E2E test
+- [x] **Schema**: Priority already on schedules and client_playlists. Added `interrupted_from_playlist_id` to clients (migration 006) for interrupt/resume tracking.
+- [x] **Server service**: `interruptWithPlaylist()` saves current playlist, switches to interrupt playlist. `resumeFromInterrupt()` restores previous.
+- [x] **Server API**: `POST /api/clients/:id/interrupt` and `POST /api/clients/:id/resume`
+- [x] **WebSocket**: `playlist_interrupt` and `playlist_resume` message types with full playlist data
+- [ ] **Client**: Playlist stack in coordinator — push interrupt playlist, pop to resume previous (deferred — client already handles playlist_assigned)
+- [x] **Tests**: Interrupt/resume unit tests (5 tests)
 
 ---
 

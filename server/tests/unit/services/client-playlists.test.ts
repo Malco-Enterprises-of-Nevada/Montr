@@ -67,6 +67,7 @@ const mockClient = {
   id: '550e8400-e29b-41d4-a716-446655440000',
   name: 'Display-01',
   assigned_playlist_id: null as number | null,
+  interrupted_from_playlist_id: null,
   status: 'online' as const,
   last_seen: '2026-01-01T00:00:00.000Z',
   version: '1.0.0',
