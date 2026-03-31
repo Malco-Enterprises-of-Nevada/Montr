@@ -1,0 +1,11 @@
+Package: montr-server
+Version: 1.0.0
+Section: net
+Priority: optional
+Architecture: amd64
+Depends: nodejs (>= 20)
+Maintainer: Montr Contributors <montr@example.com>
+Description: Montr Media Playlist Server
+ Web management server for the Montr distributed media
+ playlist system. Provides REST API, WebSocket, and web UI
+ for managing media, playlists, and client displays.

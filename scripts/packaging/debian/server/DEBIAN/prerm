@@ -1,0 +1,12 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    remove|upgrade)
+        if systemctl is-active --quiet montr-server.service; then
+            systemctl stop montr-server.service
+        fi
+        ;;
+esac
+
+exit 0

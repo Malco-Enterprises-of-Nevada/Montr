@@ -1,0 +1,37 @@
+# Git
+.git
+.gitignore
+
+# Node
+server/node_modules
+server/dist
+server/coverage
+server/*.db
+server/data/
+server/storage/*
+!server/storage/.gitkeep
+
+# Rust
+client/target
+
+# IDE
+.vscode
+.idea
+*.swp
+
+# Build outputs
+build/
+*.deb
+*.tar.gz
+
+# Docs (not needed in images)
+docs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env files with secrets
+.env
+.env.local
+server/.env
