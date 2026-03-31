@@ -132,11 +132,13 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Tests**: Schedule service unit tests (13 tests including isScheduleActive logic)
 
 ### Multiple Playlists Per Client
-- [ ] **Schema**: Change `clients.assigned_playlist_id` from single FK to a `client_playlists` junction table (client_id, playlist_id, priority, schedule_id)
-- [ ] **Server API**: `POST /api/clients/:id/playlists` — assign additional playlist
-- [ ] **Server API**: `DELETE /api/clients/:id/playlists/:playlistId` — remove playlist assignment
-- [ ] **Server service**: Playlist priority resolution — when multiple playlists are active, highest priority wins
-- [ ] **Client**: Support playlist stack — maintain multiple playlists, switch based on server commands
+- [x] **Schema**: Add `client_playlists` junction table (client_id, playlist_id, priority) — migration 005. `clients.assigned_playlist_id` kept as active playlist (resolved from highest priority).
+- [x] **Server API**: `POST /api/clients/:id/playlists` — assign playlist with priority
+- [x] **Server API**: `GET /api/clients/:id/playlists` — list assignments ordered by priority
+- [x] **Server API**: `PUT /api/clients/:id/playlists/:playlistId` — update priority
+- [x] **Server API**: `DELETE /api/clients/:id/playlists/:playlistId` — remove playlist assignment
+- [x] **Server service**: Priority resolution — highest priority playlist automatically becomes `assigned_playlist_id`
+- [ ] **Client**: Support playlist stack — maintain multiple playlists, switch based on server commands (deferred — client already handles `playlist_assigned`)
 
 ### Client Grouping
 - [x] **Schema**: Add `client_groups` table (id, name, description, created_at) — migration 003

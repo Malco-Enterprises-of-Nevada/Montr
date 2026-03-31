@@ -229,3 +229,16 @@ export interface UpdateScheduleInput {
   priority?: number;
   enabled?: boolean;
 }
+
+// Client playlist assignment types
+export interface ClientPlaylist {
+  id: number;
+  client_id: string;
+  playlist_id: number;
+  priority: number;
+  assigned_at: string;
+}
+
+export interface ClientPlaylistWithDetails extends ClientPlaylist {
+  playlist_name: string;
+}

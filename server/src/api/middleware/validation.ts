@@ -408,6 +408,41 @@ export const updateScheduleSchema = z
     message: 'At least one field must be provided',
   });
 
+// Client playlist assignment schemas
+
+/**
+ * Request body for adding a playlist to a client
+ */
+export const addClientPlaylistSchema = z.object({
+  playlistId: z.number().int().positive('Playlist ID must be a positive integer'),
+  priority: z
+    .number()
+    .int()
+    .min(1, 'Priority must be at least 1')
+    .max(100, 'Priority must not exceed 100')
+    .optional()
+    .default(50),
+});
+
+/**
+ * Request body for updating playlist priority
+ */
+export const updateClientPlaylistPrioritySchema = z.object({
+  priority: z
+    .number()
+    .int()
+    .min(1, 'Priority must be at least 1')
+    .max(100, 'Priority must not exceed 100'),
+});
+
+/**
+ * Validates client UUID and playlist ID params
+ */
+export const clientPlaylistParamsSchema = z.object({
+  id: z.string().uuid(),
+  playlistId: z.string().regex(/^\d+$/).transform(Number),
+});
+
 // Type exports for better TypeScript inference
 
 export type CreatePlaylistInput = z.infer<typeof createPlaylistSchema>;

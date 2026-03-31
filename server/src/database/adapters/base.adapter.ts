@@ -27,6 +27,8 @@ import {
   Schedule,
   CreateScheduleInput,
   UpdateScheduleInput,
+  ClientPlaylist,
+  ClientPlaylistWithDetails,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -97,4 +99,18 @@ export interface DatabaseAdapter {
   updateSchedule(id: number, input: UpdateScheduleInput): Promise<Schedule>;
   deleteSchedule(id: number): Promise<void>;
   getEnabledSchedules(): Promise<Schedule[]>;
+
+  // Client playlist operations
+  addClientPlaylist(
+    clientId: string,
+    playlistId: number,
+    priority?: number
+  ): Promise<ClientPlaylist>;
+  removeClientPlaylist(clientId: string, playlistId: number): Promise<void>;
+  getClientPlaylists(clientId: string): Promise<ClientPlaylistWithDetails[]>;
+  updateClientPlaylistPriority(
+    clientId: string,
+    playlistId: number,
+    priority: number
+  ): Promise<ClientPlaylist>;
 }

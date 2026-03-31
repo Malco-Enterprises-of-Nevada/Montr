@@ -29,6 +29,8 @@ import {
   Schedule,
   CreateScheduleInput,
   UpdateScheduleInput,
+  ClientPlaylist,
+  ClientPlaylistWithDetails,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -643,6 +645,63 @@ export class MongoDBAdapter implements DatabaseAdapter {
   }
 
   // ── Migration executor ───────────────────────────────────────────────────
+
+  // ── Client playlist operations ──────────────────────────────────────────
+
+  async addClientPlaylist(
+    clientId: string,
+    playlistId: number,
+    priority: number = 50
+  ): Promise<ClientPlaylist> {
+    const id = await this.nextId('client_playlists');
+    const doc = {
+      id,
+      client_id: clientId,
+      playlist_id: playlistId,
+      priority,
+      assigned_at: new Date().toISOString(),
+    };
+    await this.col('client_playlists').insertOne(doc);
+    return doc as ClientPlaylist;
+  }
+
+  async removeClientPlaylist(clientId: string, playlistId: number): Promise<void> {
+    await this.col('client_playlists').deleteOne({ client_id: clientId, playlist_id: playlistId });
+  }
+
+  async getClientPlaylists(clientId: string): Promise<ClientPlaylistWithDetails[]> {
+    const assignments = await this.col('client_playlists')
+      .find({ client_id: clientId })
+      .sort({ priority: -1 })
+      .toArray();
+
+    const results: ClientPlaylistWithDetails[] = [];
+    for (const a of assignments) {
+      const playlist = await this.col('playlists').findOne({ id: a.playlist_id });
+      results.push({
+        ...this.docToObj<ClientPlaylist>(a)!,
+        playlist_name: playlist ? (playlist.name as string) : 'Unknown',
+      });
+    }
+    return results;
+  }
+
+  async updateClientPlaylistPriority(
+    clientId: string,
+    playlistId: number,
+    priority: number
+  ): Promise<ClientPlaylist> {
+    await this.col('client_playlists').updateOne(
+      { client_id: clientId, playlist_id: playlistId },
+      { $set: { priority } }
+    );
+    const doc = await this.col('client_playlists').findOne({
+      client_id: clientId,
+      playlist_id: playlistId,
+    });
+    if (!doc) throw new Error('Client playlist assignment not found');
+    return this.docToObj<ClientPlaylist>(doc)!;
+  }
 
   getMigrationExecutor(): MigrationExecutor {
     const self = this;

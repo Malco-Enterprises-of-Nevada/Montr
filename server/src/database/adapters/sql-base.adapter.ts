@@ -29,6 +29,8 @@ import {
   Schedule,
   CreateScheduleInput,
   UpdateScheduleInput,
+  ClientPlaylist,
+  ClientPlaylistWithDetails,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -769,5 +771,65 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
       `SELECT * FROM schedules WHERE enabled = 1 ORDER BY priority DESC`
     );
     return rows.map((r) => ({ ...r, enabled: Boolean(r.enabled) }));
+  }
+
+  // ── Client playlist operations ──────────────────────────────────────────
+
+  async addClientPlaylist(
+    clientId: string,
+    playlistId: number,
+    priority: number = 50
+  ): Promise<ClientPlaylist> {
+    const p = this.placeholder;
+    const result = await this.rawExecute(
+      `INSERT INTO client_playlists (client_id, playlist_id, priority)
+       VALUES (${p(1)}, ${p(2)}, ${p(3)})`,
+      [clientId, playlistId, priority]
+    );
+    const row = await this.rawQueryOne<ClientPlaylist>(
+      `SELECT * FROM client_playlists WHERE id = ${p(1)}`,
+      [result.lastInsertId]
+    );
+    if (!row) throw new Error('Failed to retrieve created client playlist');
+    return row;
+  }
+
+  async removeClientPlaylist(clientId: string, playlistId: number): Promise<void> {
+    const p = this.placeholder;
+    await this.rawExecute(
+      `DELETE FROM client_playlists WHERE client_id = ${p(1)} AND playlist_id = ${p(2)}`,
+      [clientId, playlistId]
+    );
+  }
+
+  async getClientPlaylists(clientId: string): Promise<ClientPlaylistWithDetails[]> {
+    const p = this.placeholder;
+    return this.rawQuery<ClientPlaylistWithDetails>(
+      `SELECT cp.*, p.name as playlist_name
+       FROM client_playlists cp
+       JOIN playlists p ON cp.playlist_id = p.id
+       WHERE cp.client_id = ${p(1)}
+       ORDER BY cp.priority DESC`,
+      [clientId]
+    );
+  }
+
+  async updateClientPlaylistPriority(
+    clientId: string,
+    playlistId: number,
+    priority: number
+  ): Promise<ClientPlaylist> {
+    const p = this.placeholder;
+    await this.rawExecute(
+      `UPDATE client_playlists SET priority = ${p(1)}
+       WHERE client_id = ${p(2)} AND playlist_id = ${p(3)}`,
+      [priority, clientId, playlistId]
+    );
+    const row = await this.rawQueryOne<ClientPlaylist>(
+      `SELECT * FROM client_playlists WHERE client_id = ${p(1)} AND playlist_id = ${p(2)}`,
+      [clientId, playlistId]
+    );
+    if (!row) throw new Error('Client playlist assignment not found');
+    return row;
   }
 }

@@ -12,6 +12,8 @@ import {
   CreateClientStatusInput,
   ClientWithStatus,
   ClientFilter,
+  ClientPlaylist,
+  ClientPlaylistWithDetails,
 } from '../database/types';
 import { getLogger } from '../utils/logger';
 import { AppError, ErrorCode } from '../api/middleware/error-handler';
@@ -178,6 +180,98 @@ export class ClientService {
     }
 
     return this.updateClient(clientId, { assigned_playlist_id: playlistId });
+  }
+
+  // ── Multi-playlist operations ──────────────────────────────────────────
+
+  /**
+   * Adds a playlist to a client's assignment list with priority.
+   * Updates assigned_playlist_id to the highest-priority playlist.
+   */
+  async addPlaylistAssignment(
+    clientId: string,
+    playlistId: number,
+    priority: number = 50
+  ): Promise<ClientPlaylist> {
+    await this.getClientById(clientId);
+
+    const db = await getDatabase();
+    const playlist = await db.getPlaylistById(playlistId);
+    if (!playlist) {
+      throw new AppError(
+        ErrorCode.PLAYLIST_NOT_FOUND,
+        `Playlist with ID ${playlistId} not found`,
+        404
+      );
+    }
+
+    const assignment = await db.addClientPlaylist(clientId, playlistId, priority);
+    logger.info(`Playlist ${playlistId} assigned to client ${clientId} (priority: ${priority})`);
+
+    // Resolve active playlist
+    await this.resolveActivePlaylist(clientId);
+
+    return assignment;
+  }
+
+  /**
+   * Removes a playlist from a client's assignment list.
+   * Updates assigned_playlist_id to the next highest-priority playlist.
+   */
+  async removePlaylistAssignment(clientId: string, playlistId: number): Promise<void> {
+    await this.getClientById(clientId);
+
+    const db = await getDatabase();
+    await db.removeClientPlaylist(clientId, playlistId);
+    logger.info(`Playlist ${playlistId} removed from client ${clientId}`);
+
+    // Resolve active playlist
+    await this.resolveActivePlaylist(clientId);
+  }
+
+  /**
+   * Gets all playlist assignments for a client, ordered by priority.
+   */
+  async getPlaylistAssignments(clientId: string): Promise<ClientPlaylistWithDetails[]> {
+    await this.getClientById(clientId);
+
+    const db = await getDatabase();
+    return db.getClientPlaylists(clientId);
+  }
+
+  /**
+   * Updates the priority of a playlist assignment.
+   * Re-resolves the active playlist.
+   */
+  async updatePlaylistPriority(
+    clientId: string,
+    playlistId: number,
+    priority: number
+  ): Promise<ClientPlaylist> {
+    await this.getClientById(clientId);
+
+    const db = await getDatabase();
+    const updated = await db.updateClientPlaylistPriority(clientId, playlistId, priority);
+    logger.info(`Playlist ${playlistId} priority updated to ${priority} for client ${clientId}`);
+
+    // Resolve active playlist
+    await this.resolveActivePlaylist(clientId);
+
+    return updated;
+  }
+
+  /**
+   * Resolves the active playlist for a client based on priority.
+   * Sets assigned_playlist_id to the highest-priority assigned playlist.
+   */
+  async resolveActivePlaylist(clientId: string): Promise<number | null> {
+    const db = await getDatabase();
+    const assignments = await db.getClientPlaylists(clientId);
+
+    const activePlaylistId = assignments.length > 0 ? assignments[0].playlist_id : null;
+
+    await db.updateClient(clientId, { assigned_playlist_id: activePlaylistId });
+    return activePlaylistId;
   }
 
   /**
