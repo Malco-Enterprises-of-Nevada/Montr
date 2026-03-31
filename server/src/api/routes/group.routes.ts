@@ -14,9 +14,11 @@ import {
   updateGroupSchema,
   addGroupMemberSchema,
   assignGroupPlaylistSchema,
+  sendCommandSchema,
 } from '../middleware/validation';
-import { sendPlaylistToClient } from '../../websocket/handlers';
+import { sendPlaylistToClient, sendCommandToGroup } from '../../websocket/handlers';
 import { clientConnectionManager } from '../../websocket/client-manager';
+import { CommandType } from '../../websocket/types';
 
 const router = Router();
 
@@ -166,6 +168,34 @@ router.post(
         updated: result.updated,
         playlistId,
         groupId: id,
+      })
+    );
+  })
+);
+
+/**
+ * POST /api/groups/:id/command
+ * Send a command to all members of a group
+ */
+router.post(
+  '/:id/command',
+  validateParams(idParamSchema),
+  validateBody(sendCommandSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const params = req.params as unknown as { id: number };
+    const { id } = params;
+    const { command, args } = req.body as { command: CommandType; args?: Record<string, unknown> };
+
+    // Verify group exists
+    await groupService.getGroupById(id);
+
+    const sentCount = await sendCommandToGroup(id, command, args);
+    res.json(
+      successResponse({
+        message: `Command '${command}' sent to ${sentCount} clients in group ${id}`,
+        sentCount,
+        command,
+        args,
       })
     );
   })

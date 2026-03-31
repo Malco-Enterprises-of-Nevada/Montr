@@ -452,6 +452,21 @@ export const interruptClientSchema = z.object({
   playlistId: z.number().int().positive('Playlist ID must be a positive integer'),
 });
 
+// Command validation schema
+
+/**
+ * Request body for sending a command to a client or group
+ */
+export const sendCommandSchema = z.object({
+  command: z.enum(['reload_playlist', 'pause', 'resume', 'skip', 'previous', 'volume', 'seek']),
+  args: z
+    .object({
+      volume: z.number().min(0).max(100).optional(),
+      position: z.number().min(0).optional(),
+    })
+    .optional(),
+});
+
 // Type exports for better TypeScript inference
 
 export type CreatePlaylistInput = z.infer<typeof createPlaylistSchema>;

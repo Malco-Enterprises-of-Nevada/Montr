@@ -1268,6 +1268,60 @@ p {
     cursor: pointer;
 }
 
+/* ===== Client Controls ===== */
+
+.client-status-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    margin-bottom: 1rem;
+}
+
+.playback-controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 1rem;
+    margin: 1.5rem 0;
+}
+
+.playback-controls .btn-lg {
+    font-size: 1.5rem;
+    padding: 0.75rem 1.25rem;
+}
+
+.volume-control {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 1rem 0;
+}
+
+.volume-control input[type="range"] {
+    flex: 1;
+    max-width: 300px;
+}
+
+.seek-control {
+    margin: 1rem 0;
+}
+
+.seek-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.client-playlists-section {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+}
+
 @media print {
     .navbar,
     .btn,

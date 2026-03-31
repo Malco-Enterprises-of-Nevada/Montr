@@ -18,12 +18,15 @@ import {
   updateClientPlaylistPrioritySchema,
   clientPlaylistParamsSchema,
   interruptClientSchema,
+  sendCommandSchema,
 } from '../middleware/validation';
 import {
   sendPlaylistToClient,
   sendPlaylistInterrupt,
   sendPlaylistResume,
+  sendCommandToClient,
 } from '../../websocket/handlers';
+import { CommandType } from '../../websocket/types';
 import { clientConnectionManager } from '../../websocket/client-manager';
 
 const router = Router();
@@ -311,6 +314,43 @@ router.post(
       successResponse({
         message: `Client resumed to playlist ${resumePlaylistId}`,
         client,
+      })
+    );
+  })
+);
+
+/**
+ * POST /api/clients/:id/command
+ * Send a command to a client (pause, resume, skip, previous, volume, seek)
+ */
+router.post(
+  '/:id/command',
+  validateParams(uuidParamSchema),
+  validateBody(sendCommandSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params as { id: string };
+    const { command, args } = req.body as { command: CommandType; args?: Record<string, unknown> };
+
+    // Verify client exists
+    await clientService.getClientById(id);
+
+    if (!clientConnectionManager.isConnected(id)) {
+      res.status(400).json(
+        successResponse({
+          message: `Client ${id} is not connected`,
+          delivered: false,
+        })
+      );
+      return;
+    }
+
+    const delivered = sendCommandToClient(id, command, args);
+    res.json(
+      successResponse({
+        message: `Command '${command}' ${delivered ? 'sent' : 'failed'}`,
+        delivered,
+        command,
+        args,
       })
     );
   })

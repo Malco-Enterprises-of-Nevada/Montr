@@ -276,11 +276,13 @@ export async function broadcastPlaylistUpdate(playlistId: number): Promise<void>
  */
 export function sendCommandToClient(
   clientId: string,
-  command: 'reload_playlist' | 'pause' | 'resume'
+  command: import('./types').CommandType,
+  args?: Record<string, unknown>
 ): boolean {
   const sent = clientConnectionManager.sendToClient(clientId, {
     type: 'command',
     command,
+    args,
   });
 
   if (sent) {
@@ -295,10 +297,14 @@ export function sendCommandToClient(
 /**
  * Broadcasts a command to all connected clients
  */
-export function broadcastCommand(command: 'reload_playlist' | 'pause' | 'resume'): number {
+export function broadcastCommand(
+  command: import('./types').CommandType,
+  args?: Record<string, unknown>
+): number {
   const sentCount = clientConnectionManager.broadcastToAll({
     type: 'command',
     command,
+    args,
   });
 
   logger.info(`Broadcast ${command} command to ${sentCount} clients`);
@@ -330,11 +336,13 @@ export async function sendPlaylistToGroup(groupId: number, playlistId: number): 
  */
 export async function sendCommandToGroup(
   groupId: number,
-  command: 'reload_playlist' | 'pause' | 'resume'
+  command: import('./types').CommandType,
+  args?: Record<string, unknown>
 ): Promise<number> {
   const sentCount = await clientConnectionManager.broadcastToGroup(groupId, {
     type: 'command',
     command,
+    args,
   });
 
   logger.info(`Sent ${command} command to ${sentCount} clients in group ${groupId}`);
