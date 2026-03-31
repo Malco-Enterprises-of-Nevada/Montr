@@ -26,6 +26,9 @@ import {
   ClientGroupWithMembers,
   CreateClientGroupInput,
   UpdateClientGroupInput,
+  Schedule,
+  CreateScheduleInput,
+  UpdateScheduleInput,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -574,6 +577,69 @@ export class MongoDBAdapter implements DatabaseAdapter {
       .sort({ name: 1 })
       .toArray();
     return groupDocs.map((d) => this.docToObj<ClientGroup>(d)!);
+  }
+
+  // ── Schedule operations ──────────────────────────────────────────────────
+
+  async createSchedule(input: CreateScheduleInput): Promise<Schedule> {
+    const id = await this.nextId('schedules');
+    const now = new Date().toISOString();
+    const doc = {
+      id,
+      name: input.name,
+      playlist_id: input.playlist_id,
+      client_id: input.client_id || null,
+      group_id: input.group_id || null,
+      start_time: input.start_time,
+      end_time: input.end_time || null,
+      days_of_week: input.days_of_week || '0,1,2,3,4,5,6',
+      priority: input.priority ?? 50,
+      enabled: input.enabled !== false,
+      created_at: now,
+      updated_at: now,
+    };
+    await this.col('schedules').insertOne(doc);
+    return doc as Schedule;
+  }
+
+  async getScheduleById(id: number): Promise<Schedule | null> {
+    const doc = await this.col('schedules').findOne({ id });
+    return this.docToObj<Schedule>(doc);
+  }
+
+  async getAllSchedules(): Promise<Schedule[]> {
+    const docs = await this.col('schedules').find().sort({ priority: -1, name: 1 }).toArray();
+    return docs.map((d) => this.docToObj<Schedule>(d)!);
+  }
+
+  async updateSchedule(id: number, input: UpdateScheduleInput): Promise<Schedule> {
+    const setFields: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (input.name !== undefined) setFields.name = input.name;
+    if (input.playlist_id !== undefined) setFields.playlist_id = input.playlist_id;
+    if (input.client_id !== undefined) setFields.client_id = input.client_id;
+    if (input.group_id !== undefined) setFields.group_id = input.group_id;
+    if (input.start_time !== undefined) setFields.start_time = input.start_time;
+    if (input.end_time !== undefined) setFields.end_time = input.end_time;
+    if (input.days_of_week !== undefined) setFields.days_of_week = input.days_of_week;
+    if (input.priority !== undefined) setFields.priority = input.priority;
+    if (input.enabled !== undefined) setFields.enabled = input.enabled;
+
+    await this.col('schedules').updateOne({ id }, { $set: setFields });
+    const schedule = await this.getScheduleById(id);
+    if (!schedule) throw new Error(`Schedule with ID ${id} not found`);
+    return schedule;
+  }
+
+  async deleteSchedule(id: number): Promise<void> {
+    await this.col('schedules').deleteOne({ id });
+  }
+
+  async getEnabledSchedules(): Promise<Schedule[]> {
+    const docs = await this.col('schedules')
+      .find({ enabled: true })
+      .sort({ priority: -1 })
+      .toArray();
+    return docs.map((d) => this.docToObj<Schedule>(d)!);
   }
 
   // ── Migration executor ───────────────────────────────────────────────────

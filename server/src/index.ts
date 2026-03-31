@@ -11,8 +11,10 @@ import mediaRoutes from './api/routes/media.routes';
 import playlistRoutes from './api/routes/playlist.routes';
 import clientRoutes from './api/routes/client.routes';
 import groupRoutes from './api/routes/group.routes';
+import scheduleRoutes from './api/routes/schedule.routes';
 import { apiKeyAuth } from './api/middleware/auth';
 import { webSocketServer } from './websocket/server';
+import { scheduleService } from './services/schedule.service';
 
 /**
  * Montr Server Application
@@ -130,6 +132,7 @@ class MontrServer {
     this.app.use('/api/playlists', apiKeyAuth(), playlistRoutes);
     this.app.use('/api/clients', apiKeyAuth(), clientRoutes);
     this.app.use('/api/groups', apiKeyAuth(), groupRoutes);
+    this.app.use('/api/schedules', apiKeyAuth(), scheduleRoutes);
   }
 
   /**
@@ -158,6 +161,10 @@ class MontrServer {
       // Initialize WebSocket server
       webSocketServer.initialize(this.server);
       this.logger.info('WebSocket server initialized');
+
+      // Start schedule evaluation
+      scheduleService.startEvaluation();
+      this.logger.info('Schedule evaluation started');
 
       // Start listening
       await new Promise<void>((resolve, reject) => {
@@ -205,6 +212,9 @@ class MontrServer {
    */
   public async shutdown(): Promise<void> {
     this.logger.info('Shutting down server gracefully...');
+
+    // Stop schedule evaluation
+    scheduleService.stopEvaluation();
 
     // Shutdown WebSocket server first
     try {

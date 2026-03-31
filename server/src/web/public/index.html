@@ -26,6 +26,7 @@
                 <li><a href="#playlists" class="nav-link" data-page="playlists">Playlists</a></li>
                 <li><a href="#clients" class="nav-link" data-page="clients">Clients</a></li>
                 <li><a href="#groups" class="nav-link" data-page="groups">Groups</a></li>
+                <li><a href="#schedules" class="nav-link" data-page="schedules">Schedules</a></li>
             </ul>
         </div>
     </nav>
@@ -272,6 +273,27 @@
                 <p>Create a group to manage multiple clients together</p>
             </div>
         </section>
+
+        <!-- Schedules View -->
+        <section id="schedules-view" class="view">
+            <div class="page-header">
+                <h2>Schedules</h2>
+                <button class="btn btn-primary" id="createScheduleBtn">Create Schedule</button>
+            </div>
+
+            <div id="schedulesGrid" class="grid">
+                <div class="loading">Loading schedules...</div>
+            </div>
+
+            <div id="schedulesEmpty" class="empty-state" style="display: none;">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M12 6v6l4 2"/>
+                </svg>
+                <h3>No Schedules</h3>
+                <p>Create a schedule to automatically switch playlists at specific times</p>
+            </div>
+        </section>
     </main>
 
     <!-- Create Group Modal -->
@@ -323,6 +345,84 @@
                 <div id="groupMembersList" class="group-members-list">
                     <div class="loading">Loading members...</div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create/Edit Schedule Modal -->
+    <div id="scheduleModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="scheduleModalTitle">Create Schedule</h3>
+                <button class="modal-close" id="closeScheduleModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="scheduleForm">
+                    <input type="hidden" id="scheduleEditId">
+                    <div class="form-group">
+                        <label for="scheduleName">Name</label>
+                        <input type="text" id="scheduleName" placeholder="e.g., Morning Playlist" required maxlength="255">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="schedulePlaylist">Playlist</label>
+                            <select id="schedulePlaylist" class="form-select" required>
+                                <option value="">Select playlist...</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="schedulePriority">Priority (1-100)</label>
+                            <input type="number" id="schedulePriority" value="50" min="1" max="100">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="scheduleStartTime">Start Time</label>
+                            <input type="time" id="scheduleStartTime" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="scheduleEndTime">End Time (optional)</label>
+                            <input type="time" id="scheduleEndTime">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Days of Week</label>
+                        <div class="days-picker" id="daysPicker">
+                            <label class="day-checkbox"><input type="checkbox" value="0" checked> Sun</label>
+                            <label class="day-checkbox"><input type="checkbox" value="1" checked> Mon</label>
+                            <label class="day-checkbox"><input type="checkbox" value="2" checked> Tue</label>
+                            <label class="day-checkbox"><input type="checkbox" value="3" checked> Wed</label>
+                            <label class="day-checkbox"><input type="checkbox" value="4" checked> Thu</label>
+                            <label class="day-checkbox"><input type="checkbox" value="5" checked> Fri</label>
+                            <label class="day-checkbox"><input type="checkbox" value="6" checked> Sat</label>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="scheduleTarget">Target</label>
+                            <select id="scheduleTarget" class="form-select">
+                                <option value="all">All Clients</option>
+                                <option value="client">Specific Client</option>
+                                <option value="group">Client Group</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="scheduleClientGroup" style="display:none">
+                            <label for="scheduleTargetId">Select Target</label>
+                            <select id="scheduleTargetId" class="form-select">
+                                <option value="">Select...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="scheduleEnabled" checked> Enabled
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelScheduleModal">Cancel</button>
+                <button class="btn btn-primary" id="saveScheduleBtn">Create</button>
             </div>
         </div>
     </div>
