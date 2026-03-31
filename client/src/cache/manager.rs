@@ -568,4 +568,117 @@ mod tests {
             manager2.cache_dir
         );
     }
+
+    #[tokio::test]
+    async fn test_is_cached_valid_true() {
+        let temp_dir = TempDir::new().unwrap();
+        let http_client = create_test_http_client();
+        let cancel_token = CancellationToken::new();
+        let manager =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
+        manager.init().await.unwrap();
+
+        // Create file with known content
+        let path = manager.get_cache_path(1, "test.mp4");
+        let content = b"hello world";
+        fs::write(&path, content).await.unwrap();
+
+        // Compute expected SHA-256 using the same checksum module used in production
+        let expected = checksum::calculate_checksum(&path).await.unwrap();
+
+        assert!(manager.is_cached_valid(1, "test.mp4", &expected).await);
+    }
+
+    #[tokio::test]
+    async fn test_is_cached_valid_false_wrong_checksum() {
+        let temp_dir = TempDir::new().unwrap();
+        let http_client = create_test_http_client();
+        let cancel_token = CancellationToken::new();
+        let manager =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
+        manager.init().await.unwrap();
+
+        // Create file with known content
+        let path = manager.get_cache_path(1, "test.mp4");
+        fs::write(&path, b"hello world").await.unwrap();
+
+        // Provide a wrong checksum
+        let wrong_checksum =
+            "0000000000000000000000000000000000000000000000000000000000000000";
+
+        assert!(!manager.is_cached_valid(1, "test.mp4", wrong_checksum).await);
+    }
+
+    #[tokio::test]
+    async fn test_is_cached_valid_false_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+        let http_client = create_test_http_client();
+        let cancel_token = CancellationToken::new();
+        let manager =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
+        manager.init().await.unwrap();
+
+        // No file exists — any checksum should return false
+        let some_checksum =
+            "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+
+        assert!(!manager.is_cached_valid(99, "nonexistent.mp4", some_checksum).await);
+    }
+
+    #[tokio::test]
+    async fn test_download_media_already_cached_valid() {
+        let temp_dir = TempDir::new().unwrap();
+        let http_client = create_test_http_client();
+        let cancel_token = CancellationToken::new();
+        let manager =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
+        manager.init().await.unwrap();
+
+        // Pre-create the file with known content
+        let path = manager.get_cache_path(1, "cached.mp4");
+        let content = b"already cached content";
+        fs::write(&path, content).await.unwrap();
+
+        // Compute the valid checksum for this content
+        let valid_checksum = checksum::calculate_checksum(&path).await.unwrap();
+
+        // Call download_media — it should return the cached path immediately.
+        // The HTTP client points at a non-existent server, so if it attempted
+        // an actual download it would fail. Success here proves the cache hit.
+        let result = manager.download_media(1, "cached.mp4", &valid_checksum).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), path);
+    }
+
+    #[tokio::test]
+    async fn test_remove_nonexistent_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let http_client = create_test_http_client();
+        let cancel_token = CancellationToken::new();
+        let manager =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
+        manager.init().await.unwrap();
+
+        // Removing a file that does not exist should succeed without error
+        let result = manager.remove(999, "does_not_exist.mp4").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_clear_cache_empty_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let http_client = create_test_http_client();
+        let cancel_token = CancellationToken::new();
+        let manager =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
+        manager.init().await.unwrap();
+
+        // Clearing an already-empty cache directory should succeed without error
+        let result = manager.clear_cache().await;
+        assert!(result.is_ok());
+
+        // Cache size should still be zero
+        let size = manager.get_cache_size().await.unwrap();
+        assert_eq!(size, 0);
+    }
 }

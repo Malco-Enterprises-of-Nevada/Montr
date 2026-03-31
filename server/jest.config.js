@@ -16,6 +16,11 @@ module.exports = {
     '!src/**/*.d.ts',
     '!src/**/*.interface.ts',
     '!src/**/*.type.ts',
+    // Exclude DB adapters that require external databases (MySQL, MSSQL, MongoDB)
+    // These are tested separately via jest.config.adapters.js with real DB connections
+    '!src/database/adapters/mysql.adapter.ts',
+    '!src/database/adapters/mssql.adapter.ts',
+    '!src/database/adapters/mongodb.adapter.ts',
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
@@ -33,14 +38,9 @@ module.exports = {
   clearMocks: true,
   resetMocks: true,
   restoreMocks: true,
-  moduleNameMapper: {
-    '^better-sqlite3$': '<rootDir>/tests/__mocks__/better-sqlite3.ts',
-  },
   testPathIgnorePatterns: [
     '/node_modules/',
     'adapter-conformance\\.ts$',
-    'sqlite\\.conformance\\.test\\.ts$',
-    'migration-runner\\.test\\.ts$',
     'mysql\\.adapter\\.test\\.ts$',
     'mssql\\.adapter\\.test\\.ts$',
     'mongodb\\.adapter\\.test\\.ts$',

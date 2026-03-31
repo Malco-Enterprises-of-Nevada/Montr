@@ -42,6 +42,7 @@ storage/*
 # Testing
 coverage/
 .nyc_output/
+test-storage/
 
 # Temporary files
 tmp/
