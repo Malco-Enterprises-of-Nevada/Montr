@@ -1,4 +1,5 @@
 import { writeFileSync, mkdirSync, existsSync } from 'fs';
+import { randomBytes } from 'crypto';
 import { join } from 'path';
 
 /**
@@ -47,13 +48,15 @@ export function createTestVideoFile(
     0x6d, 0x64, 0x61, 0x74, // 'mdat'
   ]);
 
-  writeFileSync(filePath, mp4Header);
+  // Append random bytes to make each file's checksum unique
+  const uniqueData = Buffer.concat([mp4Header, randomBytes(16)]);
+  writeFileSync(filePath, uniqueData);
 
   return {
     filename,
     path: filePath,
     type: 'video',
-    size: mp4Header.length,
+    size: uniqueData.length,
   };
 }
 
@@ -88,7 +91,9 @@ export function createTestImageFile(
     0x42, 0x60, 0x82,
   ]);
 
-  writeFileSync(filePath, pngData);
+  // Append random bytes after the IEND marker to make each file's checksum unique
+  const uniqueData = Buffer.concat([pngData, randomBytes(16)]);
+  writeFileSync(filePath, uniqueData);
 
   return {
     filename,

@@ -345,4 +345,154 @@ mod tests {
 
     // Integration tests would require a real WebSocket server
     // These would test actual connection, messaging, and reconnection logic
+
+    #[test]
+    fn test_build_ws_url_preserves_path_segments() {
+        let http_url = "http://example.com/api";
+        let ws_url = WebSocketClient::build_ws_url(http_url).unwrap();
+        assert_eq!(ws_url, "ws://example.com/api/ws");
+    }
+
+    #[tokio::test]
+    async fn test_send_via_channel() {
+        let (tx, mut rx) = mpsc::channel::<ClientMessage>(10);
+        // Send a heartbeat message through the channel
+        let msg = ClientMessage::Heartbeat(crate::network::protocol::HeartbeatMessage {
+            client_id: "test-id".to_string(),
+            timestamp: 12345,
+        });
+        tx.send(msg).await.unwrap();
+        let received = rx.recv().await.unwrap();
+        // Verify the message was received correctly
+        match received {
+            ClientMessage::Heartbeat(hb) => assert_eq!(hb.client_id, "test-id"),
+            _ => panic!("Expected Heartbeat message"),
+        }
+    }
+
+    #[test]
+    fn test_connection_state_default() {
+        let state = ConnectionState::new();
+        assert_eq!(state.current(), State::Disconnected);
+        assert!(!state.is_connected());
+        assert!(!state.is_operational());
+        assert!(!state.is_error());
+    }
+
+    #[tokio::test]
+    async fn test_cancel_token_propagation() {
+        let token = CancellationToken::new();
+        let cloned = token.clone();
+        assert!(!cloned.is_cancelled());
+        token.cancel();
+        assert!(cloned.is_cancelled());
+    }
+
+    #[test]
+    fn test_build_ws_url_with_no_scheme() {
+        // When there is no http:// or https:// prefix, the replace calls
+        // do not match, so the URL passes through unchanged except for /ws append.
+        let raw_url = "localhost:3000";
+        let ws_url = WebSocketClient::build_ws_url(raw_url).unwrap();
+        assert_eq!(ws_url, "localhost:3000/ws");
+    }
+
+    #[tokio::test]
+    async fn test_local_ws_server_connect() {
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::accept_async;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Spawn a server that accepts one WebSocket connection
+        let server_handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let _ws = accept_async(stream).await.unwrap();
+            // Keep connection alive briefly
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        });
+
+        // Attempt to connect using the private connect method
+        let ws_url = format!("ws://127.0.0.1:{}", addr.port());
+        let result = WebSocketClient::connect(&ws_url).await;
+        assert!(result.is_ok());
+
+        server_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_send_receives_text_message() {
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::accept_async;
+        use futures_util::{SinkExt, StreamExt};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Spawn a server that reads one message from the client
+        let server_handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = accept_async(stream).await.unwrap();
+            // Read the next text message from the client
+            if let Some(Ok(msg)) = ws.next().await {
+                msg
+            } else {
+                panic!("Expected a message from the client");
+            }
+        });
+
+        // Connect to the local server
+        let ws_url = format!("ws://127.0.0.1:{}", addr.port());
+        let ws_stream = WebSocketClient::connect(&ws_url).await.unwrap();
+        let (mut write, _read) = ws_stream.split();
+
+        // Send a heartbeat message as JSON
+        let heartbeat = ClientMessage::heartbeat("integration-test".to_string());
+        let json = heartbeat.to_json().unwrap();
+        write.send(Message::Text(json.clone())).await.unwrap();
+
+        // Verify the server received the correct message
+        let received_msg = server_handle.await.unwrap();
+        match received_msg {
+            Message::Text(text) => {
+                assert!(text.contains("\"type\":\"heartbeat\""));
+                assert!(text.contains("\"clientId\":\"integration-test\""));
+            }
+            other => panic!("Expected Text message, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_connection_task_exits_on_cancel() {
+        let state = Arc::new(RwLock::new(ConnectionState::new()));
+        let reconnect = Arc::new(RwLock::new(ReconnectStrategy::new(
+            Duration::from_millis(100),
+            1.5,
+            Duration::from_secs(1),
+        )));
+        let (_msg_tx, msg_rx) = mpsc::channel::<ClientMessage>(10);
+        let (srv_tx, _srv_rx) = mpsc::channel::<ServerMessage>(10);
+        let cancel_token = CancellationToken::new();
+
+        // Spawn connection_task with an invalid URL that will fail to connect
+        let token_clone = cancel_token.clone();
+        let handle = tokio::spawn(WebSocketClient::connection_task(
+            "ws://127.0.0.1:1/invalid".to_string(),
+            state,
+            reconnect,
+            msg_rx,
+            srv_tx,
+            token_clone,
+        ));
+
+        // Give the task a moment to start, then cancel
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancel_token.cancel();
+
+        // The task should exit cleanly within a reasonable time
+        let result = tokio::time::timeout(Duration::from_secs(5), handle).await;
+        assert!(result.is_ok(), "connection_task should exit after cancellation");
+        assert!(result.unwrap().is_ok(), "connection_task should not panic");
+    }
 }

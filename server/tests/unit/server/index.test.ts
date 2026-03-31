@@ -33,9 +33,19 @@ jest.mock('../../../src/config/config', () => ({
       path: './test-storage',
       maxUploadSizeMB: 500,
     },
+    security: {
+      apiKeyRequired: false,
+      apiKey: undefined,
+      allowedOrigins: ['http://localhost:3000'],
+    },
     logging: {
       level: 'info',
       logFile: './test-logs/server.log',
+    },
+    websocket: {
+      healthCheckInterval: 30000,
+      staleTimeout: 300000,
+      heartbeatTimeout: 60000,
     },
   },
 }));
@@ -45,6 +55,7 @@ import MontrServer from '../../../src/index';
 import { getDatabase, closeDatabase } from '../../../src/database/connection';
 import { webSocketServer } from '../../../src/websocket/server';
 import { getLogger } from '../../../src/utils/logger';
+import { createServer } from 'http';
 
 describe('MontrServer', () => {
   let server: MontrServer;
@@ -79,6 +90,18 @@ describe('MontrServer', () => {
     };
     (webSocketServer as any) = mockWsServer;
     Object.assign(webSocketServer, mockWsServer);
+
+    // Mock createServer to avoid EADDRINUSE
+    jest.spyOn(require('http'), 'createServer').mockReturnValue({
+      listen: jest.fn((...args: any[]) => {
+        // Call the callback (3rd arg) to simulate successful listen
+        const cb = args.find((a: any) => typeof a === 'function');
+        if (cb) cb();
+      }),
+      close: jest.fn((cb: any) => { if (cb) cb(); }),
+      on: jest.fn(),
+      address: jest.fn().mockReturnValue({ port: 3000, address: '0.0.0.0' }),
+    } as any);
   });
 
   afterEach(async () => {

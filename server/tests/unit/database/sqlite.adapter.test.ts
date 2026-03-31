@@ -819,8 +819,11 @@ describe('SQLiteAdapter', () => {
     });
 
     describe('getAllClients', () => {
+      let assignedPlaylistId: number;
+
       beforeEach(async () => {
         const playlist = await adapter.createPlaylist({ name: 'Test' });
+        assignedPlaylistId = playlist.id;
 
         await adapter.createClient({
           id: 'client-1',
@@ -855,8 +858,7 @@ describe('SQLiteAdapter', () => {
       });
 
       it('should filter by assigned_playlist_id', async () => {
-        const playlist = await adapter.createPlaylist({ name: 'Test' });
-        const filter: ClientFilter = { assigned_playlist_id: playlist.id };
+        const filter: ClientFilter = { assigned_playlist_id: assignedPlaylistId };
         const clients = await adapter.getAllClients(filter);
 
         expect(clients).toHaveLength(1);
@@ -864,10 +866,9 @@ describe('SQLiteAdapter', () => {
       });
 
       it('should combine multiple filters', async () => {
-        const playlist = await adapter.createPlaylist({ name: 'Test' });
         const filter: ClientFilter = {
           status: 'online',
-          assigned_playlist_id: playlist.id,
+          assigned_playlist_id: assignedPlaylistId,
         };
         const clients = await adapter.getAllClients(filter);
 

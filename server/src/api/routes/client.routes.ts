@@ -62,7 +62,7 @@ router.get(
   '/:id',
   validateParams(uuidParamSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     const client = await clientService.getClientById(id);
     res.json(successResponse(client));
   })
@@ -77,7 +77,7 @@ router.put(
   validateParams(uuidParamSchema),
   validateBody(updateClientSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     const client = await clientService.updateClient(id, req.body);
     res.json(successResponse(client));
   })
@@ -91,7 +91,7 @@ router.delete(
   '/:id',
   validateParams(uuidParamSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     await clientService.unregisterClient(id);
     res.json(
       successResponse({
@@ -110,7 +110,7 @@ router.get(
   '/:id/status',
   validateParams(uuidParamSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     const clientWithStatus = await clientService.getClientWithStatus(id);
     res.json(successResponse(clientWithStatus));
   })
@@ -125,7 +125,7 @@ router.post(
   validateParams(uuidParamSchema),
   validateBody(clientStatusSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
 
     const status = await clientService.recordClientStatus({
       client_id: id,
@@ -144,7 +144,7 @@ router.post(
   '/:id/heartbeat',
   validateParams(uuidParamSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     await clientService.updateHeartbeat(id);
     res.json(
       successResponse({

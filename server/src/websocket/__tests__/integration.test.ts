@@ -6,6 +6,7 @@ import { createServer, Server as HTTPServer } from 'http';
 import WebSocket from 'ws';
 import { MontrWebSocketServer } from '../server';
 import { ClientMessage, ServerMessage } from '../types';
+import { AppError, ErrorCode } from '../../api/middleware/error-handler';
 
 // Mock dependencies
 jest.mock('../../utils/logger', () => ({
@@ -40,6 +41,11 @@ jest.mock('../../config/config', () => ({
       host: 'localhost',
       publicUrl: 'http://localhost:3001',
     },
+    websocket: {
+      healthCheckInterval: 30000,
+      staleTimeout: 300000,
+      heartbeatTimeout: 60000,
+    },
   },
 }));
 
@@ -47,7 +53,7 @@ describe('WebSocket Integration Tests', () => {
   let httpServer: HTTPServer;
   let wsServer: MontrWebSocketServer;
   let wsClient: WebSocket;
-  const TEST_PORT = 3001;
+  let TEST_PORT: number;
   const TEST_CLIENT_ID = '550e8400-e29b-41d4-a716-446655440000';
 
   beforeAll((done) => {
@@ -58,22 +64,47 @@ describe('WebSocket Integration Tests', () => {
     wsServer = new MontrWebSocketServer();
     wsServer.initialize(httpServer);
 
-    // Start HTTP server
-    httpServer.listen(TEST_PORT, () => {
+    // Start HTTP server on dynamic port (0 lets OS pick a free port)
+    httpServer.listen(0, () => {
+      const addr = httpServer.address();
+      TEST_PORT = typeof addr === 'object' && addr !== null ? addr.port : 3001;
       done();
+    });
+
+    httpServer.on('error', (err: Error) => {
+      done(err);
     });
   });
 
   afterAll(async () => {
-    // Cleanup
-    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
-      wsClient.close();
+    // Cleanup connections first
+    try {
+      if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+        wsClient.close();
+      }
+    } catch {
+      // Ignore
     }
-    await wsServer.shutdown();
+
+    // Shutdown WS server with timeout
+    try {
+      await Promise.race([
+        wsServer.shutdown(),
+        new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+      ]);
+    } catch {
+      // Ignore shutdown errors
+    }
+
+    // Close HTTP server with timeout
     await new Promise<void>((resolve) => {
-      httpServer.close(() => resolve());
+      const timeout = setTimeout(resolve, 2000);
+      httpServer.close(() => {
+        clearTimeout(timeout);
+        resolve();
+      });
     });
-  });
+  }, 20000);
 
   beforeEach(() => {
     // Create new WebSocket client for each test
@@ -105,7 +136,8 @@ describe('WebSocket Integration Tests', () => {
       });
 
       wsClient.on('close', (code) => {
-        expect(code).toBe(1000);
+        // ws library may return 1000 (normal) or 1005 (no status received)
+        expect([1000, 1005]).toContain(code);
         done();
       });
     });
@@ -115,9 +147,7 @@ describe('WebSocket Integration Tests', () => {
     it('should handle register message', (done) => {
       const { clientService } = require('../../services/client.service');
 
-      // Mock client service
-      clientService.getClientById.mockRejectedValue(new Error('Client not found'));
-      clientService.registerClient.mockResolvedValue({
+      const mockClient = {
         id: TEST_CLIENT_ID,
         name: `Client-${TEST_CLIENT_ID.substring(0, 8)}`,
         version: '1.0.0',
@@ -127,7 +157,14 @@ describe('WebSocket Integration Tests', () => {
         last_seen: new Date().toISOString(),
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      });
+      };
+
+      // Mock client service
+      clientService.getClientById.mockRejectedValue(
+        new AppError(ErrorCode.CLIENT_NOT_FOUND, 'Client not found', 404)
+      );
+      clientService.registerClient.mockResolvedValue(mockClient);
+      clientService.updateClient.mockResolvedValue(mockClient);
 
       wsClient.on('open', () => {
         const registerMessage: ClientMessage = {

@@ -184,7 +184,7 @@ export class MontrApiClient {
     mediaIds: number[],
     imageDuration?: number
   ): Promise<any> {
-    const payload: any = { media_ids: mediaIds };
+    const payload: any = { mediaIds };
     if (imageDuration !== undefined) {
       payload.image_duration = imageDuration;
     }
@@ -351,7 +351,20 @@ export class MontrApiClient {
       errorMessage?: string | null;
     }
   ): Promise<any> {
-    const response = await this.client.post(`/api/clients/${clientId}/status`, status);
+    // Map camelCase to snake_case for the API
+    const payload: any = {
+      is_playing: status.isPlaying ?? false,
+    };
+    if (status.currentMediaId !== undefined) {
+      payload.current_media_id = status.currentMediaId;
+    }
+    if (status.position !== undefined) {
+      payload.position = status.position;
+    }
+    if (status.errorMessage !== undefined) {
+      payload.error_message = status.errorMessage;
+    }
+    const response = await this.client.post(`/api/clients/${clientId}/status`, payload);
     return response.data;
   }
 

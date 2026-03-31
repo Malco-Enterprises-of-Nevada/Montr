@@ -100,6 +100,7 @@ describe('WebSocket Handlers', () => {
         new AppError(ErrorCode.CLIENT_NOT_FOUND, 'Client not found', 404)
       );
       mockClientService.registerClient.mockResolvedValue(mockClient);
+      mockClientService.updateClient.mockResolvedValue(mockClient);
 
       await handleRegister(mockWs, validMessage);
 
@@ -175,6 +176,7 @@ describe('WebSocket Handlers', () => {
         new AppError(ErrorCode.CLIENT_NOT_FOUND, 'Client not found', 404)
       );
       mockClientService.registerClient.mockResolvedValue(mockClient);
+      mockClientService.updateClient.mockResolvedValue(mockClient);
       mockPlaylistService.getPlaylistWithItems.mockResolvedValue(mockPlaylist);
 
       await handleRegister(mockWs, validMessage);

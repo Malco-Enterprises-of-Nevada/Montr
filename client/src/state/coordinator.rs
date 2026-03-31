@@ -622,4 +622,378 @@ mod tests {
 
         assert!(sender.send(msg).is_ok());
     }
+
+    #[tokio::test]
+    async fn test_command_pause() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client,
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+
+        let playback_engine = create_mock_playback_engine();
+        let mut coordinator = StateCoordinator::new(
+            state.clone(),
+            cache_manager,
+            &playback_engine,
+            cancel_token,
+            2,
+        );
+
+        state.set_playing(true).await;
+
+        let cmd = ServerMessage::Command(crate::network::CommandMessage {
+            command: "pause".to_string(),
+            args: None,
+        });
+        coordinator.handle_server_message(cmd).await.unwrap();
+
+        assert_eq!(state.is_playing().await, false);
+    }
+
+    #[tokio::test]
+    async fn test_command_resume() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client,
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+
+        let playback_engine = create_mock_playback_engine();
+        let mut coordinator = StateCoordinator::new(
+            state.clone(),
+            cache_manager,
+            &playback_engine,
+            cancel_token,
+            2,
+        );
+
+        state.set_playing(false).await;
+
+        let cmd = ServerMessage::Command(crate::network::CommandMessage {
+            command: "resume".to_string(),
+            args: None,
+        });
+        coordinator.handle_server_message(cmd).await.unwrap();
+
+        assert_eq!(state.is_playing().await, true);
+    }
+
+    #[tokio::test]
+    async fn test_command_reload_playlist() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client,
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+
+        let playback_engine = create_mock_playback_engine();
+        let mut coordinator = StateCoordinator::new(
+            state.clone(),
+            cache_manager.clone(),
+            &playback_engine,
+            cancel_token,
+            2,
+        );
+
+        // Set up playlist with cached files
+        let items = vec![create_test_item(1, 1), create_test_item(2, 2)];
+        for item in &items {
+            let cache_path = cache_manager.get_cache_path(item.media_id, &item.filename);
+            std::fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+            std::fs::write(&cache_path, b"dummy video data").unwrap();
+        }
+        state.update_playlist(1, items, true).await.unwrap();
+        // Advance past the first item
+        state.next_item().await;
+
+        let cmd = ServerMessage::Command(crate::network::CommandMessage {
+            command: "reload_playlist".to_string(),
+            args: None,
+        });
+        coordinator.handle_server_message(cmd).await.unwrap();
+
+        // After reload, queue should still have items and be reset to beginning
+        assert_eq!(state.queue_length().await, 2);
+        assert_eq!(state.playlist_index().await, Some(0));
+    }
+
+    #[tokio::test]
+    async fn test_command_skip() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client,
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+
+        let playback_engine = create_mock_playback_engine();
+        let mut coordinator = StateCoordinator::new(
+            state.clone(),
+            cache_manager.clone(),
+            &playback_engine,
+            cancel_token,
+            2,
+        );
+
+        // Set up playlist with 2 items and create cached files
+        let items = vec![create_test_item(1, 1), create_test_item(2, 2)];
+        for item in &items {
+            let cache_path = cache_manager.get_cache_path(item.media_id, &item.filename);
+            std::fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+            std::fs::write(&cache_path, b"dummy video data").unwrap();
+        }
+        state.update_playlist(1, items, false).await.unwrap();
+        // Position at first item
+        state.next_item().await;
+        state.set_playing(true).await;
+
+        let cmd = ServerMessage::Command(crate::network::CommandMessage {
+            command: "skip".to_string(),
+            args: None,
+        });
+        coordinator.handle_server_message(cmd).await.unwrap();
+
+        // After skip, state should have advanced: current media updated to item 2
+        assert_eq!(state.current_media_id().await, Some(2));
+    }
+
+    #[tokio::test]
+    async fn test_command_unknown() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client,
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+
+        let playback_engine = create_mock_playback_engine();
+        let mut coordinator = StateCoordinator::new(
+            state.clone(),
+            cache_manager,
+            &playback_engine,
+            cancel_token,
+            2,
+        );
+
+        let cmd = ServerMessage::Command(crate::network::CommandMessage {
+            command: "nonexistent_command".to_string(),
+            args: None,
+        });
+        // Should return Ok without panicking
+        let result = coordinator.handle_server_message(cmd).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_playback_error_sets_error_state() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client,
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+
+        let playback_engine = create_mock_playback_engine();
+        let mut coordinator = StateCoordinator::new(
+            state.clone(),
+            cache_manager,
+            &playback_engine,
+            cancel_token,
+            2,
+        );
+
+        state.set_playing(true).await;
+
+        let event = PlaybackEventMessage::Error {
+            media_id: 1,
+            error: "codec not supported".to_string(),
+        };
+        coordinator.handle_playback_event(event).await.unwrap();
+
+        assert_eq!(
+            state.last_error().await,
+            Some("codec not supported".to_string())
+        );
+        assert_eq!(state.is_playing().await, false);
+    }
+
+    #[tokio::test]
+    async fn test_position_update() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client,
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+
+        let playback_engine = create_mock_playback_engine();
+        let mut coordinator = StateCoordinator::new(
+            state.clone(),
+            cache_manager,
+            &playback_engine,
+            cancel_token,
+            2,
+        );
+
+        let event = PlaybackEventMessage::PositionUpdate { position: 42.5 };
+        coordinator.handle_playback_event(event).await.unwrap();
+
+        assert_eq!(state.current_position().await, Some(42.5));
+    }
+
+    #[tokio::test]
+    async fn test_media_started_updates_state() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client,
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+
+        let playback_engine = create_mock_playback_engine();
+        let mut coordinator = StateCoordinator::new(
+            state.clone(),
+            cache_manager,
+            &playback_engine,
+            cancel_token,
+            2,
+        );
+
+        // Initially not playing, no current media
+        assert_eq!(state.current_media_id().await, None);
+        assert_eq!(state.is_playing().await, false);
+
+        let event = PlaybackEventMessage::MediaStarted { media_id: 1 };
+        coordinator.handle_playback_event(event).await.unwrap();
+
+        assert_eq!(state.current_media_id().await, Some(1));
+        assert_eq!(state.is_playing().await, true);
+        assert_eq!(state.current_position().await, Some(0.0));
+    }
+
+    #[tokio::test]
+    async fn test_download_complete_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client,
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+
+        let playback_engine = create_mock_playback_engine();
+        let mut coordinator = StateCoordinator::new(
+            state.clone(),
+            cache_manager,
+            &playback_engine,
+            cancel_token,
+            2,
+        );
+
+        // Should succeed without error
+        let result = coordinator.handle_download_complete(1, true).await;
+        assert!(result.is_ok());
+
+        // Also test the failure case - should still return Ok (just logs a warning)
+        let result = coordinator.handle_download_complete(2, false).await;
+        assert!(result.is_ok());
+
+        // No error should be set in state
+        assert_eq!(state.last_error().await, None);
+    }
+
+    #[tokio::test]
+    async fn test_run_exits_on_cancel() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client,
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+
+        let playback_engine = create_mock_playback_engine();
+        let coordinator = StateCoordinator::new(
+            state,
+            cache_manager,
+            &playback_engine,
+            cancel_token.clone(),
+            2,
+        );
+
+        // Cancel immediately
+        cancel_token.cancel();
+
+        // run() should exit cleanly
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            coordinator.run(),
+        )
+        .await;
+
+        assert!(result.is_ok(), "run() should have completed before timeout");
+        assert!(result.unwrap().is_ok(), "run() should return Ok on cancellation");
+    }
 }
