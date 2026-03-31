@@ -17,6 +17,7 @@ export interface MediaFile {
   height: number | null;
   checksum: string | null;
   thumbnail_status: ThumbnailStatus;
+  approval_status: ApprovalStatus;
   created_at: string;
   updated_at: string;
 }
@@ -287,6 +288,18 @@ export interface UptimeStat {
   status: string;
   last_seen: string | null;
   total_logs: number;
+}
+
+// Notification types
+// Content approval types
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
+
+export interface ApprovalLog {
+  id: number;
+  media_id: number;
+  action: ApprovalStatus;
+  comment: string | null;
+  timestamp: string;
 }
 
 // Notification types

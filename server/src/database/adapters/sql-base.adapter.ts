@@ -40,6 +40,8 @@ import {
   CreateNotificationRuleInput,
   NotificationEventType,
   NotificationHistory,
+  ApprovalStatus,
+  ApprovalLog,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -61,6 +63,7 @@ const MEDIA_UPDATABLE_FIELDS = new Set([
   'height',
   'checksum',
   'thumbnail_status',
+  'approval_status',
 ]);
 
 /** Row result from a query with execution metadata */
@@ -135,8 +138,8 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     const result = await this.rawExecute(
       `INSERT INTO media_files (
         filename, original_filename, filepath, type, mime_type,
-        file_size, duration, width, height, checksum, thumbnail_status
-      ) VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)}, ${p(10)}, ${p(11)})`,
+        file_size, duration, width, height, checksum, thumbnail_status, approval_status
+      ) VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)}, ${p(10)}, ${p(11)}, ${p(12)})`,
       [
         input.filename,
         input.original_filename,
@@ -149,6 +152,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
         input.height || null,
         input.checksum || null,
         input.thumbnail_status || 'pending',
+        'pending',
       ]
     );
 
@@ -292,6 +296,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
         height: number | null;
         checksum: string | null;
         thumbnail_status: import('../types').ThumbnailStatus;
+        approval_status: import('../types').ApprovalStatus;
         media_created_at: string;
         media_updated_at: string;
       }
@@ -300,7 +305,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
         pi.id, pi.playlist_id, pi.media_id, pi.order_index, pi.image_duration, pi.created_at,
         mf.id as media_id, mf.filename, mf.original_filename, mf.filepath, mf.type,
         mf.mime_type, mf.file_size, mf.duration, mf.width, mf.height, mf.checksum,
-        mf.thumbnail_status,
+        mf.thumbnail_status, mf.approval_status,
         mf.created_at as media_created_at, mf.updated_at as media_updated_at
       FROM playlist_items pi
       JOIN media_files mf ON pi.media_id = mf.id
@@ -329,6 +334,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
         height: row.height,
         checksum: row.checksum,
         thumbnail_status: row.thumbnail_status || 'pending',
+        approval_status: row.approval_status || 'pending',
         created_at: row.media_created_at,
         updated_at: row.media_updated_at,
       },
@@ -1081,6 +1087,43 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   async getNotificationHistory(limit: number = 50): Promise<NotificationHistory[]> {
     return this.rawQuery<NotificationHistory>(
       `SELECT * FROM notification_history ORDER BY sent_at DESC LIMIT ${limit}`
+    );
+  }
+
+  // ── Approval operations ─────────────────────────────────────────────────
+
+  async updateMediaApproval(mediaId: number, status: ApprovalStatus): Promise<MediaFile> {
+    return this.updateMedia(mediaId, { approval_status: status } as Partial<CreateMediaInput>);
+  }
+
+  async createApprovalLog(
+    mediaId: number,
+    action: ApprovalStatus,
+    comment?: string
+  ): Promise<ApprovalLog> {
+    const p = this.placeholder;
+    const result = await this.rawExecute(
+      `INSERT INTO approval_logs (media_id, action, comment) VALUES (${p(1)}, ${p(2)}, ${p(3)})`,
+      [mediaId, action, comment || null]
+    );
+    const log = await this.rawQueryOne<ApprovalLog>(
+      `SELECT * FROM approval_logs WHERE id = ${p(1)}`,
+      [result.lastInsertId]
+    );
+    if (!log) throw new Error('Failed to retrieve created approval log');
+    return log;
+  }
+
+  async getApprovalLogs(mediaId: number): Promise<ApprovalLog[]> {
+    return this.rawQuery<ApprovalLog>(
+      `SELECT * FROM approval_logs WHERE media_id = ${this.placeholder(1)} ORDER BY timestamp DESC`,
+      [mediaId]
+    );
+  }
+
+  async getPendingMedia(): Promise<MediaFile[]> {
+    return this.rawQuery<MediaFile>(
+      `SELECT * FROM media_files WHERE approval_status = 'pending' ORDER BY created_at DESC`
     );
   }
 }
