@@ -24,6 +24,9 @@ import {
   ClientGroupWithMembers,
   CreateClientGroupInput,
   UpdateClientGroupInput,
+  Schedule,
+  CreateScheduleInput,
+  UpdateScheduleInput,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -86,4 +89,12 @@ export interface DatabaseAdapter {
   removeClientFromGroup(groupId: number, clientId: string): Promise<void>;
   getGroupMembers(groupId: number): Promise<Client[]>;
   getClientGroups(clientId: string): Promise<ClientGroup[]>;
+
+  // Schedule operations
+  createSchedule(input: CreateScheduleInput): Promise<Schedule>;
+  getScheduleById(id: number): Promise<Schedule | null>;
+  getAllSchedules(): Promise<Schedule[]>;
+  updateSchedule(id: number, input: UpdateScheduleInput): Promise<Schedule>;
+  deleteSchedule(id: number): Promise<void>;
+  getEnabledSchedules(): Promise<Schedule[]>;
 }

@@ -26,6 +26,9 @@ import {
   ClientGroupWithMembers,
   CreateClientGroupInput,
   UpdateClientGroupInput,
+  Schedule,
+  CreateScheduleInput,
+  UpdateScheduleInput,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -681,5 +684,90 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
        ORDER BY cg.name ASC`,
       [clientId]
     );
+  }
+
+  // ── Schedule operations ─────────────────────────────────────────────────
+
+  async createSchedule(input: CreateScheduleInput): Promise<Schedule> {
+    const p = this.placeholder;
+    const result = await this.rawExecute(
+      `INSERT INTO schedules (name, playlist_id, client_id, group_id, start_time, end_time, days_of_week, priority, enabled)
+       VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)})`,
+      [
+        input.name,
+        input.playlist_id,
+        input.client_id || null,
+        input.group_id || null,
+        input.start_time,
+        input.end_time || null,
+        input.days_of_week || '0,1,2,3,4,5,6',
+        input.priority ?? 50,
+        input.enabled !== false ? 1 : 0,
+      ]
+    );
+    const schedule = await this.getScheduleById(result.lastInsertId);
+    if (!schedule) throw new Error('Failed to retrieve created schedule');
+    return schedule;
+  }
+
+  async getScheduleById(id: number): Promise<Schedule | null> {
+    const row = await this.rawQueryOne<Omit<Schedule, 'enabled'> & { enabled: number }>(
+      `SELECT * FROM schedules WHERE id = ${this.placeholder(1)}`,
+      [id]
+    );
+    if (!row) return null;
+    return { ...row, enabled: Boolean(row.enabled) };
+  }
+
+  async getAllSchedules(): Promise<Schedule[]> {
+    const rows = await this.rawQuery<Omit<Schedule, 'enabled'> & { enabled: number }>(
+      'SELECT * FROM schedules ORDER BY priority DESC, name ASC'
+    );
+    return rows.map((r) => ({ ...r, enabled: Boolean(r.enabled) }));
+  }
+
+  async updateSchedule(id: number, input: UpdateScheduleInput): Promise<Schedule> {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    let paramIndex = 1;
+
+    const updatable: Record<string, unknown> = {};
+    if (input.name !== undefined) updatable.name = input.name;
+    if (input.playlist_id !== undefined) updatable.playlist_id = input.playlist_id;
+    if (input.client_id !== undefined) updatable.client_id = input.client_id;
+    if (input.group_id !== undefined) updatable.group_id = input.group_id;
+    if (input.start_time !== undefined) updatable.start_time = input.start_time;
+    if (input.end_time !== undefined) updatable.end_time = input.end_time;
+    if (input.days_of_week !== undefined) updatable.days_of_week = input.days_of_week;
+    if (input.priority !== undefined) updatable.priority = input.priority;
+    if (input.enabled !== undefined) updatable.enabled = input.enabled ? 1 : 0;
+
+    for (const [key, value] of Object.entries(updatable)) {
+      fields.push(`${key} = ${this.placeholder(paramIndex++)}`);
+      values.push(value);
+    }
+
+    if (fields.length > 0) {
+      values.push(id);
+      await this.rawExecute(
+        `UPDATE schedules SET ${fields.join(', ')} WHERE id = ${this.placeholder(paramIndex)}`,
+        values
+      );
+    }
+
+    const schedule = await this.getScheduleById(id);
+    if (!schedule) throw new Error(`Schedule with ID ${id} not found`);
+    return schedule;
+  }
+
+  async deleteSchedule(id: number): Promise<void> {
+    await this.rawExecute(`DELETE FROM schedules WHERE id = ${this.placeholder(1)}`, [id]);
+  }
+
+  async getEnabledSchedules(): Promise<Schedule[]> {
+    const rows = await this.rawQuery<Omit<Schedule, 'enabled'> & { enabled: number }>(
+      `SELECT * FROM schedules WHERE enabled = 1 ORDER BY priority DESC`
+    );
+    return rows.map((r) => ({ ...r, enabled: Boolean(r.enabled) }));
   }
 }

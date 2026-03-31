@@ -288,6 +288,34 @@ const groupsAPI = {
     }
 };
 
+const schedulesAPI = {
+    async list() {
+        return await apiCall('/schedules');
+    },
+
+    async get(id) {
+        return await apiCall(`/schedules/${id}`);
+    },
+
+    async create(data) {
+        return await apiCall('/schedules', {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+    },
+
+    async update(id, data) {
+        return await apiCall(`/schedules/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+    },
+
+    async delete(id) {
+        return await apiCall(`/schedules/${id}`, { method: 'DELETE' });
+    }
+};
+
 // ===== Navigation =====
 
 function initNavigation() {
@@ -340,6 +368,9 @@ function navigateTo(view) {
             break;
         case 'groups':
             loadGroups();
+            break;
+        case 'schedules':
+            loadSchedules();
             break;
     }
 }
@@ -1274,6 +1305,230 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// ===== Schedules View =====
+
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+async function loadSchedules() {
+    const gridEl = document.getElementById('schedulesGrid');
+    const emptyEl = document.getElementById('schedulesEmpty');
+
+    gridEl.innerHTML = '<div class="loading">Loading schedules...</div>';
+    emptyEl.style.display = 'none';
+
+    try {
+        const schedules = await schedulesAPI.list();
+
+        if (schedules.length === 0) {
+            gridEl.innerHTML = '';
+            emptyEl.style.display = 'flex';
+            return;
+        }
+
+        gridEl.innerHTML = schedules.map(schedule => {
+            const days = schedule.days_of_week.split(',').map(d => DAY_NAMES[parseInt(d)]).join(', ');
+            const timeRange = schedule.end_time
+                ? `${schedule.start_time} - ${schedule.end_time}`
+                : `${schedule.start_time}`;
+            const target = schedule.client_id
+                ? `Client`
+                : schedule.group_id
+                ? `Group`
+                : 'All Clients';
+
+            return `
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        ${escapeHtml(schedule.name)}
+                        <span class="badge badge-${schedule.enabled ? 'success' : 'secondary'}">${schedule.enabled ? 'Active' : 'Disabled'}</span>
+                    </h3>
+                    <div class="card-actions">
+                        <button class="btn btn-sm btn-secondary edit-schedule-btn" data-id="${schedule.id}">Edit</button>
+                        <button class="btn btn-sm btn-danger delete-schedule-btn" data-id="${schedule.id}">Delete</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="card-meta">
+                        <span>Time: ${timeRange}</span>
+                        <span>Days: ${days}</span>
+                    </div>
+                    <div class="card-meta">
+                        <span>Target: ${target}</span>
+                        <span>Priority: ${schedule.priority}</span>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+
+        gridEl.querySelectorAll('.edit-schedule-btn').forEach(btn => {
+            btn.addEventListener('click', () => openEditSchedule(parseInt(btn.dataset.id)));
+        });
+
+        gridEl.querySelectorAll('.delete-schedule-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                if (confirm('Delete this schedule?')) {
+                    try {
+                        await schedulesAPI.delete(parseInt(btn.dataset.id));
+                        showToast('Schedule deleted', 'success');
+                        loadSchedules();
+                    } catch (error) {
+                        showToast('Failed to delete schedule', 'error');
+                    }
+                }
+            });
+        });
+    } catch (error) {
+        console.error('Failed to load schedules:', error);
+        gridEl.innerHTML = '<div class="error">Failed to load schedules</div>';
+    }
+}
+
+function initScheduleModal() {
+    const modal = document.getElementById('scheduleModal');
+    const targetSelect = document.getElementById('scheduleTarget');
+    const targetIdGroup = document.getElementById('scheduleClientGroup');
+
+    document.getElementById('createScheduleBtn').addEventListener('click', async () => {
+        resetScheduleForm();
+        document.getElementById('scheduleModalTitle').textContent = 'Create Schedule';
+        document.getElementById('saveScheduleBtn').textContent = 'Create';
+        await populateScheduleSelects();
+        modal.style.display = 'flex';
+    });
+
+    document.getElementById('closeScheduleModal').addEventListener('click', () => { modal.style.display = 'none'; });
+    document.getElementById('cancelScheduleModal').addEventListener('click', () => { modal.style.display = 'none'; });
+
+    targetSelect.addEventListener('change', () => {
+        targetIdGroup.style.display = targetSelect.value === 'all' ? 'none' : 'block';
+        populateTargetSelect(targetSelect.value);
+    });
+
+    document.getElementById('saveScheduleBtn').addEventListener('click', async () => {
+        const editId = document.getElementById('scheduleEditId').value;
+        const name = document.getElementById('scheduleName').value.trim();
+        const playlist_id = parseInt(document.getElementById('schedulePlaylist').value);
+        const start_time = document.getElementById('scheduleStartTime').value;
+        const end_time = document.getElementById('scheduleEndTime').value || undefined;
+        const priority = parseInt(document.getElementById('schedulePriority').value) || 50;
+        const enabled = document.getElementById('scheduleEnabled').checked;
+
+        const dayCheckboxes = document.querySelectorAll('#daysPicker input[type="checkbox"]:checked');
+        const days_of_week = Array.from(dayCheckboxes).map(cb => cb.value).join(',');
+
+        const target = targetSelect.value;
+        let client_id = undefined;
+        let group_id = undefined;
+        if (target === 'client') client_id = document.getElementById('scheduleTargetId').value || undefined;
+        if (target === 'group') group_id = parseInt(document.getElementById('scheduleTargetId').value) || undefined;
+
+        if (!name || !playlist_id || !start_time) {
+            showToast('Name, playlist, and start time are required', 'error');
+            return;
+        }
+
+        try {
+            const data = { name, playlist_id, client_id, group_id, start_time, end_time, days_of_week, priority, enabled };
+            if (editId) {
+                await schedulesAPI.update(parseInt(editId), data);
+                showToast('Schedule updated', 'success');
+            } else {
+                await schedulesAPI.create(data);
+                showToast('Schedule created', 'success');
+            }
+            modal.style.display = 'none';
+            loadSchedules();
+        } catch (error) {
+            showToast(error.message || 'Failed to save schedule', 'error');
+        }
+    });
+}
+
+function resetScheduleForm() {
+    document.getElementById('scheduleEditId').value = '';
+    document.getElementById('scheduleName').value = '';
+    document.getElementById('scheduleStartTime').value = '';
+    document.getElementById('scheduleEndTime').value = '';
+    document.getElementById('schedulePriority').value = '50';
+    document.getElementById('scheduleEnabled').checked = true;
+    document.getElementById('scheduleTarget').value = 'all';
+    document.getElementById('scheduleClientGroup').style.display = 'none';
+    document.querySelectorAll('#daysPicker input[type="checkbox"]').forEach(cb => { cb.checked = true; });
+}
+
+async function populateScheduleSelects() {
+    try {
+        const playlists = await playlistAPI.list();
+        const select = document.getElementById('schedulePlaylist');
+        select.innerHTML = '<option value="">Select playlist...</option>' +
+            playlists.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+    } catch (error) {
+        console.error('Failed to load playlists for schedule:', error);
+    }
+}
+
+async function populateTargetSelect(type) {
+    const select = document.getElementById('scheduleTargetId');
+    try {
+        if (type === 'client') {
+            const clients = await clientAPI.list();
+            select.innerHTML = '<option value="">Select client...</option>' +
+                clients.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+        } else if (type === 'group') {
+            const groups = await groupsAPI.list();
+            select.innerHTML = '<option value="">Select group...</option>' +
+                groups.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('');
+        }
+    } catch (error) {
+        console.error('Failed to populate target select:', error);
+    }
+}
+
+async function openEditSchedule(id) {
+    try {
+        const schedule = await schedulesAPI.get(id);
+        await populateScheduleSelects();
+
+        document.getElementById('scheduleEditId').value = id;
+        document.getElementById('scheduleName').value = schedule.name;
+        document.getElementById('schedulePlaylist').value = schedule.playlist_id;
+        document.getElementById('scheduleStartTime').value = schedule.start_time;
+        document.getElementById('scheduleEndTime').value = schedule.end_time || '';
+        document.getElementById('schedulePriority').value = schedule.priority;
+        document.getElementById('scheduleEnabled').checked = schedule.enabled;
+
+        // Set days
+        const activeDays = new Set(schedule.days_of_week.split(','));
+        document.querySelectorAll('#daysPicker input[type="checkbox"]').forEach(cb => {
+            cb.checked = activeDays.has(cb.value);
+        });
+
+        // Set target
+        const targetSelect = document.getElementById('scheduleTarget');
+        if (schedule.client_id) {
+            targetSelect.value = 'client';
+            document.getElementById('scheduleClientGroup').style.display = 'block';
+            await populateTargetSelect('client');
+            document.getElementById('scheduleTargetId').value = schedule.client_id;
+        } else if (schedule.group_id) {
+            targetSelect.value = 'group';
+            document.getElementById('scheduleClientGroup').style.display = 'block';
+            await populateTargetSelect('group');
+            document.getElementById('scheduleTargetId').value = schedule.group_id;
+        } else {
+            targetSelect.value = 'all';
+            document.getElementById('scheduleClientGroup').style.display = 'none';
+        }
+
+        document.getElementById('scheduleModalTitle').textContent = 'Edit Schedule';
+        document.getElementById('saveScheduleBtn').textContent = 'Save';
+        document.getElementById('scheduleModal').style.display = 'flex';
+    } catch (error) {
+        showToast('Failed to load schedule', 'error');
+    }
+}
+
 // ===== Initialization =====
 
 async function init() {
@@ -1307,6 +1562,9 @@ async function init() {
 
     // Initialize group functionality
     initGroupModals();
+
+    // Initialize schedule functionality
+    initScheduleModal();
 
     // Load initial view
     loadDashboard();

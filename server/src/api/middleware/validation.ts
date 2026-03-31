@@ -357,6 +357,57 @@ export const groupMemberParamsSchema = z.object({
   clientId: z.string().uuid(),
 });
 
+// Schedule validation schemas
+
+const timeRegex = /^([01]\d|2[0-3]):[0-5]\d$/;
+const daysOfWeekRegex = /^[0-6](,[0-6])*$/;
+
+/**
+ * Request body for creating a schedule
+ */
+export const createScheduleSchema = z.object({
+  name: z
+    .string()
+    .min(1, 'Schedule name is required')
+    .max(255, 'Schedule name must not exceed 255 characters')
+    .trim(),
+  playlist_id: z.number().int().positive('Playlist ID must be a positive integer'),
+  client_id: z.string().uuid('Client ID must be a valid UUID').optional(),
+  group_id: z.number().int().positive('Group ID must be a positive integer').optional(),
+  start_time: z.string().regex(timeRegex, 'Start time must be in HH:MM format'),
+  end_time: z.string().regex(timeRegex, 'End time must be in HH:MM format').optional(),
+  days_of_week: z
+    .string()
+    .regex(daysOfWeekRegex, 'Days of week must be comma-separated digits 0-6 (0=Sunday)')
+    .optional(),
+  priority: z
+    .number()
+    .int()
+    .min(1, 'Priority must be at least 1')
+    .max(100, 'Priority must not exceed 100')
+    .optional(),
+  enabled: z.boolean().optional(),
+});
+
+/**
+ * Request body for updating a schedule
+ */
+export const updateScheduleSchema = z
+  .object({
+    name: z.string().min(1).max(255).trim().optional(),
+    playlist_id: z.number().int().positive().optional(),
+    client_id: z.string().uuid().nullable().optional(),
+    group_id: z.number().int().positive().nullable().optional(),
+    start_time: z.string().regex(timeRegex, 'Start time must be in HH:MM format').optional(),
+    end_time: z.string().regex(timeRegex, 'End time must be in HH:MM format').nullable().optional(),
+    days_of_week: z.string().regex(daysOfWeekRegex).optional(),
+    priority: z.number().int().min(1).max(100).optional(),
+    enabled: z.boolean().optional(),
+  })
+  .refine((data) => Object.values(data).some((v) => v !== undefined), {
+    message: 'At least one field must be provided',
+  });
+
 // Type exports for better TypeScript inference
 
 export type CreatePlaylistInput = z.infer<typeof createPlaylistSchema>;

@@ -189,3 +189,43 @@ export interface UpdateClientGroupInput {
   name?: string;
   description?: string;
 }
+
+// Schedule types
+export interface Schedule {
+  id: number;
+  name: string;
+  playlist_id: number;
+  client_id: string | null;
+  group_id: number | null;
+  start_time: string;
+  end_time: string | null;
+  days_of_week: string;
+  priority: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateScheduleInput {
+  name: string;
+  playlist_id: number;
+  client_id?: string;
+  group_id?: number;
+  start_time: string;
+  end_time?: string;
+  days_of_week?: string;
+  priority?: number;
+  enabled?: boolean;
+}
+
+export interface UpdateScheduleInput {
+  name?: string;
+  playlist_id?: number;
+  client_id?: string | null;
+  group_id?: number | null;
+  start_time?: string;
+  end_time?: string | null;
+  days_of_week?: string;
+  priority?: number;
+  enabled?: boolean;
+}
