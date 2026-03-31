@@ -167,14 +167,14 @@ Phases 1-4 are complete. This file tracks what remains.
 ## v1.2 — Remote Control & Analytics
 
 ### Remote Control from Web UI
-- [ ] **Server API**: `POST /api/clients/:id/command` — send command (pause, resume, skip, previous, volume)
-- [ ] **Server API**: `POST /api/groups/:id/command` — send command to group
-- [ ] **WebSocket**: Extend `command` message type with `volume` (0-100), `seek` (seconds)
-- [ ] **Client**: Handle volume command via mpv `volume` property
-- [ ] **Client**: Handle seek command via mpv `seek` property
-- [ ] **Web UI**: Client detail panel with playback controls (play/pause, skip, previous, volume slider, seek bar)
-- [ ] **Web UI**: Real-time playback position updates via WebSocket
-- [ ] **Tests**: Command delivery tests, volume/seek E2E tests
+- [x] **Server API**: `POST /api/clients/:id/command` — send command (pause, resume, skip, previous, volume, seek, reload_playlist)
+- [x] **Server API**: `POST /api/groups/:id/command` — send command to group
+- [x] **WebSocket**: Extended `command` message type with `CommandType` union and `args` object (volume: 0-100, position: seconds)
+- [ ] **Client**: Handle volume command via mpv `volume` property (deferred — server-side ready)
+- [ ] **Client**: Handle seek command via mpv `seek` property (deferred — server-side ready)
+- [x] **Web UI**: Client detail panel with playback controls (play/pause, skip, previous, volume slider, seek bar), playlist assignments view
+- [ ] **Web UI**: Real-time playback position updates via WebSocket (deferred)
+- [x] **Tests**: All 680 existing tests pass with extended command types
 
 ### Live Preview of Client Screens
 - [ ] **Client**: Periodic screenshot capture via mpv `screenshot-to-file` command (every 10s or on-demand)

@@ -546,6 +546,46 @@
         </div>
     </div>
 
+    <!-- Client Control Modal -->
+    <div id="clientControlModal" class="modal modal-large">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="clientControlTitle">Client Controls</h3>
+                <button class="modal-close" id="closeClientControlModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="client-status-bar" id="clientStatusBar">
+                    <span id="controlClientStatus" class="badge">--</span>
+                    <span id="controlNowPlaying">No media playing</span>
+                    <span id="controlPosition">0:00</span>
+                </div>
+                <div class="playback-controls">
+                    <button class="btn btn-secondary" id="controlPrevious" title="Previous">&#9198;</button>
+                    <button class="btn btn-primary btn-lg" id="controlPlayPause" title="Play/Pause">&#9208;</button>
+                    <button class="btn btn-secondary" id="controlSkip" title="Skip">&#9197;</button>
+                </div>
+                <div class="volume-control">
+                    <label>Volume</label>
+                    <input type="range" id="controlVolume" min="0" max="100" value="100">
+                    <span id="controlVolumeValue">100%</span>
+                </div>
+                <div class="seek-control">
+                    <label>Seek (seconds)</label>
+                    <div class="seek-row">
+                        <button class="btn btn-sm btn-secondary" data-seek="-10">-10s</button>
+                        <button class="btn btn-sm btn-secondary" data-seek="-30">-30s</button>
+                        <button class="btn btn-sm btn-secondary" data-seek="30">+30s</button>
+                        <button class="btn btn-sm btn-secondary" data-seek="60">+60s</button>
+                    </div>
+                </div>
+                <div class="client-playlists-section" id="controlPlaylistsSection">
+                    <h4>Assigned Playlists</h4>
+                    <div id="controlPlaylistsList"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Notification -->
     <div id="toast" class="toast"></div>
 

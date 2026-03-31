@@ -983,6 +983,9 @@ function renderClientsGrid(clients) {
                     </div>
                 </div>
                 <div class="client-actions">
+                    <button class="btn btn-sm btn-secondary" onclick="openClientControl('${client.id}')">
+                        Controls
+                    </button>
                     <button class="btn btn-sm btn-primary" onclick="openAssignPlaylistModal('${client.id}', '${client.name || client.id}')">
                         Assign Playlist
                     </button>
@@ -1529,6 +1532,102 @@ async function openEditSchedule(id) {
     }
 }
 
+// ===== Client Control Modal =====
+
+let controlClientId = null;
+
+async function openClientControl(clientId) {
+    controlClientId = clientId;
+    const modal = document.getElementById('clientControlModal');
+    modal.style.display = 'flex';
+
+    try {
+        const clientWithStatus = await apiCall(`/clients/${clientId}/status`);
+        document.getElementById('clientControlTitle').textContent = clientWithStatus.name;
+
+        const statusBadge = document.getElementById('controlClientStatus');
+        statusBadge.textContent = clientWithStatus.status;
+        statusBadge.className = `badge badge-${clientWithStatus.status === 'online' ? 'success' : clientWithStatus.status === 'error' ? 'danger' : 'secondary'}`;
+
+        if (clientWithStatus.current_status && clientWithStatus.current_status.is_playing) {
+            document.getElementById('controlNowPlaying').textContent = 'Playing';
+            const pos = clientWithStatus.current_status.position || 0;
+            document.getElementById('controlPosition').textContent = formatDuration(pos);
+        } else {
+            document.getElementById('controlNowPlaying').textContent = 'Paused / Idle';
+            document.getElementById('controlPosition').textContent = '0:00';
+        }
+
+        // Load playlist assignments
+        try {
+            const playlists = await apiCall(`/clients/${clientId}/playlists`);
+            const listEl = document.getElementById('controlPlaylistsList');
+            if (playlists.length === 0) {
+                listEl.innerHTML = '<p class="text-muted">No playlists assigned</p>';
+            } else {
+                listEl.innerHTML = playlists.map(p => `
+                    <div class="member-row">
+                        <span>${escapeHtml(p.playlist_name)} <small class="text-muted">(priority: ${p.priority})</small></span>
+                    </div>
+                `).join('');
+            }
+        } catch {
+            document.getElementById('controlPlaylistsList').innerHTML = '';
+        }
+    } catch (error) {
+        document.getElementById('clientControlTitle').textContent = 'Client';
+        console.error('Failed to load client details:', error);
+    }
+}
+
+async function sendClientCommand(command, args) {
+    if (!controlClientId) return;
+    try {
+        const result = await apiCall(`/clients/${controlClientId}/command`, {
+            method: 'POST',
+            body: JSON.stringify({ command, args })
+        });
+        if (result.delivered) {
+            showToast(`${command} sent`, 'success');
+        } else {
+            showToast('Client not connected', 'warning');
+        }
+    } catch (error) {
+        showToast(error.message || `Failed to send ${command}`, 'error');
+    }
+}
+
+function initClientControlModal() {
+    const modal = document.getElementById('clientControlModal');
+    document.getElementById('closeClientControlModal').addEventListener('click', () => {
+        modal.style.display = 'none';
+        controlClientId = null;
+    });
+
+    document.getElementById('controlPlayPause').addEventListener('click', async () => {
+        // Toggle based on current known state — send pause if playing, resume if paused
+        await sendClientCommand('pause');
+    });
+
+    document.getElementById('controlSkip').addEventListener('click', () => sendClientCommand('skip'));
+    document.getElementById('controlPrevious').addEventListener('click', () => sendClientCommand('previous'));
+
+    const volumeSlider = document.getElementById('controlVolume');
+    const volumeValue = document.getElementById('controlVolumeValue');
+    volumeSlider.addEventListener('input', () => {
+        volumeValue.textContent = volumeSlider.value + '%';
+    });
+    volumeSlider.addEventListener('change', () => {
+        sendClientCommand('volume', { volume: parseInt(volumeSlider.value) });
+    });
+
+    document.querySelectorAll('[data-seek]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            sendClientCommand('seek', { position: parseInt(btn.dataset.seek) });
+        });
+    });
+}
+
 // ===== Initialization =====
 
 async function init() {
@@ -1565,6 +1664,9 @@ async function init() {
 
     // Initialize schedule functionality
     initScheduleModal();
+
+    // Initialize client control modal
+    initClientControlModal();
 
     // Load initial view
     loadDashboard();

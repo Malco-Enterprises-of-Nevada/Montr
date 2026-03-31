@@ -114,11 +114,24 @@ export interface PlaylistUpdatedMessage {
 }
 
 /**
- * Command message
+ * Command types supported by the system
+ */
+export type CommandType =
+  | 'reload_playlist'
+  | 'pause'
+  | 'resume'
+  | 'skip'
+  | 'previous'
+  | 'volume'
+  | 'seek';
+
+/**
+ * Command message with optional arguments
  */
 export interface CommandMessage {
   type: 'command';
-  command: 'reload_playlist' | 'pause' | 'resume';
+  command: CommandType;
+  args?: Record<string, unknown>;
 }
 
 /**
