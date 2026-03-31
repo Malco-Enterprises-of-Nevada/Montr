@@ -23,7 +23,8 @@ Thumbs.db
 *.swo
 *~
 
-# Server (Node.js)
+# Node modules (root + server)
+node_modules/
 server/node_modules/
 server/dist/
 server/build/

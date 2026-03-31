@@ -31,8 +31,17 @@ import { MigrationExecutor } from '../migrations/runner';
 
 /** Fields that can be updated on media_files */
 const MEDIA_UPDATABLE_FIELDS = new Set([
-  'filename', 'original_filename', 'filepath', 'type', 'mime_type',
-  'file_size', 'duration', 'width', 'height', 'checksum',
+  'filename',
+  'original_filename',
+  'filepath',
+  'type',
+  'mime_type',
+  'file_size',
+  'duration',
+  'width',
+  'height',
+  'checksum',
+  'thumbnail_status',
 ]);
 
 /** Row result from a query with execution metadata */
@@ -57,7 +66,10 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   abstract rawQuery<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
 
   /** Execute a query that returns a single row */
-  abstract rawQueryOne<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T | null>;
+  abstract rawQueryOne<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[]
+  ): Promise<T | null>;
 
   /** Execute a statement (INSERT/UPDATE/DELETE) */
   abstract rawExecute(sql: string, params?: unknown[]): Promise<ExecuteResult>;
@@ -104,13 +116,21 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     const result = await this.rawExecute(
       `INSERT INTO media_files (
         filename, original_filename, filepath, type, mime_type,
-        file_size, duration, width, height, checksum
-      ) VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)}, ${p(10)})`,
+        file_size, duration, width, height, checksum, thumbnail_status
+      ) VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)}, ${p(10)}, ${p(11)})`,
       [
-        input.filename, input.original_filename, input.filepath, input.type,
-        input.mime_type || null, input.file_size || null, input.duration || null,
-        input.width || null, input.height || null, input.checksum || null,
-      ],
+        input.filename,
+        input.original_filename,
+        input.filepath,
+        input.type,
+        input.mime_type || null,
+        input.file_size || null,
+        input.duration || null,
+        input.width || null,
+        input.height || null,
+        input.checksum || null,
+        input.thumbnail_status || 'pending',
+      ]
     );
 
     const media = await this.getMediaById(result.lastInsertId);
@@ -121,13 +141,13 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   async getMediaById(id: number): Promise<MediaFile | null> {
     return this.rawQueryOne<MediaFile>(
       `SELECT * FROM media_files WHERE id = ${this.placeholder(1)}`,
-      [id],
+      [id]
     );
   }
 
   async getAllMedia(
     pagination: PaginationParams,
-    filter?: MediaFilter,
+    filter?: MediaFilter
   ): Promise<PaginatedResult<MediaFile>> {
     const { page, limit } = pagination;
     const offset = (page - 1) * limit;
@@ -143,7 +163,9 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
         params.push(filter.type);
       }
       if (filter.search) {
-        conditions.push(`(original_filename LIKE ${this.placeholder(paramIndex++)} OR filename LIKE ${this.placeholder(paramIndex++)})`);
+        conditions.push(
+          `(original_filename LIKE ${this.placeholder(paramIndex++)} OR filename LIKE ${this.placeholder(paramIndex++)})`
+        );
         params.push(`%${filter.search}%`, `%${filter.search}%`);
       }
       if (conditions.length > 0) {
@@ -153,13 +175,13 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
 
     const countRows = await this.rawQuery<{ count: number }>(
       `SELECT COUNT(*) as count FROM media_files ${whereClause}`,
-      params,
+      params
     );
     const count = countRows[0]?.count ?? 0;
 
     const data = await this.rawQuery<MediaFile>(
       `SELECT * FROM media_files ${whereClause} ORDER BY created_at DESC ${this.paginationClause(paramIndex)}`,
-      [...params, ...this.paginationParams(limit, offset)],
+      [...params, ...this.paginationParams(limit, offset)]
     );
 
     return {
@@ -195,7 +217,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     values.push(id);
     await this.rawExecute(
       `UPDATE media_files SET ${fields.join(', ')} WHERE id = ${this.placeholder(paramIndex)}`,
-      values,
+      values
     );
 
     const media = await this.getMediaById(id);
@@ -204,16 +226,13 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   }
 
   async deleteMedia(id: number): Promise<void> {
-    await this.rawExecute(
-      `DELETE FROM media_files WHERE id = ${this.placeholder(1)}`,
-      [id],
-    );
+    await this.rawExecute(`DELETE FROM media_files WHERE id = ${this.placeholder(1)}`, [id]);
   }
 
   async getMediaByChecksum(checksum: string): Promise<MediaFile | null> {
     return this.rawQueryOne<MediaFile>(
       `SELECT * FROM media_files WHERE checksum = ${this.placeholder(1)}`,
-      [checksum],
+      [checksum]
     );
   }
 
@@ -222,7 +241,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   async createPlaylist(input: CreatePlaylistInput): Promise<Playlist> {
     const result = await this.rawExecute(
       `INSERT INTO playlists (name, description) VALUES (${this.placeholder(1)}, ${this.placeholder(2)})`,
-      [input.name, input.description || null],
+      [input.name, input.description || null]
     );
 
     const playlist = await this.getPlaylistById(result.lastInsertId);
@@ -231,41 +250,44 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   }
 
   async getPlaylistById(id: number): Promise<Playlist | null> {
-    return this.rawQueryOne<Playlist>(
-      `SELECT * FROM playlists WHERE id = ${this.placeholder(1)}`,
-      [id],
-    );
+    return this.rawQueryOne<Playlist>(`SELECT * FROM playlists WHERE id = ${this.placeholder(1)}`, [
+      id,
+    ]);
   }
 
   async getPlaylistWithItems(id: number): Promise<PlaylistWithItems | null> {
     const playlist = await this.getPlaylistById(id);
     if (!playlist) return null;
 
-    const rows = await this.rawQuery<PlaylistItem & {
-      media_id: number;
-      filename: string;
-      original_filename: string;
-      filepath: string;
-      type: 'video' | 'image';
-      mime_type: string | null;
-      file_size: number | null;
-      duration: number | null;
-      width: number | null;
-      height: number | null;
-      checksum: string | null;
-      media_created_at: string;
-      media_updated_at: string;
-    }>(
+    const rows = await this.rawQuery<
+      PlaylistItem & {
+        media_id: number;
+        filename: string;
+        original_filename: string;
+        filepath: string;
+        type: 'video' | 'image';
+        mime_type: string | null;
+        file_size: number | null;
+        duration: number | null;
+        width: number | null;
+        height: number | null;
+        checksum: string | null;
+        thumbnail_status: import('../types').ThumbnailStatus;
+        media_created_at: string;
+        media_updated_at: string;
+      }
+    >(
       `SELECT
         pi.id, pi.playlist_id, pi.media_id, pi.order_index, pi.image_duration, pi.created_at,
         mf.id as media_id, mf.filename, mf.original_filename, mf.filepath, mf.type,
         mf.mime_type, mf.file_size, mf.duration, mf.width, mf.height, mf.checksum,
+        mf.thumbnail_status,
         mf.created_at as media_created_at, mf.updated_at as media_updated_at
       FROM playlist_items pi
       JOIN media_files mf ON pi.media_id = mf.id
       WHERE pi.playlist_id = ${this.placeholder(1)}
       ORDER BY pi.order_index ASC`,
-      [id],
+      [id]
     );
 
     const items: PlaylistItemWithMedia[] = rows.map((row) => ({
@@ -287,6 +309,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
         width: row.width,
         height: row.height,
         checksum: row.checksum,
+        thumbnail_status: row.thumbnail_status || 'pending',
         created_at: row.media_created_at,
         updated_at: row.media_updated_at,
       },
@@ -322,7 +345,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     values.push(id);
     await this.rawExecute(
       `UPDATE playlists SET ${fields.join(', ')} WHERE id = ${this.placeholder(paramIndex)}`,
-      values,
+      values
     );
 
     const playlist = await this.getPlaylistById(id);
@@ -331,10 +354,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   }
 
   async deletePlaylist(id: number): Promise<void> {
-    await this.rawExecute(
-      `DELETE FROM playlists WHERE id = ${this.placeholder(1)}`,
-      [id],
-    );
+    await this.rawExecute(`DELETE FROM playlists WHERE id = ${this.placeholder(1)}`, [id]);
   }
 
   // ── Playlist item operations ─────────────────────────────────────────────
@@ -343,7 +363,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     const result = await this.rawExecute(
       `INSERT INTO playlist_items (playlist_id, media_id, order_index, image_duration)
        VALUES (${this.placeholder(1)}, ${this.placeholder(2)}, ${this.placeholder(3)}, ${this.placeholder(4)})`,
-      [input.playlist_id, input.media_id, input.order_index, input.image_duration || 5],
+      [input.playlist_id, input.media_id, input.order_index, input.image_duration || 5]
     );
 
     const item = await this.getPlaylistItemById(result.lastInsertId);
@@ -354,14 +374,14 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   async getPlaylistItems(playlistId: number): Promise<PlaylistItem[]> {
     return this.rawQuery<PlaylistItem>(
       `SELECT * FROM playlist_items WHERE playlist_id = ${this.placeholder(1)} ORDER BY order_index ASC`,
-      [playlistId],
+      [playlistId]
     );
   }
 
   async getPlaylistItemById(itemId: number): Promise<PlaylistItem | null> {
     return this.rawQueryOne<PlaylistItem>(
       `SELECT * FROM playlist_items WHERE id = ${this.placeholder(1)}`,
-      [itemId],
+      [itemId]
     );
   }
 
@@ -388,7 +408,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     values.push(itemId);
     await this.rawExecute(
       `UPDATE playlist_items SET ${fields.join(', ')} WHERE id = ${this.placeholder(paramIndex)}`,
-      values,
+      values
     );
 
     const item = await this.getPlaylistItemById(itemId);
@@ -397,10 +417,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   }
 
   async deletePlaylistItem(itemId: number): Promise<void> {
-    await this.rawExecute(
-      `DELETE FROM playlist_items WHERE id = ${this.placeholder(1)}`,
-      [itemId],
-    );
+    await this.rawExecute(`DELETE FROM playlist_items WHERE id = ${this.placeholder(1)}`, [itemId]);
   }
 
   async reorderPlaylistItems(_playlistId: number, itemIds: number[]): Promise<void> {
@@ -409,14 +426,14 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
       for (let i = 0; i < itemIds.length; i++) {
         await this.rawExecute(
           `UPDATE playlist_items SET order_index = ${this.placeholder(1)} WHERE id = ${this.placeholder(2)}`,
-          [-(i + 1), itemIds[i]],
+          [-(i + 1), itemIds[i]]
         );
       }
       // Then set to final values
       for (let i = 0; i < itemIds.length; i++) {
         await this.rawExecute(
           `UPDATE playlist_items SET order_index = ${this.placeholder(1)} WHERE id = ${this.placeholder(2)}`,
-          [i, itemIds[i]],
+          [i, itemIds[i]]
         );
       }
     });
@@ -428,7 +445,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     await this.rawExecute(
       `INSERT INTO clients (id, name, version, capabilities, last_seen)
        VALUES (${this.placeholder(1)}, ${this.placeholder(2)}, ${this.placeholder(3)}, ${this.placeholder(4)}, ${this.currentTimestampFn()})`,
-      [input.id, input.name, input.version || null, input.capabilities || null],
+      [input.id, input.name, input.version || null, input.capabilities || null]
     );
 
     const client = await this.getClientById(input.id);
@@ -437,10 +454,9 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   }
 
   async getClientById(id: string): Promise<Client | null> {
-    return this.rawQueryOne<Client>(
-      `SELECT * FROM clients WHERE id = ${this.placeholder(1)}`,
-      [id],
-    );
+    return this.rawQueryOne<Client>(`SELECT * FROM clients WHERE id = ${this.placeholder(1)}`, [
+      id,
+    ]);
   }
 
   async getAllClients(filter?: ClientFilter): Promise<Client[]> {
@@ -465,7 +481,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
 
     return this.rawQuery<Client>(
       `SELECT * FROM clients ${whereClause} ORDER BY created_at DESC`,
-      params,
+      params
     );
   }
 
@@ -508,7 +524,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     values.push(id);
     await this.rawExecute(
       `UPDATE clients SET ${fields.join(', ')} WHERE id = ${this.placeholder(paramIndex)}`,
-      values,
+      values
     );
 
     const client = await this.getClientById(id);
@@ -517,10 +533,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   }
 
   async deleteClient(id: string): Promise<void> {
-    await this.rawExecute(
-      `DELETE FROM clients WHERE id = ${this.placeholder(1)}`,
-      [id],
-    );
+    await this.rawExecute(`DELETE FROM clients WHERE id = ${this.placeholder(1)}`, [id]);
   }
 
   // ── Client status operations ─────────────────────────────────────────────
@@ -535,12 +548,12 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
         input.position || null,
         input.is_playing ? 1 : 0,
         input.error_message || null,
-      ],
+      ]
     );
 
     const status = await this.rawQueryOne<ClientStatus>(
       `SELECT * FROM client_status WHERE id = ${this.placeholder(1)}`,
-      [result.lastInsertId],
+      [result.lastInsertId]
     );
     if (!status) throw new Error('Failed to retrieve created client status');
     return status;
@@ -549,7 +562,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   async getLatestClientStatus(clientId: string): Promise<ClientStatus | null> {
     return this.rawQueryOne<ClientStatus>(
       `SELECT * FROM client_status WHERE client_id = ${this.placeholder(1)} ORDER BY timestamp DESC, id DESC LIMIT 1`,
-      [clientId],
+      [clientId]
     );
   }
 

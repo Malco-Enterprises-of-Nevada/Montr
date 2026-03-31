@@ -1,0 +1,77 @@
+name: Client CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'client/**'
+      - 'docker/client.Dockerfile'
+      - '.github/workflows/ci-client.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'client/**'
+      - '.github/workflows/ci-client.yml'
+
+concurrency:
+  group: ci-client-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt-and-clippy:
+    name: Format & Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.75'
+          components: rustfmt, clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            client/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('client/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - run: sudo apt-get update && sudo apt-get install -y libmpv-dev
+      - run: cd client && cargo fmt --check
+      - run: cd client && cargo clippy -- -D warnings
+
+  test:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.75'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            client/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('client/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - run: sudo apt-get update && sudo apt-get install -y libmpv-dev
+      - run: cd client && cargo test
+
+  check-windows:
+    name: Check (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.75'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            client/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('client/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - run: cd client && cargo check

@@ -26,6 +26,8 @@ test-client:
 lint: lint-server lint-client
 
 lint-server:
+	cd server && npm run lint
+	cd server && npm run format:check
 	cd server && npm run typecheck
 
 lint-client:

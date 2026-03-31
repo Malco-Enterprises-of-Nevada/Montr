@@ -40,7 +40,7 @@ router.get(
   validateQuery(listClientsQuerySchema),
   asyncHandler(async (req: Request, res: Response) => {
     // Use validatedQuery which has properly transformed types
-    const { status, assigned_playlist_id } = (req as any).validatedQuery || req.query as {
+    const { status, assigned_playlist_id } = (req.validatedQuery || req.query) as {
       status?: 'online' | 'offline' | 'error';
       assigned_playlist_id?: number;
     };

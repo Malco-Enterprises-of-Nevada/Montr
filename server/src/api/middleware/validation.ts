@@ -46,16 +46,14 @@ export function validateQuery<T extends ZodSchema>(schema: T) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     try {
       const validated = schema.parse(req.query);
-      // Store validated query in a custom property since req.query has getters/setters
+      // Store validated query in a typed custom property since req.query has getters/setters
       // that may coerce types (especially in test environments)
-      // TODO: Replace (req as any) casts with a properly typed request extension interface
-      // to preserve TypeScript safety (e.g. declare module 'express' { interface Request { validatedQuery?: T } })
-      (req as any).validatedQuery = validated;
+      req.validatedQuery = validated as Record<string, unknown>;
       // Also try to update req.query for backwards compatibility
       // Note: In some environments (like tests), req.query properties may be read-only or have coercion
       try {
-        Object.keys(validated as object).forEach(key => {
-          (req.query as any)[key] = (validated as any)[key];
+        Object.keys(validated as Record<string, unknown>).forEach((key) => {
+          (req.query as Record<string, unknown>)[key] = (validated as Record<string, unknown>)[key];
         });
       } catch {
         // If updating req.query fails, that's okay - handlers should use validatedQuery
