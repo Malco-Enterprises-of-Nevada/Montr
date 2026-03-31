@@ -21,6 +21,11 @@ import {
   ClientStatus,
   CreateClientStatusInput,
   ClientWithStatus,
+  ClientGroup,
+  ClientGroupMember,
+  ClientGroupWithMembers,
+  CreateClientGroupInput,
+  UpdateClientGroupInput,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -480,6 +485,95 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
     const status = await this.getLatestClientStatus(clientId);
     return { ...client, current_status: status };
+  }
+
+  // ── Client group operations ──────────────────────────────────────────────
+
+  async createClientGroup(input: CreateClientGroupInput): Promise<ClientGroup> {
+    const id = await this.nextId('client_groups');
+    const now = new Date().toISOString();
+    const doc = {
+      id,
+      name: input.name,
+      description: input.description || null,
+      created_at: now,
+      updated_at: now,
+    };
+    await this.col('client_groups').insertOne(doc);
+    return doc as ClientGroup;
+  }
+
+  async getClientGroupById(id: number): Promise<ClientGroup | null> {
+    const doc = await this.col('client_groups').findOne({ id });
+    return this.docToObj<ClientGroup>(doc);
+  }
+
+  async getClientGroupWithMembers(id: number): Promise<ClientGroupWithMembers | null> {
+    const group = await this.getClientGroupById(id);
+    if (!group) return null;
+    const members = await this.getGroupMembers(id);
+    return { ...group, members };
+  }
+
+  async getAllClientGroups(): Promise<ClientGroup[]> {
+    const docs = await this.col('client_groups').find().sort({ name: 1 }).toArray();
+    return docs.map((d) => this.docToObj<ClientGroup>(d)!);
+  }
+
+  async updateClientGroup(id: number, input: UpdateClientGroupInput): Promise<ClientGroup> {
+    const setFields: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (input.name !== undefined) setFields.name = input.name;
+    if (input.description !== undefined) setFields.description = input.description;
+
+    await this.col('client_groups').updateOne({ id }, { $set: setFields });
+    const group = await this.getClientGroupById(id);
+    if (!group) throw new Error(`Client group with ID ${id} not found`);
+    return group;
+  }
+
+  async deleteClientGroup(id: number): Promise<void> {
+    await this.col('client_group_members').deleteMany({ group_id: id });
+    await this.col('client_groups').deleteOne({ id });
+  }
+
+  async addClientToGroup(groupId: number, clientId: string): Promise<ClientGroupMember> {
+    const id = await this.nextId('client_group_members');
+    const doc = {
+      id,
+      group_id: groupId,
+      client_id: clientId,
+      added_at: new Date().toISOString(),
+    };
+    await this.col('client_group_members').insertOne(doc);
+    return doc as ClientGroupMember;
+  }
+
+  async removeClientFromGroup(groupId: number, clientId: string): Promise<void> {
+    await this.col('client_group_members').deleteOne({ group_id: groupId, client_id: clientId });
+  }
+
+  async getGroupMembers(groupId: number): Promise<Client[]> {
+    const memberDocs = await this.col('client_group_members').find({ group_id: groupId }).toArray();
+    const clientIds = memberDocs.map((d) => d.client_id as string);
+    if (clientIds.length === 0) return [];
+    const clientDocs = await this.col('clients')
+      .find({ id: { $in: clientIds } })
+      .sort({ name: 1 })
+      .toArray();
+    return clientDocs.map((d) => this.docToObj<Client>(d)!);
+  }
+
+  async getClientGroups(clientId: string): Promise<ClientGroup[]> {
+    const memberDocs = await this.col('client_group_members')
+      .find({ client_id: clientId })
+      .toArray();
+    const groupIds = memberDocs.map((d) => d.group_id as number);
+    if (groupIds.length === 0) return [];
+    const groupDocs = await this.col('client_groups')
+      .find({ id: { $in: groupIds } })
+      .sort({ name: 1 })
+      .toArray();
+    return groupDocs.map((d) => this.docToObj<ClientGroup>(d)!);
   }
 
   // ── Migration executor ───────────────────────────────────────────────────

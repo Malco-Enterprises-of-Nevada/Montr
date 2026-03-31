@@ -296,6 +296,67 @@ export const heartbeatSchema = z.object({
   timestamp: z.string().datetime().optional(),
 });
 
+// Client group validation schemas
+
+/**
+ * Request body for creating a group
+ */
+export const createGroupSchema = z.object({
+  name: z
+    .string()
+    .min(1, 'Group name is required')
+    .max(255, 'Group name must not exceed 255 characters')
+    .trim(),
+  description: z
+    .string()
+    .max(1000, 'Description must not exceed 1000 characters')
+    .trim()
+    .optional(),
+});
+
+/**
+ * Request body for updating a group
+ */
+export const updateGroupSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1, 'Group name cannot be empty')
+      .max(255, 'Group name must not exceed 255 characters')
+      .trim()
+      .optional(),
+    description: z
+      .string()
+      .max(1000, 'Description must not exceed 1000 characters')
+      .trim()
+      .optional(),
+  })
+  .refine((data) => data.name !== undefined || data.description !== undefined, {
+    message: 'At least one field (name or description) must be provided',
+  });
+
+/**
+ * Request body for adding a member to a group
+ */
+export const addGroupMemberSchema = z.object({
+  clientId: z.string().uuid('Client ID must be a valid UUID'),
+});
+
+/**
+ * Request body for assigning a playlist to a group
+ */
+export const assignGroupPlaylistSchema = z.object({
+  playlistId: z.number().int().positive('Playlist ID must be a positive integer'),
+});
+
+/**
+ * Validates group ID and client ID params
+ */
+export const groupMemberParamsSchema = z.object({
+  id: z.string().regex(/^\d+$/).transform(Number),
+  clientId: z.string().uuid(),
+});
+
 // Type exports for better TypeScript inference
 
 export type CreatePlaylistInput = z.infer<typeof createPlaylistSchema>;

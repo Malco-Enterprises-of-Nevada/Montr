@@ -10,6 +10,7 @@ import { getDatabase, closeDatabase } from './database/connection';
 import mediaRoutes from './api/routes/media.routes';
 import playlistRoutes from './api/routes/playlist.routes';
 import clientRoutes from './api/routes/client.routes';
+import groupRoutes from './api/routes/group.routes';
 import { apiKeyAuth } from './api/middleware/auth';
 import { webSocketServer } from './websocket/server';
 
@@ -128,6 +129,7 @@ class MontrServer {
     this.app.use('/api/media', apiKeyAuth(), mediaRoutes);
     this.app.use('/api/playlists', apiKeyAuth(), playlistRoutes);
     this.app.use('/api/clients', apiKeyAuth(), clientRoutes);
+    this.app.use('/api/groups', apiKeyAuth(), groupRoutes);
   }
 
   /**
@@ -184,9 +186,7 @@ class MontrServer {
       this.logger.info(
         `Health check: http://${config.server.host}:${config.server.port}/api/health`
       );
-      this.logger.info(
-        `WebSocket endpoint: ws://${config.server.host}:${config.server.port}/ws`
-      );
+      this.logger.info(`WebSocket endpoint: ws://${config.server.host}:${config.server.port}/ws`);
 
       // Warn about API key misconfiguration
       if (config.security.apiKeyRequired && !config.security.apiKey) {

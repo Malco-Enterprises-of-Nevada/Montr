@@ -4,12 +4,7 @@
  */
 
 import { getLogger } from '../utils/logger';
-import {
-  ExtendedWebSocket,
-  ServerMessage,
-  ConnectionMetadata,
-  WebSocketStats,
-} from './types';
+import { ExtendedWebSocket, ServerMessage, ConnectionMetadata, WebSocketStats } from './types';
 
 const logger = getLogger();
 
@@ -66,7 +61,9 @@ export class ClientConnectionManager {
     this.stats.totalConnections += 1;
     this.stats.activeConnections = this.connections.size;
 
-    logger.info(`Client ${clientId} connection added (total active: ${this.stats.activeConnections})`);
+    logger.info(
+      `Client ${clientId} connection added (total active: ${this.stats.activeConnections})`
+    );
   }
 
   /**
@@ -206,7 +203,29 @@ export class ClientConnectionManager {
       }
     });
 
-    logger.info(`Broadcast ${message.type} message to ${sentCount} clients with playlist ${playlistId}`);
+    logger.info(
+      `Broadcast ${message.type} message to ${sentCount} clients with playlist ${playlistId}`
+    );
+    return sentCount;
+  }
+
+  /**
+   * Broadcasts a message to all clients in a group
+   */
+  async broadcastToGroup(groupId: number, message: ServerMessage): Promise<number> {
+    const { getDatabase } = await import('../database/connection');
+    const db = await getDatabase();
+
+    const members = await db.getGroupMembers(groupId);
+    let sentCount = 0;
+
+    members.forEach((client) => {
+      if (this.sendToClient(client.id, message)) {
+        sentCount += 1;
+      }
+    });
+
+    logger.info(`Broadcast ${message.type} message to ${sentCount} clients in group ${groupId}`);
     return sentCount;
   }
 
