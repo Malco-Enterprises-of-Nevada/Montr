@@ -138,17 +138,18 @@ Phases 1-4 are complete. This file tracks what remains.
 - [ ] **Client**: Support playlist stack — maintain multiple playlists, switch based on server commands
 
 ### Client Grouping
-- [ ] **Schema**: Add `client_groups` table (id, name, description, created_at)
-- [ ] **Schema**: Add `client_group_members` junction table (group_id, client_id)
-- [ ] **Server API**: `POST /api/groups` — create group
-- [ ] **Server API**: `GET /api/groups` — list groups
-- [ ] **Server API**: `PUT /api/groups/:id` — update group (name, members)
-- [ ] **Server API**: `DELETE /api/groups/:id` — delete group
-- [ ] **Server API**: `POST /api/groups/:id/assign` — batch assign playlist to all members
-- [ ] **WebSocket**: Broadcast playlist assignment to all group members simultaneously
-- [ ] **Web UI**: Group management page — create groups, drag-and-drop clients into groups
-- [ ] **Web UI**: Bulk actions toolbar — assign playlist, send command to entire group
-- [ ] **Tests**: Group service tests, bulk assignment E2E test
+- [x] **Schema**: Add `client_groups` table (id, name, description, created_at) — migration 003
+- [x] **Schema**: Add `client_group_members` junction table (group_id, client_id) — migration 003
+- [x] **Server API**: `POST /api/groups` — create group
+- [x] **Server API**: `GET /api/groups` — list groups
+- [x] **Server API**: `PUT /api/groups/:id` — update group (name, members)
+- [x] **Server API**: `DELETE /api/groups/:id` — delete group
+- [x] **Server API**: `POST /api/groups/:id/assign` — batch assign playlist to all members
+- [x] **Server API**: `GET /api/groups/:id/members`, `POST /api/groups/:id/members`, `DELETE /api/groups/:id/members/:clientId` — member management
+- [x] **WebSocket**: Broadcast playlist assignment to all group members simultaneously — `broadcastToGroup()`, `sendPlaylistToGroup()`, `sendCommandToGroup()`
+- [x] **Web UI**: Group management page — create/edit groups, add/remove members, assign playlist to group
+- [x] **Web UI**: Bulk actions toolbar — assign playlist to entire group
+- [x] **Tests**: Group service unit tests (11 tests)
 
 ### Playlist Priority & Interruptions
 - [ ] **Schema**: Add `priority` column to schedules/assignments (integer, higher = more important)

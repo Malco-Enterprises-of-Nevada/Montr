@@ -122,7 +122,9 @@ export async function handleStatusUpdate(
     // Update heartbeat
     clientConnectionManager.updateHeartbeat(clientId);
 
-    logger.debug(`Status update from ${clientId}: ${isPlaying ? 'playing' : 'paused'} ${currentMedia?.filename || 'no media'} at ${position}s`);
+    logger.debug(
+      `Status update from ${clientId}: ${isPlaying ? 'playing' : 'paused'} ${currentMedia?.filename || 'no media'} at ${position}s`
+    );
   } catch (error) {
     logger.error(`Error handling status update for ${clientId}:`, error);
 
@@ -197,10 +199,7 @@ export async function handleError(_ws: ExtendedWebSocket, message: ErrorMessage)
 /**
  * Sends a playlist to a client
  */
-export async function sendPlaylistToClient(
-  clientId: string,
-  playlistId: number
-): Promise<void> {
+export async function sendPlaylistToClient(clientId: string, playlistId: number): Promise<void> {
   try {
     // Get playlist with items
     const playlist = await playlistService.getPlaylistWithItems(playlistId);
@@ -303,5 +302,41 @@ export function broadcastCommand(command: 'reload_playlist' | 'pause' | 'resume'
   });
 
   logger.info(`Broadcast ${command} command to ${sentCount} clients`);
+  return sentCount;
+}
+
+/**
+ * Sends a playlist to all connected members of a group
+ */
+export async function sendPlaylistToGroup(groupId: number, playlistId: number): Promise<number> {
+  const { getDatabase } = await import('../database/connection');
+  const db = await getDatabase();
+  const members = await db.getGroupMembers(groupId);
+  let sentCount = 0;
+
+  for (const member of members) {
+    if (clientConnectionManager.isConnected(member.id)) {
+      await sendPlaylistToClient(member.id, playlistId);
+      sentCount += 1;
+    }
+  }
+
+  logger.info(`Sent playlist ${playlistId} to ${sentCount} clients in group ${groupId}`);
+  return sentCount;
+}
+
+/**
+ * Broadcasts a command to all connected members of a group
+ */
+export async function sendCommandToGroup(
+  groupId: number,
+  command: 'reload_playlist' | 'pause' | 'resume'
+): Promise<number> {
+  const sentCount = await clientConnectionManager.broadcastToGroup(groupId, {
+    type: 'command',
+    command,
+  });
+
+  logger.info(`Sent ${command} command to ${sentCount} clients in group ${groupId}`);
   return sentCount;
 }

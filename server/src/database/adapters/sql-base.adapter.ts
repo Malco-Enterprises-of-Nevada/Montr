@@ -21,6 +21,11 @@ import {
   ClientStatus,
   CreateClientStatusInput,
   ClientWithStatus,
+  ClientGroup,
+  ClientGroupMember,
+  ClientGroupWithMembers,
+  CreateClientGroupInput,
+  UpdateClientGroupInput,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -572,5 +577,109 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
 
     const status = await this.getLatestClientStatus(clientId);
     return { ...client, current_status: status };
+  }
+
+  // ── Client group operations ─────────────────────────────────────────────
+
+  async createClientGroup(input: CreateClientGroupInput): Promise<ClientGroup> {
+    const p = this.placeholder;
+    const result = await this.rawExecute(
+      `INSERT INTO client_groups (name, description) VALUES (${p(1)}, ${p(2)})`,
+      [input.name, input.description || null]
+    );
+    const group = await this.getClientGroupById(result.lastInsertId);
+    if (!group) throw new Error('Failed to retrieve created client group');
+    return group;
+  }
+
+  async getClientGroupById(id: number): Promise<ClientGroup | null> {
+    return this.rawQueryOne<ClientGroup>(
+      `SELECT * FROM client_groups WHERE id = ${this.placeholder(1)}`,
+      [id]
+    );
+  }
+
+  async getClientGroupWithMembers(id: number): Promise<ClientGroupWithMembers | null> {
+    const group = await this.getClientGroupById(id);
+    if (!group) return null;
+    const members = await this.getGroupMembers(id);
+    return { ...group, members };
+  }
+
+  async getAllClientGroups(): Promise<ClientGroup[]> {
+    return this.rawQuery<ClientGroup>('SELECT * FROM client_groups ORDER BY name ASC');
+  }
+
+  async updateClientGroup(id: number, input: UpdateClientGroupInput): Promise<ClientGroup> {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    let paramIndex = 1;
+
+    if (input.name !== undefined) {
+      fields.push(`name = ${this.placeholder(paramIndex++)}`);
+      values.push(input.name);
+    }
+    if (input.description !== undefined) {
+      fields.push(`description = ${this.placeholder(paramIndex++)}`);
+      values.push(input.description);
+    }
+
+    if (fields.length > 0) {
+      values.push(id);
+      await this.rawExecute(
+        `UPDATE client_groups SET ${fields.join(', ')} WHERE id = ${this.placeholder(paramIndex)}`,
+        values
+      );
+    }
+
+    const group = await this.getClientGroupById(id);
+    if (!group) throw new Error(`Client group with ID ${id} not found`);
+    return group;
+  }
+
+  async deleteClientGroup(id: number): Promise<void> {
+    await this.rawExecute(`DELETE FROM client_groups WHERE id = ${this.placeholder(1)}`, [id]);
+  }
+
+  async addClientToGroup(groupId: number, clientId: string): Promise<ClientGroupMember> {
+    const p = this.placeholder;
+    const result = await this.rawExecute(
+      `INSERT INTO client_group_members (group_id, client_id) VALUES (${p(1)}, ${p(2)})`,
+      [groupId, clientId]
+    );
+    const member = await this.rawQueryOne<ClientGroupMember>(
+      `SELECT * FROM client_group_members WHERE id = ${p(1)}`,
+      [result.lastInsertId]
+    );
+    if (!member) throw new Error('Failed to retrieve created group member');
+    return member;
+  }
+
+  async removeClientFromGroup(groupId: number, clientId: string): Promise<void> {
+    const p = this.placeholder;
+    await this.rawExecute(
+      `DELETE FROM client_group_members WHERE group_id = ${p(1)} AND client_id = ${p(2)}`,
+      [groupId, clientId]
+    );
+  }
+
+  async getGroupMembers(groupId: number): Promise<Client[]> {
+    return this.rawQuery<Client>(
+      `SELECT c.* FROM clients c
+       JOIN client_group_members cgm ON c.id = cgm.client_id
+       WHERE cgm.group_id = ${this.placeholder(1)}
+       ORDER BY c.name ASC`,
+      [groupId]
+    );
+  }
+
+  async getClientGroups(clientId: string): Promise<ClientGroup[]> {
+    return this.rawQuery<ClientGroup>(
+      `SELECT cg.* FROM client_groups cg
+       JOIN client_group_members cgm ON cg.id = cgm.group_id
+       WHERE cgm.client_id = ${this.placeholder(1)}
+       ORDER BY cg.name ASC`,
+      [clientId]
+    );
   }
 }

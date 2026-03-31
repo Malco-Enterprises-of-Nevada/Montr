@@ -19,6 +19,11 @@ import {
   ClientStatus,
   CreateClientStatusInput,
   ClientWithStatus,
+  ClientGroup,
+  ClientGroupMember,
+  ClientGroupWithMembers,
+  CreateClientGroupInput,
+  UpdateClientGroupInput,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -69,4 +74,16 @@ export interface DatabaseAdapter {
   createClientStatus(input: CreateClientStatusInput): Promise<ClientStatus>;
   getLatestClientStatus(clientId: string): Promise<ClientStatus | null>;
   getClientWithStatus(clientId: string): Promise<ClientWithStatus | null>;
+
+  // Client group operations
+  createClientGroup(input: CreateClientGroupInput): Promise<ClientGroup>;
+  getClientGroupById(id: number): Promise<ClientGroup | null>;
+  getClientGroupWithMembers(id: number): Promise<ClientGroupWithMembers | null>;
+  getAllClientGroups(): Promise<ClientGroup[]>;
+  updateClientGroup(id: number, input: UpdateClientGroupInput): Promise<ClientGroup>;
+  deleteClientGroup(id: number): Promise<void>;
+  addClientToGroup(groupId: number, clientId: string): Promise<ClientGroupMember>;
+  removeClientFromGroup(groupId: number, clientId: string): Promise<void>;
+  getGroupMembers(groupId: number): Promise<Client[]>;
+  getClientGroups(clientId: string): Promise<ClientGroup[]>;
 }

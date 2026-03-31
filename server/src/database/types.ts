@@ -159,3 +159,33 @@ export interface ClientFilter {
   status?: 'online' | 'offline' | 'error';
   assigned_playlist_id?: number;
 }
+
+// Client Group types
+export interface ClientGroup {
+  id: number;
+  name: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientGroupMember {
+  id: number;
+  group_id: number;
+  client_id: string;
+  added_at: string;
+}
+
+export interface ClientGroupWithMembers extends ClientGroup {
+  members: Client[];
+}
+
+export interface CreateClientGroupInput {
+  name: string;
+  description?: string;
+}
+
+export interface UpdateClientGroupInput {
+  name?: string;
+  description?: string;
+}

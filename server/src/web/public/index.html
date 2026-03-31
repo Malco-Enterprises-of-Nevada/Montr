@@ -25,6 +25,7 @@
                 <li><a href="#media" class="nav-link" data-page="media">Media</a></li>
                 <li><a href="#playlists" class="nav-link" data-page="playlists">Playlists</a></li>
                 <li><a href="#clients" class="nav-link" data-page="clients">Clients</a></li>
+                <li><a href="#groups" class="nav-link" data-page="groups">Groups</a></li>
             </ul>
         </div>
     </nav>
@@ -246,7 +247,85 @@
                 <p>Waiting for clients to connect to the server</p>
             </div>
         </section>
+
+        <!-- Groups View -->
+        <section id="groups-view" class="view">
+            <div class="page-header">
+                <h2>Client Groups</h2>
+                <button class="btn btn-primary" id="createGroupBtn">Create Group</button>
+            </div>
+
+            <!-- Groups Grid -->
+            <div id="groupsGrid" class="grid">
+                <div class="loading">Loading groups...</div>
+            </div>
+
+            <!-- Empty State -->
+            <div id="groupsEmpty" class="empty-state" style="display: none;">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+                <h3>No Groups Yet</h3>
+                <p>Create a group to manage multiple clients together</p>
+            </div>
+        </section>
     </main>
+
+    <!-- Create Group Modal -->
+    <div id="createGroupModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="groupModalTitle">Create Group</h3>
+                <button class="modal-close" id="closeGroupModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="groupForm">
+                    <input type="hidden" id="groupEditId">
+                    <div class="form-group">
+                        <label for="groupName">Group Name</label>
+                        <input type="text" id="groupName" placeholder="e.g., Lobby Displays" required maxlength="255">
+                    </div>
+                    <div class="form-group">
+                        <label for="groupDescription">Description (optional)</label>
+                        <textarea id="groupDescription" placeholder="Describe this group" maxlength="1000" rows="3"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelGroupModal">Cancel</button>
+                <button class="btn btn-primary" id="saveGroupBtn">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Group Detail Modal -->
+    <div id="groupDetailModal" class="modal modal-large">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="groupDetailTitle">Group Details</h3>
+                <button class="modal-close" id="closeGroupDetailModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="group-detail-actions">
+                    <select id="addMemberSelect" class="form-select">
+                        <option value="">Add client to group...</option>
+                    </select>
+                    <button class="btn btn-primary btn-sm" id="addMemberBtn">Add</button>
+                    <div style="flex:1"></div>
+                    <select id="assignGroupPlaylistSelect" class="form-select">
+                        <option value="">Assign playlist...</option>
+                    </select>
+                    <button class="btn btn-secondary btn-sm" id="assignGroupPlaylistBtn">Assign to All</button>
+                </div>
+                <div id="groupMembersList" class="group-members-list">
+                    <div class="loading">Loading members...</div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Upload Modal -->
     <div id="uploadModal" class="modal">

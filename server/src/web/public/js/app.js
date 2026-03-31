@@ -242,6 +242,52 @@ const clientAPI = {
     }
 };
 
+const groupsAPI = {
+    async list() {
+        return await apiCall('/groups');
+    },
+
+    async get(id) {
+        return await apiCall(`/groups/${id}`);
+    },
+
+    async create(data) {
+        return await apiCall('/groups', {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+    },
+
+    async update(id, data) {
+        return await apiCall(`/groups/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+    },
+
+    async delete(id) {
+        return await apiCall(`/groups/${id}`, { method: 'DELETE' });
+    },
+
+    async addMember(groupId, clientId) {
+        return await apiCall(`/groups/${groupId}/members`, {
+            method: 'POST',
+            body: JSON.stringify({ clientId })
+        });
+    },
+
+    async removeMember(groupId, clientId) {
+        return await apiCall(`/groups/${groupId}/members/${clientId}`, { method: 'DELETE' });
+    },
+
+    async assignPlaylist(groupId, playlistId) {
+        return await apiCall(`/groups/${groupId}/assign`, {
+            method: 'POST',
+            body: JSON.stringify({ playlistId })
+        });
+    }
+};
+
 // ===== Navigation =====
 
 function initNavigation() {
@@ -291,6 +337,9 @@ function navigateTo(view) {
             break;
         case 'clients':
             loadClients();
+            break;
+        case 'groups':
+            loadGroups();
             break;
     }
 }
@@ -994,6 +1043,237 @@ document.addEventListener('click', (e) => {
     }
 });
 
+// ===== Groups View =====
+
+let currentGroupId = null;
+
+async function loadGroups() {
+    const gridEl = document.getElementById('groupsGrid');
+    const emptyEl = document.getElementById('groupsEmpty');
+
+    gridEl.innerHTML = '<div class="loading">Loading groups...</div>';
+    emptyEl.style.display = 'none';
+
+    try {
+        const groups = await groupsAPI.list();
+
+        if (groups.length === 0) {
+            gridEl.innerHTML = '';
+            emptyEl.style.display = 'flex';
+            return;
+        }
+
+        // Fetch member counts for each group
+        const groupsWithMembers = await Promise.all(
+            groups.map(async (group) => {
+                try {
+                    const detail = await groupsAPI.get(group.id);
+                    return { ...group, memberCount: detail.members ? detail.members.length : 0 };
+                } catch {
+                    return { ...group, memberCount: 0 };
+                }
+            })
+        );
+
+        gridEl.innerHTML = groupsWithMembers.map(group => `
+            <div class="card" data-group-id="${group.id}">
+                <div class="card-header">
+                    <h3 class="card-title">${escapeHtml(group.name)}</h3>
+                    <div class="card-actions">
+                        <button class="btn btn-sm btn-secondary edit-group-btn" data-id="${group.id}" title="Edit">Edit</button>
+                        <button class="btn btn-sm btn-danger delete-group-btn" data-id="${group.id}" title="Delete">Delete</button>
+                    </div>
+                </div>
+                <div class="card-body" style="cursor:pointer" onclick="openGroupDetail(${group.id})">
+                    <p class="text-muted">${group.description ? escapeHtml(group.description) : 'No description'}</p>
+                    <div class="card-meta">
+                        <span>${group.memberCount} member${group.memberCount !== 1 ? 's' : ''}</span>
+                        <span>Created ${formatDate(group.created_at)}</span>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+        // Attach event handlers
+        gridEl.querySelectorAll('.edit-group-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openEditGroup(parseInt(btn.dataset.id));
+            });
+        });
+
+        gridEl.querySelectorAll('.delete-group-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const id = parseInt(btn.dataset.id);
+                if (confirm('Delete this group? Members will not be deleted.')) {
+                    try {
+                        await groupsAPI.delete(id);
+                        showToast('Group deleted', 'success');
+                        loadGroups();
+                    } catch (error) {
+                        showToast('Failed to delete group', 'error');
+                    }
+                }
+            });
+        });
+    } catch (error) {
+        console.error('Failed to load groups:', error);
+        gridEl.innerHTML = '<div class="error">Failed to load groups</div>';
+    }
+}
+
+function initGroupModals() {
+    const modal = document.getElementById('createGroupModal');
+    const detailModal = document.getElementById('groupDetailModal');
+
+    document.getElementById('createGroupBtn').addEventListener('click', () => {
+        document.getElementById('groupEditId').value = '';
+        document.getElementById('groupName').value = '';
+        document.getElementById('groupDescription').value = '';
+        document.getElementById('groupModalTitle').textContent = 'Create Group';
+        document.getElementById('saveGroupBtn').textContent = 'Create';
+        modal.style.display = 'flex';
+    });
+
+    document.getElementById('closeGroupModal').addEventListener('click', () => { modal.style.display = 'none'; });
+    document.getElementById('cancelGroupModal').addEventListener('click', () => { modal.style.display = 'none'; });
+    document.getElementById('closeGroupDetailModal').addEventListener('click', () => { detailModal.style.display = 'none'; });
+
+    document.getElementById('saveGroupBtn').addEventListener('click', async () => {
+        const name = document.getElementById('groupName').value.trim();
+        const description = document.getElementById('groupDescription').value.trim();
+        const editId = document.getElementById('groupEditId').value;
+
+        if (!name) { showToast('Group name is required', 'error'); return; }
+
+        try {
+            if (editId) {
+                await groupsAPI.update(parseInt(editId), { name, description: description || undefined });
+                showToast('Group updated', 'success');
+            } else {
+                await groupsAPI.create({ name, description: description || undefined });
+                showToast('Group created', 'success');
+            }
+            modal.style.display = 'none';
+            loadGroups();
+        } catch (error) {
+            showToast(error.message || 'Failed to save group', 'error');
+        }
+    });
+
+    // Add member button
+    document.getElementById('addMemberBtn').addEventListener('click', async () => {
+        const select = document.getElementById('addMemberSelect');
+        const clientId = select.value;
+        if (!clientId || !currentGroupId) return;
+
+        try {
+            await groupsAPI.addMember(currentGroupId, clientId);
+            showToast('Member added', 'success');
+            openGroupDetail(currentGroupId);
+        } catch (error) {
+            showToast(error.message || 'Failed to add member', 'error');
+        }
+    });
+
+    // Assign playlist to group button
+    document.getElementById('assignGroupPlaylistBtn').addEventListener('click', async () => {
+        const select = document.getElementById('assignGroupPlaylistSelect');
+        const playlistId = parseInt(select.value);
+        if (!playlistId || !currentGroupId) return;
+
+        try {
+            const result = await groupsAPI.assignPlaylist(currentGroupId, playlistId);
+            showToast(result.message || 'Playlist assigned', 'success');
+        } catch (error) {
+            showToast(error.message || 'Failed to assign playlist', 'error');
+        }
+    });
+}
+
+async function openEditGroup(id) {
+    try {
+        const group = await groupsAPI.get(id);
+        document.getElementById('groupEditId').value = id;
+        document.getElementById('groupName').value = group.name;
+        document.getElementById('groupDescription').value = group.description || '';
+        document.getElementById('groupModalTitle').textContent = 'Edit Group';
+        document.getElementById('saveGroupBtn').textContent = 'Save';
+        document.getElementById('createGroupModal').style.display = 'flex';
+    } catch (error) {
+        showToast('Failed to load group', 'error');
+    }
+}
+
+async function openGroupDetail(id) {
+    currentGroupId = id;
+    const modal = document.getElementById('groupDetailModal');
+    const membersList = document.getElementById('groupMembersList');
+    membersList.innerHTML = '<div class="loading">Loading...</div>';
+    modal.style.display = 'flex';
+
+    try {
+        const [group, allClients, allPlaylists] = await Promise.all([
+            groupsAPI.get(id),
+            clientAPI.list(),
+            playlistAPI.list()
+        ]);
+
+        document.getElementById('groupDetailTitle').textContent = group.name;
+
+        // Populate add-member select with clients not already in group
+        const memberIds = new Set(group.members.map(m => m.id));
+        const addSelect = document.getElementById('addMemberSelect');
+        addSelect.innerHTML = '<option value="">Add client to group...</option>' +
+            allClients.filter(c => !memberIds.has(c.id)).map(c =>
+                `<option value="${c.id}">${escapeHtml(c.name)}</option>`
+            ).join('');
+
+        // Populate playlist select
+        const playlistSelect = document.getElementById('assignGroupPlaylistSelect');
+        playlistSelect.innerHTML = '<option value="">Assign playlist...</option>' +
+            allPlaylists.map(p =>
+                `<option value="${p.id}">${escapeHtml(p.name)}</option>`
+            ).join('');
+
+        // Render members
+        if (group.members.length === 0) {
+            membersList.innerHTML = '<p class="text-muted">No members in this group</p>';
+        } else {
+            membersList.innerHTML = group.members.map(client => `
+                <div class="member-row">
+                    <div>
+                        <strong>${escapeHtml(client.name)}</strong>
+                        <span class="badge badge-${client.status === 'online' ? 'success' : client.status === 'error' ? 'danger' : 'secondary'}">${client.status}</span>
+                    </div>
+                    <button class="btn btn-sm btn-danger remove-member-btn" data-client-id="${client.id}">Remove</button>
+                </div>
+            `).join('');
+
+            membersList.querySelectorAll('.remove-member-btn').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    try {
+                        await groupsAPI.removeMember(id, btn.dataset.clientId);
+                        showToast('Member removed', 'success');
+                        openGroupDetail(id);
+                    } catch (error) {
+                        showToast('Failed to remove member', 'error');
+                    }
+                });
+            });
+        }
+    } catch (error) {
+        membersList.innerHTML = '<div class="error">Failed to load group details</div>';
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // ===== Initialization =====
 
 async function init() {
@@ -1024,6 +1304,9 @@ async function init() {
     // Initialize client functionality
     initRefreshClients();
     initAssignPlaylistModal();
+
+    // Initialize group functionality
+    initGroupModals();
 
     // Load initial view
     loadDashboard();
