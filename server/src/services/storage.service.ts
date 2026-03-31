@@ -37,6 +37,7 @@ export class StorageService {
       path.join(this.storagePath, 'media'),
       path.join(this.storagePath, 'thumbnails'),
       path.join(this.storagePath, 'temp'),
+      path.join(this.storagePath, 'previews'),
     ];
 
     directories.forEach((dir) => {

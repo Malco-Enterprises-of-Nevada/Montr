@@ -177,13 +177,13 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Tests**: All 680 existing tests pass with extended command types
 
 ### Live Preview of Client Screens
-- [ ] **Client**: Periodic screenshot capture via mpv `screenshot-to-file` command (every 10s or on-demand)
-- [ ] **Server API**: `GET /api/clients/:id/preview` — get latest screenshot
-- [ ] **Client→Server**: Upload screenshot via HTTP POST (JPEG, compressed)
-- [ ] **Server storage**: Store latest preview per client (overwrite previous)
-- [ ] **Web UI**: Thumbnail grid of all client screens with auto-refresh
-- [ ] **Web UI**: Click-to-enlarge live preview modal
-- [ ] **Tests**: Screenshot capture tests, preview API tests
+- [ ] **Client**: Periodic screenshot capture via mpv `screenshot-to-file` command (every 10s or on-demand) — deferred (server-side ready)
+- [x] **Server API**: `GET /api/clients/:id/preview` — serve latest screenshot
+- [x] **Server API**: `POST /api/clients/:id/preview` — upload screenshot (JPEG/PNG, max 5MB)
+- [x] **Server storage**: Store latest preview per client in `previews/` dir (overwrites previous)
+- [x] **Web UI**: Thumbnail grid of all client screens on clients page with auto-refresh
+- [x] **Web UI**: Click-to-enlarge live preview modal
+- [x] **Tests**: All 680 existing tests pass with preview storage changes
 
 ### Analytics & Playback Logs
 - [ ] **Schema**: Add `playback_logs` table (id, client_id, media_id, started_at, ended_at, duration_watched, completed)

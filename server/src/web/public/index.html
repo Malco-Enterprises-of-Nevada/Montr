@@ -232,6 +232,12 @@
                 </div>
             </div>
 
+            <!-- Live Previews -->
+            <div class="previews-section">
+                <h3>Live Previews</h3>
+                <div id="previewsGrid" class="previews-grid"></div>
+            </div>
+
             <!-- Clients Grid -->
             <div id="clientsGrid" class="clients-grid">
                 <div class="loading">Loading clients...</div>
@@ -582,6 +588,19 @@
                     <h4>Assigned Playlists</h4>
                     <div id="controlPlaylistsList"></div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Preview Enlarge Modal -->
+    <div id="previewEnlargeModal" class="modal" onclick="this.style.display='none'">
+        <div class="modal-content preview-enlarge-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3 id="previewEnlargeTitle">Preview</h3>
+                <button class="modal-close" onclick="document.getElementById('previewEnlargeModal').style.display='none'">&times;</button>
+            </div>
+            <div class="modal-body" style="text-align:center">
+                <img id="previewEnlargeImg" src="" alt="Client preview" style="max-width:100%;max-height:70vh;border-radius:4px">
             </div>
         </div>
     </div>

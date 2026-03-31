@@ -3,8 +3,12 @@
  */
 
 import { Router, Request, Response } from 'express';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 import { clientService } from '../../services/client.service';
-import { asyncHandler, successResponse } from '../middleware/error-handler';
+import { config } from '../../config/config';
+import { asyncHandler, successResponse, AppError, ErrorCode } from '../middleware/error-handler';
 import {
   validateParams,
   validateBody,
@@ -353,6 +357,79 @@ router.post(
         args,
       })
     );
+  })
+);
+
+// Configure multer for preview uploads
+const previewUpload = multer({
+  dest: path.join(config.storage.path, 'temp'),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max for screenshots
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === 'image/jpeg' || file.mimetype === 'image/png') {
+      cb(null, true);
+    } else {
+      cb(new AppError(ErrorCode.INVALID_MEDIA_TYPE, 'Preview must be JPEG or PNG', 400));
+    }
+  },
+});
+
+/**
+ * POST /api/clients/:id/preview
+ * Upload a screenshot preview from a client
+ */
+router.post(
+  '/:id/preview',
+  validateParams(uuidParamSchema),
+  previewUpload.single('preview'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params as { id: string };
+    await clientService.getClientById(id);
+
+    const file = req.file;
+    if (!file) {
+      throw new AppError(ErrorCode.BAD_REQUEST, 'No preview file provided', 400);
+    }
+
+    // Move to previews directory, overwriting previous
+    const previewDir = path.resolve(config.storage.path, 'previews');
+    const ext = file.mimetype === 'image/png' ? '.png' : '.jpg';
+    const previewPath = path.join(previewDir, `${id}${ext}`);
+
+    // Remove any existing preview (could be different extension)
+    for (const existingExt of ['.jpg', '.png']) {
+      const existing = path.join(previewDir, `${id}${existingExt}`);
+      if (fs.existsSync(existing)) fs.unlinkSync(existing);
+    }
+
+    fs.renameSync(file.path, previewPath);
+
+    res.json(successResponse({ message: 'Preview uploaded', clientId: id }));
+  })
+);
+
+/**
+ * GET /api/clients/:id/preview
+ * Get the latest screenshot preview for a client
+ */
+router.get(
+  '/:id/preview',
+  validateParams(uuidParamSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params as { id: string };
+    await clientService.getClientById(id);
+
+    const previewDir = path.resolve(config.storage.path, 'previews');
+
+    // Check for jpg or png
+    for (const ext of ['.jpg', '.png']) {
+      const previewPath = path.join(previewDir, `${id}${ext}`);
+      if (fs.existsSync(previewPath)) {
+        res.sendFile(previewPath);
+        return;
+      }
+    }
+
+    throw new AppError(ErrorCode.RESOURCE_NOT_FOUND, `No preview available for client ${id}`, 404);
   })
 );
 
