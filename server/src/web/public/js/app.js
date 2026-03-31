@@ -57,7 +57,9 @@ function formatDuration(seconds) {
 
 // Format date
 function formatDate(dateString) {
+    if (!dateString) return 'N/A';
     const date = new Date(dateString);
+    if (isNaN(date.getTime())) return 'N/A';
     return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
 }
 
@@ -385,14 +387,14 @@ function navigateTo(view) {
 
 async function loadDashboard() {
     try {
-        const [health, media, playlists, clients] = await Promise.all([
+        const [health, mediaResult, playlists, clients] = await Promise.all([
             checkHealth(),
             mediaAPI.list(),
             playlistAPI.list(),
             clientAPI.list()
         ]);
 
-        state.media = media || [];
+        state.media = mediaResult?.data || mediaResult || [];
         state.playlists = playlists || [];
         state.clients = clients || [];
 
@@ -496,19 +498,32 @@ function renderMediaGrid(media) {
                 <div class="media-name" title="${item.filename}">${item.filename}</div>
                 <div class="media-meta">
                     <span class="badge badge-info">${item.type}</span>
-                    <span>${item.duration ? formatDuration(item.duration) : 'N/A'}</span>
+                    <span>${item.file_size ? formatFileSize(item.file_size) : 'N/A'}</span>
                 </div>
             </div>
             <div class="media-actions">
-                <button class="btn btn-sm btn-secondary" onclick="handleMediaDownload('${item.id}')">
+                <button class="btn btn-sm btn-secondary media-download-btn" data-id="${item.id}">
                     Download
                 </button>
-                <button class="btn btn-sm btn-danger" onclick="handleMediaDelete('${item.id}')">
+                <button class="btn btn-sm btn-danger media-delete-btn" data-id="${item.id}">
                     Delete
                 </button>
             </div>
         </div>
     `).join('');
+
+    gridEl.querySelectorAll('.media-download-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleMediaDownload(btn.dataset.id);
+        });
+    });
+    gridEl.querySelectorAll('.media-delete-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleMediaDelete(btn.dataset.id);
+        });
+    });
 }
 
 function initMediaSearch() {
@@ -661,18 +676,24 @@ function renderPlaylistsList(playlists) {
     emptyEl.style.display = 'none';
 
     listEl.innerHTML = playlists.map(playlist => `
-        <div class="playlist-card" onclick="openPlaylistDetail('${playlist.id}')">
+        <div class="playlist-card" data-playlist-id="${playlist.id}">
             <div class="playlist-header">
                 <h3 class="playlist-title">${playlist.name}</h3>
                 <span class="badge badge-info">${playlist.itemCount || 0} items</span>
             </div>
             ${playlist.description ? `<p class="playlist-description">${playlist.description}</p>` : ''}
             <div class="playlist-footer">
-                <span>Created: ${formatDate(playlist.createdAt)}</span>
-                <span>Updated: ${formatRelativeTime(playlist.updatedAt)}</span>
+                <span>Created: ${formatDate(playlist.created_at)}</span>
+                <span>Updated: ${formatRelativeTime(playlist.updated_at)}</span>
             </div>
         </div>
     `).join('');
+
+    listEl.querySelectorAll('.playlist-card').forEach(card => {
+        card.addEventListener('click', () => {
+            openPlaylistDetail(card.dataset.playlistId);
+        });
+    });
 }
 
 function initCreatePlaylist() {
