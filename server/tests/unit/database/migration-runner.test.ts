@@ -43,7 +43,7 @@ describe('MigrationRunner', () => {
 
   it('should create all expected tables', async () => {
     const executor = adapter.getMigrationExecutor();
-    for (const table of ['media_files', 'playlists', 'playlist_items', 'clients', 'client_status', 'system_state', 'client_groups', 'client_group_members', 'schedules', 'client_playlists', 'playback_logs', 'notification_rules', 'notification_history']) {
+    for (const table of ['media_files', 'playlists', 'playlist_items', 'clients', 'client_status', 'system_state', 'client_groups', 'client_group_members', 'schedules', 'client_playlists', 'playback_logs', 'notification_rules', 'notification_history', 'approval_logs']) {
       const exists = await executor.tableExists(table);
       expect(exists).toBe(true);
     }
@@ -55,7 +55,7 @@ describe('MigrationRunner', () => {
       "SELECT value FROM system_state WHERE key = 'schema_version'",
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0].value).toBe('1.7.0');
+    expect(rows[0].value).toBe('1.8.0');
   });
 
   it('should not re-run already applied migrations', async () => {
@@ -67,8 +67,8 @@ describe('MigrationRunner', () => {
     const rows = await executor.querySql!<{ version: string }>(
       'SELECT version FROM schema_migrations',
     );
-    // Should still have exactly eight migrations (001-008)
-    expect(rows).toHaveLength(8);
+    // Should still have exactly nine migrations (001-009)
+    expect(rows).toHaveLength(9);
   });
 
   it('should report migration status', async () => {
@@ -96,7 +96,7 @@ describe('MigrationRunner', () => {
     const rows = await executor.querySql!<{ version: string }>(
       'SELECT version FROM schema_migrations',
     );
-    expect(rows).toHaveLength(8);
+    expect(rows).toHaveLength(9);
     expect(rows[0].version).toBe('1.0.0');
     expect(rows[1].version).toBe('1.1.0');
     expect(rows[2].version).toBe('1.2.0');
@@ -105,6 +105,7 @@ describe('MigrationRunner', () => {
     expect(rows[5].version).toBe('1.5.0');
     expect(rows[6].version).toBe('1.6.0');
     expect(rows[7].version).toBe('1.7.0');
+    expect(rows[8].version).toBe('1.8.0');
 
     await baselineAdapter.disconnect();
     fs.rmSync(baselineDir, { recursive: true, force: true });

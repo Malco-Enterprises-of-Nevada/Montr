@@ -182,9 +182,9 @@ export class MSSQLAdapter extends SqlBaseAdapter {
     const id = await this.insertAndGetId(
       `INSERT INTO media_files (
         filename, original_filename, filepath, type, mime_type,
-        file_size, duration, width, height, checksum, thumbnail_status
+        file_size, duration, width, height, checksum, thumbnail_status, approval_status
       ) OUTPUT INSERTED.id
-      VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10, @p11)`,
+      VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10, @p11, @p12)`,
       [
         input.filename,
         input.original_filename,
@@ -197,6 +197,7 @@ export class MSSQLAdapter extends SqlBaseAdapter {
         input.height || null,
         input.checksum || null,
         input.thumbnail_status || 'pending',
+        'pending',
       ]
     );
 

@@ -40,6 +40,8 @@ import {
   CreateNotificationRuleInput,
   NotificationEventType,
   NotificationHistory,
+  ApprovalStatus,
+  ApprovalLog,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -143,6 +145,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
       height: input.height || null,
       checksum: input.checksum || null,
       thumbnail_status: input.thumbnail_status || 'pending',
+      approval_status: 'pending',
       created_at: now,
       updated_at: now,
     };
@@ -205,6 +208,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
       'height',
       'checksum',
       'thumbnail_status',
+      'approval_status',
     ]);
 
     const setFields: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -921,6 +925,51 @@ export class MongoDBAdapter implements DatabaseAdapter {
       .limit(limit)
       .toArray();
     return docs.map((d) => this.docToObj<NotificationHistory>(d)!);
+  }
+
+  // ── Approval operations ─────────────────────────────────────────────────
+
+  async updateMediaApproval(mediaId: number, status: ApprovalStatus): Promise<MediaFile> {
+    await this.col('media_files').updateOne(
+      { id: mediaId },
+      { $set: { approval_status: status, updated_at: new Date().toISOString() } }
+    );
+    const media = await this.getMediaById(mediaId);
+    if (!media) throw new Error(`Media with ID ${mediaId} not found`);
+    return media;
+  }
+
+  async createApprovalLog(
+    mediaId: number,
+    action: ApprovalStatus,
+    comment?: string
+  ): Promise<ApprovalLog> {
+    const id = await this.nextId('approval_logs');
+    const doc = {
+      id,
+      media_id: mediaId,
+      action,
+      comment: comment || null,
+      timestamp: new Date().toISOString(),
+    };
+    await this.col('approval_logs').insertOne(doc);
+    return doc as ApprovalLog;
+  }
+
+  async getApprovalLogs(mediaId: number): Promise<ApprovalLog[]> {
+    const docs = await this.col('approval_logs')
+      .find({ media_id: mediaId })
+      .sort({ timestamp: -1 })
+      .toArray();
+    return docs.map((d) => this.docToObj<ApprovalLog>(d)!);
+  }
+
+  async getPendingMedia(): Promise<MediaFile[]> {
+    const docs = await this.col('media_files')
+      .find({ approval_status: 'pending' })
+      .sort({ created_at: -1 })
+      .toArray();
+    return docs.map((d) => this.docToObj<MediaFile>(d)!);
   }
 
   getMigrationExecutor(): MigrationExecutor {

@@ -38,6 +38,8 @@ import {
   CreateNotificationRuleInput,
   NotificationEventType,
   NotificationHistory,
+  ApprovalStatus,
+  ApprovalLog,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -151,4 +153,14 @@ export interface DatabaseAdapter {
     entry: Omit<NotificationHistory, 'id' | 'sent_at'>
   ): Promise<NotificationHistory>;
   getNotificationHistory(limit?: number): Promise<NotificationHistory[]>;
+
+  // Approval operations
+  updateMediaApproval(mediaId: number, status: ApprovalStatus): Promise<MediaFile>;
+  createApprovalLog(
+    mediaId: number,
+    action: ApprovalStatus,
+    comment?: string
+  ): Promise<ApprovalLog>;
+  getApprovalLogs(mediaId: number): Promise<ApprovalLog[]>;
+  getPendingMedia(): Promise<MediaFile[]>;
 }

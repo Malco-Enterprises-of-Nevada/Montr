@@ -117,6 +117,20 @@ router.get(
 );
 
 /**
+ * GET /api/media/pending
+ * Get all media files pending approval (must be before /:id)
+ */
+router.get(
+  '/pending',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { getDatabase } = await import('../../database/connection');
+    const db = await getDatabase();
+    const pending = await db.getPendingMedia();
+    res.json(successResponse(pending));
+  })
+);
+
+/**
  * GET /api/media/:id
  * Get media file details
  */
@@ -196,6 +210,59 @@ router.post(
     const { id } = params;
     const media = await mediaService.retryThumbnail(id);
     res.json(successResponse(media));
+  })
+);
+
+/**
+ * POST /api/media/:id/approve
+ * Approve a media file for use in playlists
+ */
+router.post(
+  '/:id/approve',
+  validateParams(idParamSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const params = req.params as unknown as { id: number };
+    const { id } = params;
+    const { getDatabase } = await import('../../database/connection');
+    const db = await getDatabase();
+    const media = await db.updateMediaApproval(id, 'approved');
+    await db.createApprovalLog(id, 'approved');
+    res.json(successResponse(media));
+  })
+);
+
+/**
+ * POST /api/media/:id/reject
+ * Reject a media file
+ */
+router.post(
+  '/:id/reject',
+  validateParams(idParamSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const params = req.params as unknown as { id: number };
+    const { id } = params;
+    const comment = (req.body as { comment?: string })?.comment;
+    const { getDatabase } = await import('../../database/connection');
+    const db = await getDatabase();
+    const media = await db.updateMediaApproval(id, 'rejected');
+    await db.createApprovalLog(id, 'rejected', comment);
+    res.json(successResponse(media));
+  })
+);
+
+/**
+ * GET /api/media/:id/approval-logs
+ * Get approval history for a media file
+ */
+router.get(
+  '/:id/approval-logs',
+  validateParams(idParamSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const params = req.params as unknown as { id: number };
+    const { getDatabase } = await import('../../database/connection');
+    const db = await getDatabase();
+    const logs = await db.getApprovalLogs(params.id);
+    res.json(successResponse(logs));
   })
 );
 
