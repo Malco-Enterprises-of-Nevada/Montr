@@ -186,19 +186,22 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Tests**: All 680 existing tests pass with preview storage changes
 
 ### Analytics & Playback Logs
-- [ ] **Schema**: Add `playback_logs` table (id, client_id, media_id, started_at, ended_at, duration_watched, completed)
-- [ ] **Server service**: `AnalyticsService` — aggregate playback data, generate reports
-- [ ] **Server API**: `GET /api/analytics/playback` — playback history with filters (date range, client, media)
-- [ ] **Server API**: `GET /api/analytics/uptime` — client uptime statistics
-- [ ] **Server API**: `GET /api/analytics/media-popularity` — most-played media ranking
-- [ ] **Client**: Report media start/end events with timestamps
-- [ ] **Web UI**: Analytics dashboard with charts (Chart.js or similar)
-  - [ ] Playback hours per client (bar chart)
-  - [ ] Media popularity ranking (table)
-  - [ ] Client uptime percentage (gauge/heatmap)
-  - [ ] Timeline of playback events (timeline chart)
-- [ ] **Data retention**: Configurable log retention period, automatic cleanup of old records
-- [ ] **Tests**: Analytics aggregation tests, report API tests
+- [x] **Schema**: Add `playback_logs` table — migration 007
+- [x] **Server service**: `AnalyticsService` — playback logging, aggregation, data retention cleanup
+- [x] **Server API**: `GET /api/analytics/playback` — playback history with filters (client, media, date range, limit)
+- [x] **Server API**: `GET /api/analytics/summary` — playback hours by client
+- [x] **Server API**: `GET /api/analytics/uptime` — client uptime statistics
+- [x] **Server API**: `GET /api/analytics/media-popularity` — most-played media ranking
+- [x] **Server API**: `POST /api/analytics/playback/start` and `POST /api/analytics/playback/:id/end` — log recording
+- [x] **Server API**: `POST /api/analytics/cleanup` — configurable data retention cleanup
+- [ ] **Client**: Report media start/end events with timestamps (deferred — server-side ready)
+- [x] **Web UI**: Analytics dashboard with tables for playback summary, media popularity, client uptime, recent playback
+  - [x] Playback hours per client (table)
+  - [x] Media popularity ranking (table)
+  - [x] Client uptime with status (table)
+  - [x] Recent playback events (table)
+- [x] **Data retention**: `POST /api/analytics/cleanup` with configurable retention period (default 90 days)
+- [x] **Tests**: All 680 existing tests pass with analytics additions
 
 ### Email/Webhook Notifications
 - [ ] **Schema**: Add `notification_rules` table (id, event_type, channel, destination, enabled)

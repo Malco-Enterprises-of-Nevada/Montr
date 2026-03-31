@@ -27,6 +27,7 @@
                 <li><a href="#clients" class="nav-link" data-page="clients">Clients</a></li>
                 <li><a href="#groups" class="nav-link" data-page="groups">Groups</a></li>
                 <li><a href="#schedules" class="nav-link" data-page="schedules">Schedules</a></li>
+                <li><a href="#analytics" class="nav-link" data-page="analytics">Analytics</a></li>
             </ul>
         </div>
     </nav>
@@ -298,6 +299,45 @@
                 </svg>
                 <h3>No Schedules</h3>
                 <p>Create a schedule to automatically switch playlists at specific times</p>
+            </div>
+        </section>
+
+        <!-- Analytics View -->
+        <section id="analytics-view" class="view">
+            <div class="page-header">
+                <h2>Analytics</h2>
+                <button class="btn btn-secondary" id="refreshAnalyticsBtn">Refresh</button>
+            </div>
+
+            <!-- Analytics Stats -->
+            <div class="analytics-grid">
+                <div class="analytics-card">
+                    <h3>Playback by Client</h3>
+                    <div id="analyticsPlaybackSummary" class="analytics-table-container">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+                <div class="analytics-card">
+                    <h3>Media Popularity</h3>
+                    <div id="analyticsMediaPopularity" class="analytics-table-container">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="analytics-grid">
+                <div class="analytics-card">
+                    <h3>Client Uptime</h3>
+                    <div id="analyticsUptime" class="analytics-table-container">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+                <div class="analytics-card">
+                    <h3>Recent Playback</h3>
+                    <div id="analyticsRecent" class="analytics-table-container">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
             </div>
         </section>
     </main>

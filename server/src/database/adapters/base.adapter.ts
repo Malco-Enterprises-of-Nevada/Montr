@@ -29,6 +29,11 @@ import {
   UpdateScheduleInput,
   ClientPlaylist,
   ClientPlaylistWithDetails,
+  PlaybackLog,
+  CreatePlaybackLogInput,
+  PlaybackSummary,
+  MediaPopularity,
+  UptimeStat,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -113,4 +118,22 @@ export interface DatabaseAdapter {
     playlistId: number,
     priority: number
   ): Promise<ClientPlaylist>;
+
+  // Playback log operations
+  createPlaybackLog(input: CreatePlaybackLogInput): Promise<PlaybackLog>;
+  updatePlaybackLog(
+    id: number,
+    updates: { ended_at?: string; duration_watched?: number; completed?: boolean }
+  ): Promise<PlaybackLog>;
+  getPlaybackLogs(filter?: {
+    client_id?: string;
+    media_id?: number;
+    from?: string;
+    to?: string;
+    limit?: number;
+  }): Promise<PlaybackLog[]>;
+  getPlaybackSummaryByClient(from?: string, to?: string): Promise<PlaybackSummary[]>;
+  getMediaPopularity(limit?: number): Promise<MediaPopularity[]>;
+  getClientUptimeStats(): Promise<UptimeStat[]>;
+  deleteOldPlaybackLogs(olderThanDays: number): Promise<number>;
 }

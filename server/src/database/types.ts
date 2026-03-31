@@ -244,3 +244,47 @@ export interface ClientPlaylist {
 export interface ClientPlaylistWithDetails extends ClientPlaylist {
   playlist_name: string;
 }
+
+// Playback log types
+export interface PlaybackLog {
+  id: number;
+  client_id: string;
+  media_id: number;
+  started_at: string;
+  ended_at: string | null;
+  duration_watched: number;
+  completed: boolean;
+}
+
+export interface CreatePlaybackLogInput {
+  client_id: string;
+  media_id: number;
+  started_at?: string;
+  ended_at?: string;
+  duration_watched?: number;
+  completed?: boolean;
+}
+
+export interface PlaybackSummary {
+  client_id: string;
+  client_name: string;
+  total_duration: number;
+  total_plays: number;
+}
+
+export interface MediaPopularity {
+  media_id: number;
+  filename: string;
+  original_filename: string;
+  type: string;
+  play_count: number;
+  total_duration: number;
+}
+
+export interface UptimeStat {
+  client_id: string;
+  client_name: string;
+  status: string;
+  last_seen: string | null;
+  total_logs: number;
+}

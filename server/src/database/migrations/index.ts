@@ -10,5 +10,6 @@ import { migration as m003 } from './003_client_groups';
 import { migration as m004 } from './004_schedules';
 import { migration as m005 } from './005_client_playlists';
 import { migration as m006 } from './006_interruptions';
+import { migration as m007 } from './007_playback_logs';
 
-export const migrations: Migration[] = [m001, m002, m003, m004, m005, m006];
+export const migrations: Migration[] = [m001, m002, m003, m004, m005, m006, m007];
