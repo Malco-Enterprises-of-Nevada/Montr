@@ -15,7 +15,7 @@ WORKDIR /build
 COPY server/package.json server/package-lock.json* ./
 
 # Install all dependencies (including dev for tsc)
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 
 # Copy source
 COPY server/src ./src
@@ -28,7 +28,7 @@ RUN npx tsc && \
     cp -r src/web dist/web
 
 # Prune to production dependencies
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --legacy-peer-deps
 
 # ── Stage 2: Runtime ────────────────────────────────────────
 FROM node:20-bookworm-slim
@@ -54,7 +54,8 @@ ENV NODE_ENV=production \
     DB_TYPE=sqlite \
     DB_PATH=./data/montr.db \
     STORAGE_PATH=./storage \
-    LOG_LEVEL=info
+    LOG_LEVEL=info \
+    PUBLIC_URL=https://montr.budgetvegas.com
 
 EXPOSE 3000
 
