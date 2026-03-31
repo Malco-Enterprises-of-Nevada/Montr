@@ -55,7 +55,9 @@ export class MSSQLAdapter extends SqlBaseAdapter {
       const runner = new MigrationRunner(this.getMigrationExecutor());
       await runner.run();
 
-      logger.info(`MSSQL database connected: ${this.config.server}:${this.config.port}/${this.config.database}`);
+      logger.info(
+        `MSSQL database connected: ${this.config.server}:${this.config.port}/${this.config.database}`
+      );
     } catch (error) {
       logger.error('Failed to connect to MSSQL database:', error);
       throw error;
@@ -127,7 +129,10 @@ export class MSSQLAdapter extends SqlBaseAdapter {
     return result.recordset as T[];
   }
 
-  async rawQueryOne<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T | null> {
+  async rawQueryOne<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[]
+  ): Promise<T | null> {
     const rows = await this.rawQuery<T>(sql, params);
     return rows[0] || null;
   }
@@ -137,7 +142,8 @@ export class MSSQLAdapter extends SqlBaseAdapter {
     const result = await request.query(sql);
     // For INSERT with IDENTITY, we need SCOPE_IDENTITY()
     // The caller should use OUTPUT INSERTED.id or we fetch it here
-    const lastId = (result.recordset as IRecordSet<Record<string, unknown>>)?.[0]?.id as number || 0;
+    const lastId =
+      ((result.recordset as IRecordSet<Record<string, unknown>>)?.[0]?.id as number) || 0;
     return {
       lastInsertId: lastId,
       affectedRows: result.rowsAffected?.[0] ?? 0,
@@ -170,18 +176,28 @@ export class MSSQLAdapter extends SqlBaseAdapter {
     return (row?.id as number) || 0;
   }
 
-  async createMedia(input: import('../types').CreateMediaInput): Promise<import('../types').MediaFile> {
+  async createMedia(
+    input: import('../types').CreateMediaInput
+  ): Promise<import('../types').MediaFile> {
     const id = await this.insertAndGetId(
       `INSERT INTO media_files (
         filename, original_filename, filepath, type, mime_type,
-        file_size, duration, width, height, checksum
+        file_size, duration, width, height, checksum, thumbnail_status
       ) OUTPUT INSERTED.id
-      VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10)`,
+      VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10, @p11)`,
       [
-        input.filename, input.original_filename, input.filepath, input.type,
-        input.mime_type || null, input.file_size || null, input.duration || null,
-        input.width || null, input.height || null, input.checksum || null,
-      ],
+        input.filename,
+        input.original_filename,
+        input.filepath,
+        input.type,
+        input.mime_type || null,
+        input.file_size || null,
+        input.duration || null,
+        input.width || null,
+        input.height || null,
+        input.checksum || null,
+        input.thumbnail_status || 'pending',
+      ]
     );
 
     const media = await this.getMediaById(id);
@@ -189,10 +205,12 @@ export class MSSQLAdapter extends SqlBaseAdapter {
     return media;
   }
 
-  async createPlaylist(input: import('../types').CreatePlaylistInput): Promise<import('../types').Playlist> {
+  async createPlaylist(
+    input: import('../types').CreatePlaylistInput
+  ): Promise<import('../types').Playlist> {
     const id = await this.insertAndGetId(
       `INSERT INTO playlists (name, description) OUTPUT INSERTED.id VALUES (@p1, @p2)`,
-      [input.name, input.description || null],
+      [input.name, input.description || null]
     );
 
     const playlist = await this.getPlaylistById(id);
@@ -200,11 +218,13 @@ export class MSSQLAdapter extends SqlBaseAdapter {
     return playlist;
   }
 
-  async addPlaylistItem(input: import('../types').AddPlaylistItemInput): Promise<import('../types').PlaylistItem> {
+  async addPlaylistItem(
+    input: import('../types').AddPlaylistItemInput
+  ): Promise<import('../types').PlaylistItem> {
     const id = await this.insertAndGetId(
       `INSERT INTO playlist_items (playlist_id, media_id, order_index, image_duration)
        OUTPUT INSERTED.id VALUES (@p1, @p2, @p3, @p4)`,
-      [input.playlist_id, input.media_id, input.order_index, input.image_duration || 5],
+      [input.playlist_id, input.media_id, input.order_index, input.image_duration || 5]
     );
 
     const item = await this.getPlaylistItemById(id);
@@ -222,12 +242,12 @@ export class MSSQLAdapter extends SqlBaseAdapter {
         input.position || null,
         input.is_playing ? 1 : 0,
         input.error_message || null,
-      ],
+      ]
     );
 
     const status = await this.rawQueryOne<ClientStatus>(
       `SELECT * FROM client_status WHERE id = @p1`,
-      [id],
+      [id]
     );
     if (!status) throw new Error('Failed to retrieve created client status');
     return status;
@@ -239,7 +259,7 @@ export class MSSQLAdapter extends SqlBaseAdapter {
   async getLatestClientStatus(clientId: string): Promise<ClientStatus | null> {
     return this.rawQueryOne<ClientStatus>(
       `SELECT TOP 1 * FROM client_status WHERE client_id = @p1 ORDER BY timestamp DESC`,
-      [clientId],
+      [clientId]
     );
   }
 
@@ -258,7 +278,8 @@ export class MSSQLAdapter extends SqlBaseAdapter {
       },
       async tableExists(name: string): Promise<boolean> {
         const pool = self.getPool();
-        const result = await pool.request()
+        const result = await pool
+          .request()
           .input('name', name)
           .query(`SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = @name`);
         return result.recordset.length > 0;

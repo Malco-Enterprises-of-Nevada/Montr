@@ -2,6 +2,8 @@
  * Database types and interfaces
  */
 
+export type ThumbnailStatus = 'pending' | 'generating' | 'generated' | 'failed';
+
 export interface MediaFile {
   id: number;
   filename: string;
@@ -14,6 +16,7 @@ export interface MediaFile {
   width: number | null;
   height: number | null;
   checksum: string | null;
+  thumbnail_status: ThumbnailStatus;
   created_at: string;
   updated_at: string;
 }
@@ -81,6 +84,7 @@ export interface CreateMediaInput {
   width?: number;
   height?: number;
   checksum?: string;
+  thumbnail_status?: ThumbnailStatus;
 }
 
 export interface CreatePlaylistInput {

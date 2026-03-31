@@ -37,11 +37,7 @@ export class MediaService {
   private getMediaType(mimeType: string): 'video' | 'image' {
     if (mimeType.startsWith('video/')) return 'video';
     if (mimeType.startsWith('image/')) return 'image';
-    throw new AppError(
-      ErrorCode.INVALID_MEDIA_TYPE,
-      `Unsupported media type: ${mimeType}`,
-      400
-    );
+    throw new AppError(ErrorCode.INVALID_MEDIA_TYPE, `Unsupported media type: ${mimeType}`, 400);
   }
 
   /**
@@ -50,11 +46,19 @@ export class MediaService {
   private async extractVideoMetadata(filePath: string): Promise<MediaMetadata> {
     try {
       const { stdout } = await execFile('ffprobe', [
-        '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', filePath,
+        '-v',
+        'quiet',
+        '-print_format',
+        'json',
+        '-show_format',
+        '-show_streams',
+        filePath,
       ]);
 
       const data = JSON.parse(stdout);
-      const videoStream = data.streams?.find((s: { codec_type: string }) => s.codec_type === 'video');
+      const videoStream = data.streams?.find(
+        (s: { codec_type: string }) => s.codec_type === 'video'
+      );
 
       const metadata: MediaMetadata = {
         duration: data.format?.duration ? parseFloat(data.format.duration) : undefined,
@@ -99,7 +103,15 @@ export class MediaService {
 
       // Extract frame at 1 second (or 10% of duration)
       await execFile('ffmpeg', [
-        '-i', filePath, '-ss', '00:00:01.000', '-vframes', '1', '-vf', 'scale=320:-1', tempOutput,
+        '-i',
+        filePath,
+        '-ss',
+        '00:00:01.000',
+        '-vframes',
+        '1',
+        '-vf',
+        'scale=320:-1',
+        tempOutput,
       ]);
 
       // Read the generated thumbnail and save it properly
@@ -206,9 +218,7 @@ export class MediaService {
   }
 
   /**
-   * Generates thumbnail asynchronously (fire and forget)
-   * TODO: Thumbnail failures are silently swallowed (only logged). Consider adding a
-   * thumbnail_status field to media_files so the UI can show a retry/placeholder state.
+   * Generates thumbnail asynchronously and persists status to the database.
    */
   private generateThumbnailAsync(
     mediaId: number,
@@ -218,6 +228,12 @@ export class MediaService {
   ): void {
     (async () => {
       try {
+        // Mark as generating
+        const db = await getDatabase();
+        await db.updateMedia(mediaId, {
+          thumbnail_status: 'generating',
+        } as Partial<CreateMediaInput>);
+
         let thumbnailPath: string | null = null;
         if (type === 'video') {
           thumbnailPath = await this.generateVideoThumbnail(filePath, filename);
@@ -226,12 +242,53 @@ export class MediaService {
         }
 
         if (thumbnailPath) {
+          await db.updateMedia(mediaId, {
+            thumbnail_status: 'generated',
+          } as Partial<CreateMediaInput>);
           logger.info(`Thumbnail generated for media ${mediaId}: ${thumbnailPath}`);
+        } else {
+          await db.updateMedia(mediaId, {
+            thumbnail_status: 'failed',
+          } as Partial<CreateMediaInput>);
         }
       } catch (error) {
         logger.error(`Failed to generate thumbnail for media ${mediaId}:`, error);
+        try {
+          const db = await getDatabase();
+          await db.updateMedia(mediaId, {
+            thumbnail_status: 'failed',
+          } as Partial<CreateMediaInput>);
+        } catch (updateError) {
+          logger.error(
+            `Failed to update thumbnail_status to failed for media ${mediaId}:`,
+            updateError
+          );
+        }
       }
     })();
+  }
+
+  /**
+   * Retries thumbnail generation for a failed media file.
+   */
+  async retryThumbnail(id: number): Promise<MediaFile> {
+    const media = await this.getMediaById(id);
+
+    if (media.thumbnail_status !== 'failed') {
+      throw new AppError(
+        ErrorCode.BAD_REQUEST,
+        `Cannot retry thumbnail: current status is '${media.thumbnail_status}'`,
+        400
+      );
+    }
+
+    const db = await getDatabase();
+    await db.updateMedia(id, { thumbnail_status: 'pending' } as Partial<CreateMediaInput>);
+
+    const fullPath = storageService.getFullPath(media.filepath);
+    this.generateThumbnailAsync(id, fullPath, media.filename, media.type);
+
+    return this.getMediaById(id);
   }
 
   /**
@@ -320,11 +377,7 @@ export class MediaService {
       }
 
       if (!thumbnailPath) {
-        throw new AppError(
-          ErrorCode.MEDIA_NOT_FOUND,
-          'Failed to generate thumbnail',
-          500
-        );
+        throw new AppError(ErrorCode.MEDIA_NOT_FOUND, 'Failed to generate thumbnail', 500);
       }
     }
 

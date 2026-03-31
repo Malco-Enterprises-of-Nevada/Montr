@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS media_files (
   width INTEGER,                             -- Resolution width
   height INTEGER,                            -- Resolution height
   checksum TEXT UNIQUE,                      -- SHA-256 hash for duplicate detection
+  thumbnail_status TEXT DEFAULT 'pending' CHECK(thumbnail_status IN ('pending', 'generating', 'generated', 'failed')),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

@@ -1,0 +1,5 @@
+{
+  "server/src/**/*.ts": [
+    "server/node_modules/.bin/prettier --check"
+  ]
+}

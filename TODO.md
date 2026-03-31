@@ -82,33 +82,33 @@ Phases 1-4 are complete. This file tracks what remains.
 ## Phase 7: Documentation & Polish
 
 ### Stub Documentation (headers only, no real content)
-- [ ] `docs/api-specification.md` — needs request/response schemas, error codes, examples
-- [ ] `docs/database-schema.md` — needs actual DDL, relationships, ERD
-- [ ] `docs/deployment.md` — needs step-by-step instructions per platform
-- [ ] `docs/troubleshooting.md` — needs actual solutions for common issues
-- [ ] `docs/development.md` — needs detailed dev environment setup
-- [ ] `docs/websocket-protocol.md` — needs complete message specification
-- [ ] `docs/configuration.md` — needs full reference for all config options
-- [ ] `shared/protocol.md` — needs complete protocol specification
+- [x] `docs/api-specification.md` — full REST API spec with schemas, error codes, curl examples
+- [x] `docs/database-schema.md` — complete DDL, ER diagram, indexes, triggers, views
+- [x] `docs/deployment.md` — step-by-step instructions per platform (already complete from Phase 5)
+- [x] `docs/troubleshooting.md` — common issues, error codes, log locations, diagnostics
+- [x] `docs/development.md` — dev setup, testing, code quality, contributing guide
+- [x] `docs/websocket-protocol.md` — connection lifecycle, heartbeat, reconnection, error handling
+- [x] `docs/configuration.md` — full server env var and client TOML/CLI reference
+- [x] `shared/protocol.md` — complete message schemas for all 9 message types
 
 ### Code Quality
-- [ ] Replace `(req as any)` casts with typed Express request extension — `server/src/api/middleware/validation.ts:51`
-- [ ] Add thumbnail failure visibility (status field or retry) — `server/src/services/media.service.ts:210`
+- [x] Replace `(req as any)` casts with typed Express request extension — `server/src/types/express.d.ts`
+- [x] Add thumbnail failure visibility (status field + retry endpoint) — `thumbnail_status` column, migration 002, `POST /api/media/:id/thumbnail/retry`
 
 ### CI/CD
-- [ ] GitHub Actions workflow: run `npm test` on push/PR
-- [ ] GitHub Actions workflow: run `cargo check` / `cargo test` on push/PR
-- [ ] GitHub Actions workflow: lint + typecheck + format check
-- [ ] Enforce 70% code coverage threshold in CI (configured in jest.config.js, needs CI pipeline)
-- [ ] Cross-platform build verification (Linux, Windows)
+- [x] GitHub Actions workflow: run `npm test` on push/PR — `.github/workflows/ci-server.yml`
+- [x] GitHub Actions workflow: run `cargo check` / `cargo test` on push/PR — `.github/workflows/ci-client.yml`
+- [x] GitHub Actions workflow: lint + typecheck + format check — included in ci-server.yml and ci-client.yml
+- [x] Enforce 70% code coverage threshold in CI — `npm run test:coverage` in ci-server.yml (jest.config.js thresholds)
+- [x] Cross-platform build verification (Linux, Windows) — matrix in ci-server.yml, check-windows job in ci-client.yml
 
 ### Release Process
-- [ ] Version tagging strategy (v1.0.0, v1.1.0, etc.)
-- [ ] Release notes template
-- [ ] Tag releases in git per project.md guidelines
+- [x] Version tagging strategy (v1.0.0, v1.1.0, etc.) — semver, tag-triggered release workflow
+- [x] Release notes template — auto-generated from conventional commits in `.github/workflows/release.yml`
+- [x] Tag releases in git per project.md guidelines — `git tag v1.x.x && git push origin v1.x.x`
 
 ### Pre-commit Hooks
-- [ ] Set up Husky for lint/format checks on commit
+- [x] Set up Husky for lint/format checks on commit — Husky + lint-staged in root `package.json`
 
 ---
 

@@ -7,12 +7,7 @@ import multer from 'multer';
 import path from 'path';
 import { mediaService } from '../../services/media.service';
 import { config } from '../../config/config';
-import {
-  asyncHandler,
-  successResponse,
-  AppError,
-  ErrorCode,
-} from '../middleware/error-handler';
+import { asyncHandler, successResponse, AppError, ErrorCode } from '../middleware/error-handler';
 import {
   validateParams,
   validateQuery,
@@ -107,7 +102,7 @@ router.get(
   validateQuery(listMediaQuerySchema),
   asyncHandler(async (req: Request, res: Response) => {
     // Use validatedQuery which has properly transformed types and defaults
-    const query = ((req as any).validatedQuery || req.query) as {
+    const query = (req.validatedQuery || req.query) as {
       page: number;
       limit: number;
       type?: 'video' | 'image';
@@ -115,10 +110,7 @@ router.get(
     };
     const { page, limit, type, search } = query;
 
-    const result = await mediaService.getAllMedia(
-      { page, limit },
-      { type, search }
-    );
+    const result = await mediaService.getAllMedia({ page, limit }, { type, search });
 
     res.json(successResponse(result));
   })
@@ -189,6 +181,21 @@ router.get(
     const thumbnailPath = await mediaService.getMediaThumbnail(id);
 
     res.sendFile(thumbnailPath);
+  })
+);
+
+/**
+ * POST /api/media/:id/thumbnail/retry
+ * Retry failed thumbnail generation
+ */
+router.post(
+  '/:id/thumbnail/retry',
+  validateParams(idParamSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const params = req.params as unknown as { id: number };
+    const { id } = params;
+    const media = await mediaService.retryThumbnail(id);
+    res.json(successResponse(media));
   })
 );
 

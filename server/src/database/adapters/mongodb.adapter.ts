@@ -93,7 +93,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
     const result = await this.col('counters').findOneAndUpdate(
       { _id: collectionName as unknown as ObjectId },
       { $inc: { seq: 1 } },
-      { returnDocument: 'after', upsert: true },
+      { returnDocument: 'after', upsert: true }
     );
     return (result?.seq as number) || 1;
   }
@@ -123,6 +123,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
       width: input.width || null,
       height: input.height || null,
       checksum: input.checksum || null,
+      thumbnail_status: input.thumbnail_status || 'pending',
       created_at: now,
       updated_at: now,
     };
@@ -137,7 +138,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
   async getAllMedia(
     pagination: PaginationParams,
-    filter?: MediaFilter,
+    filter?: MediaFilter
   ): Promise<PaginatedResult<MediaFile>> {
     const { page, limit } = pagination;
     const offset = (page - 1) * limit;
@@ -174,8 +175,17 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
   async updateMedia(id: number, updates: Partial<CreateMediaInput>): Promise<MediaFile> {
     const validFields = new Set([
-      'filename', 'original_filename', 'filepath', 'type', 'mime_type',
-      'file_size', 'duration', 'width', 'height', 'checksum',
+      'filename',
+      'original_filename',
+      'filepath',
+      'type',
+      'mime_type',
+      'file_size',
+      'duration',
+      'width',
+      'height',
+      'checksum',
+      'thumbnail_status',
     ]);
 
     const setFields: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -203,7 +213,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
     // Cascade: null out client_status references
     await this.col('client_status').updateMany(
       { current_media_id: id },
-      { $set: { current_media_id: null } },
+      { $set: { current_media_id: null } }
     );
     await this.col('media_files').deleteOne({ id });
   }
@@ -263,10 +273,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
   }
 
   async getAllPlaylists(): Promise<Playlist[]> {
-    const docs = await this.col('playlists')
-      .find()
-      .sort({ created_at: -1 })
-      .toArray();
+    const docs = await this.col('playlists').find().sort({ created_at: -1 }).toArray();
     return docs.map((d) => this.docToObj<Playlist>(d)!);
   }
 
@@ -294,7 +301,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
     // Cascade: null out client assignments
     await this.col('clients').updateMany(
       { assigned_playlist_id: id },
-      { $set: { assigned_playlist_id: null } },
+      { $set: { assigned_playlist_id: null } }
     );
     await this.col('playlists').deleteOne({ id });
   }
@@ -315,10 +322,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
     await this.col('playlist_items').insertOne(doc);
 
     // Update playlist's updated_at
-    await this.col('playlists').updateOne(
-      { id: input.playlist_id },
-      { $set: { updated_at: now } },
-    );
+    await this.col('playlists').updateOne({ id: input.playlist_id }, { $set: { updated_at: now } });
 
     return doc as PlaylistItem;
   }
@@ -356,7 +360,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
     await this.col('playlists').updateOne(
       { id: item.playlist_id },
-      { $set: { updated_at: new Date().toISOString() } },
+      { $set: { updated_at: new Date().toISOString() } }
     );
 
     return item;
@@ -370,17 +374,14 @@ export class MongoDBAdapter implements DatabaseAdapter {
     if (item) {
       await this.col('playlists').updateOne(
         { id: item.playlist_id },
-        { $set: { updated_at: new Date().toISOString() } },
+        { $set: { updated_at: new Date().toISOString() } }
       );
     }
   }
 
   async reorderPlaylistItems(_playlistId: number, itemIds: number[]): Promise<void> {
     for (let i = 0; i < itemIds.length; i++) {
-      await this.col('playlist_items').updateOne(
-        { id: itemIds[i] },
-        { $set: { order_index: i } },
-      );
+      await this.col('playlist_items').updateOne({ id: itemIds[i] }, { $set: { order_index: i } });
     }
   }
 
@@ -415,10 +416,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
       query.assigned_playlist_id = filter.assigned_playlist_id;
     }
 
-    const docs = await this.col('clients')
-      .find(query)
-      .sort({ created_at: -1 })
-      .toArray();
+    const docs = await this.col('clients').find(query).sort({ created_at: -1 }).toArray();
     return docs.map((d) => this.docToObj<Client>(d)!);
   }
 
@@ -426,7 +424,8 @@ export class MongoDBAdapter implements DatabaseAdapter {
     const setFields: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
     if (input.name !== undefined) setFields.name = input.name;
-    if (input.assigned_playlist_id !== undefined) setFields.assigned_playlist_id = input.assigned_playlist_id;
+    if (input.assigned_playlist_id !== undefined)
+      setFields.assigned_playlist_id = input.assigned_playlist_id;
     if (input.status !== undefined) setFields.status = input.status;
     if (input.last_seen !== undefined) setFields.last_seen = input.last_seen;
     if (input.version !== undefined) setFields.version = input.version;
@@ -468,11 +467,10 @@ export class MongoDBAdapter implements DatabaseAdapter {
   }
 
   async getLatestClientStatus(clientId: string): Promise<ClientStatus | null> {
-    const doc = await this.col('client_status')
-      .findOne(
-        { client_id: clientId },
-        { sort: { timestamp: -1 } },
-      );
+    const doc = await this.col('client_status').findOne(
+      { client_id: clientId },
+      { sort: { timestamp: -1 } }
+    );
     return this.docToObj<ClientStatus>(doc);
   }
 
