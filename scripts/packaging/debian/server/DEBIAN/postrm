@@ -1,0 +1,19 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    remove)
+        systemctl disable montr-server.service 2>/dev/null || true
+        systemctl daemon-reload
+        ;;
+    purge)
+        rm -rf /etc/montr-server
+        rm -rf /opt/montr-server/data /opt/montr-server/storage /opt/montr-server/logs
+        if id -u montr >/dev/null 2>&1; then
+            userdel montr 2>/dev/null || true
+        fi
+        systemctl daemon-reload
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,10 @@
+Package: montr-client
+Version: 1.0.0
+Section: net
+Priority: optional
+Architecture: amd64
+Depends: libmpv-dev
+Maintainer: Montr Contributors <montr@example.com>
+Description: Montr Media Playlist Client
+ Playback client for the Montr distributed media playlist
+ system. Plays media via libmpv under control of a Montr server.

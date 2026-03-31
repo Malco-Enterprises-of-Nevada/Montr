@@ -44,36 +44,38 @@ Phases 1-4 are complete. This file tracks what remains.
 
 ## Phase 6: Packaging & Build
 
-### Build Scripts (none exist — planned in `project.md`)
-- [ ] `scripts/build/build-all.sh`
-- [ ] `scripts/build/build-server.sh`
-- [ ] `scripts/build/build-client-linux.sh`
-- [ ] `scripts/build/build-client-windows.sh`
+### Build Scripts
+- [x] `scripts/build/build-all.sh`
+- [x] `scripts/build/build-server.sh`
+- [x] `scripts/build/build-client-linux.sh` (cross-compiles via Docker)
+- [ ] `scripts/build/build-client-windows.sh` (deferred — no Windows scope)
 
 ### Debian Packages
-- [ ] `scripts/packaging/debian/server/DEBIAN/control`
-- [ ] `scripts/packaging/debian/client/DEBIAN/control`
-- [ ] Installation/removal scripts
+- [x] `scripts/packaging/debian/server/DEBIAN/control` + maintainer scripts
+- [x] `scripts/packaging/debian/client/DEBIAN/control` + maintainer scripts
+- [x] `scripts/packaging/build-deb.sh` — assembles and builds .deb packages
 
-### Arch Packages
+### Arch Packages (deferred)
 - [ ] `scripts/packaging/arch/PKGBUILD-server`
 - [ ] `scripts/packaging/arch/PKGBUILD-client`
 
-### Windows Installers
+### Windows Installers (deferred)
 - [ ] `scripts/packaging/windows/server-installer.nsi`
 - [ ] `scripts/packaging/windows/client-installer.nsi`
 
 ### Containerization
-- [ ] Dockerfile for server
-- [ ] Dockerfile for client
-- [ ] `docker-compose.yml` for local development
-- [ ] `.dockerignore`
+- [x] `docker/server.Dockerfile` — multi-stage (build + runtime)
+- [x] `docker/client.Dockerfile` — multi-stage with binary export target
+- [x] `docker-compose.yml` — server with SQLite + optional MySQL/MongoDB profiles
+- [x] `.dockerignore`
 
 ### Root Makefile
-- [ ] `make build` — build server + client
-- [ ] `make test` — run all tests
-- [ ] `make lint` — lint both components
-- [ ] `make clean` — clean build artifacts
+- [x] `make build` — build server + client
+- [x] `make test` — run all tests
+- [x] `make lint` — lint both components
+- [x] `make docker` — build Docker images
+- [x] `make package` — build .deb packages
+- [x] `make clean` — clean build artifacts
 
 ---
 

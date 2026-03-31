@@ -1,0 +1,19 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    remove)
+        systemctl disable montr-client.service 2>/dev/null || true
+        systemctl daemon-reload
+        ;;
+    purge)
+        rm -rf /etc/montr-client
+        rm -rf /var/cache/montr-client /var/log/montr-client
+        if id -u montr >/dev/null 2>&1; then
+            userdel montr 2>/dev/null || true
+        fi
+        systemctl daemon-reload
+        ;;
+esac
+
+exit 0

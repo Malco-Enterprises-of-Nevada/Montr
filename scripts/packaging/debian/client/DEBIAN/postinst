@@ -1,0 +1,19 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    configure)
+        if ! id -u montr >/dev/null 2>&1; then
+            useradd --system --create-home --shell /usr/sbin/nologin montr
+        fi
+
+        mkdir -p /var/cache/montr-client /var/log/montr-client
+        chown -R montr:montr /var/cache/montr-client /var/log/montr-client
+        chown -R montr:montr /etc/montr-client
+
+        systemctl daemon-reload
+        systemctl enable montr-client.service
+        ;;
+esac
+
+exit 0

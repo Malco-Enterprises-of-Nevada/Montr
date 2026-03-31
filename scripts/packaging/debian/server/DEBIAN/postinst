@@ -1,0 +1,22 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    configure)
+        # Create system user if it doesn't exist
+        if ! id -u montr >/dev/null 2>&1; then
+            useradd --system --create-home --shell /usr/sbin/nologin montr
+        fi
+
+        # Create runtime directories
+        mkdir -p /opt/montr-server/data /opt/montr-server/storage /opt/montr-server/logs
+        chown -R montr:montr /opt/montr-server
+        chown -R montr:montr /etc/montr-server
+
+        # Reload systemd and enable service
+        systemctl daemon-reload
+        systemctl enable montr-server.service
+        ;;
+esac
+
+exit 0
