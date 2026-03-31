@@ -2,7 +2,9 @@ import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
+import fs from 'fs';
 import { createServer, Server as HTTPServer } from 'http';
+import { createServer as createHTTPSServer, Server as HTTPSServer } from 'https';
 import { config } from './config/config';
 import { initLogger, getLogger } from './utils/logger';
 import { errorHandler, notFoundHandler, successResponse } from './api/middleware/error-handler';
@@ -19,6 +21,7 @@ import { apiKeyAuth } from './api/middleware/auth';
 import { webSocketServer } from './websocket/server';
 import { scheduleService } from './services/schedule.service';
 import { notificationService } from './services/notification.service';
+import { getNodeHealth } from './cluster/health';
 
 /**
  * Montr Server Application
@@ -27,7 +30,7 @@ import { notificationService } from './services/notification.service';
 class MontrServer {
   private app: Application;
 
-  private server: HTTPServer | null = null;
+  private server: HTTPServer | HTTPSServer | null = null;
 
   private logger = getLogger();
 
@@ -102,6 +105,7 @@ class MontrServer {
           uptime: process.uptime(),
           environment: config.server.environment,
           websocket: webSocketServer.getStats(),
+          node: getNodeHealth(),
         })
       );
     });
@@ -165,8 +169,30 @@ class MontrServer {
       await getDatabase();
       this.logger.info('Database connection established');
 
-      // Create HTTP server
-      this.server = createServer(this.app);
+      // Create HTTP or HTTPS server
+      const tlsEnabled = process.env.TLS_ENABLED === 'true';
+      const tlsCertPath = process.env.TLS_CERT_PATH;
+      const tlsKeyPath = process.env.TLS_KEY_PATH;
+
+      if (tlsEnabled && tlsCertPath && tlsKeyPath) {
+        const cert = fs.readFileSync(tlsCertPath);
+        const key = fs.readFileSync(tlsKeyPath);
+        this.server = createHTTPSServer({ cert, key }, this.app);
+        this.logger.info('HTTPS/TLS enabled');
+
+        // Start HTTP redirect server
+        const redirectApp = express();
+        redirectApp.use((req: Request, res: Response) => {
+          res.redirect(`https://${req.hostname}:${config.server.port}${req.url}`);
+        });
+        const redirectServer = createServer(redirectApp);
+        const httpPort = parseInt(process.env.TLS_HTTP_PORT || '80', 10);
+        redirectServer.listen(httpPort, config.server.host, () => {
+          this.logger.info(`HTTP→HTTPS redirect listening on port ${httpPort}`);
+        });
+      } else {
+        this.server = createServer(this.app);
+      }
 
       // Initialize WebSocket server
       webSocketServer.initialize(this.server);
@@ -203,10 +229,14 @@ class MontrServer {
       this.logger.info(`Environment: ${config.server.environment}`);
       this.logger.info(`Database type: ${config.database.type}`);
       this.logger.info(`Storage path: ${config.storage.path}`);
+      const proto = tlsEnabled ? 'https' : 'http';
+      const wsProto = tlsEnabled ? 'wss' : 'ws';
       this.logger.info(
-        `Health check: http://${config.server.host}:${config.server.port}/api/health`
+        `Health check: ${proto}://${config.server.host}:${config.server.port}/api/health`
       );
-      this.logger.info(`WebSocket endpoint: ws://${config.server.host}:${config.server.port}/ws`);
+      this.logger.info(
+        `WebSocket endpoint: ${wsProto}://${config.server.host}:${config.server.port}/ws`
+      );
 
       // Warn about API key misconfiguration
       if (config.security.apiKeyRequired && !config.security.apiKey) {
