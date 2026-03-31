@@ -31,6 +31,11 @@ import {
   UpdateScheduleInput,
   ClientPlaylist,
   ClientPlaylistWithDetails,
+  PlaybackLog,
+  CreatePlaybackLogInput,
+  PlaybackSummary,
+  MediaPopularity,
+  UptimeStat,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -831,5 +836,168 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     );
     if (!row) throw new Error('Client playlist assignment not found');
     return row;
+  }
+
+  // ── Playback log operations ─────────────────────────────────────────────
+
+  async createPlaybackLog(input: CreatePlaybackLogInput): Promise<PlaybackLog> {
+    const p = this.placeholder;
+    const result = await this.rawExecute(
+      `INSERT INTO playback_logs (client_id, media_id, started_at, ended_at, duration_watched, completed)
+       VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)})`,
+      [
+        input.client_id,
+        input.media_id,
+        input.started_at || new Date().toISOString(),
+        input.ended_at || null,
+        input.duration_watched || 0,
+        input.completed ? 1 : 0,
+      ]
+    );
+    const log = await this.rawQueryOne<PlaybackLog>(
+      `SELECT * FROM playback_logs WHERE id = ${p(1)}`,
+      [result.lastInsertId]
+    );
+    if (!log) throw new Error('Failed to retrieve created playback log');
+    return { ...log, completed: Boolean(log.completed) };
+  }
+
+  async updatePlaybackLog(
+    id: number,
+    updates: { ended_at?: string; duration_watched?: number; completed?: boolean }
+  ): Promise<PlaybackLog> {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    let paramIndex = 1;
+
+    if (updates.ended_at !== undefined) {
+      fields.push(`ended_at = ${this.placeholder(paramIndex++)}`);
+      values.push(updates.ended_at);
+    }
+    if (updates.duration_watched !== undefined) {
+      fields.push(`duration_watched = ${this.placeholder(paramIndex++)}`);
+      values.push(updates.duration_watched);
+    }
+    if (updates.completed !== undefined) {
+      fields.push(`completed = ${this.placeholder(paramIndex++)}`);
+      values.push(updates.completed ? 1 : 0);
+    }
+
+    if (fields.length > 0) {
+      values.push(id);
+      await this.rawExecute(
+        `UPDATE playback_logs SET ${fields.join(', ')} WHERE id = ${this.placeholder(paramIndex)}`,
+        values
+      );
+    }
+
+    const log = await this.rawQueryOne<PlaybackLog>(
+      `SELECT * FROM playback_logs WHERE id = ${this.placeholder(1)}`,
+      [id]
+    );
+    if (!log) throw new Error(`Playback log with ID ${id} not found`);
+    return { ...log, completed: Boolean(log.completed) };
+  }
+
+  async getPlaybackLogs(filter?: {
+    client_id?: string;
+    media_id?: number;
+    from?: string;
+    to?: string;
+    limit?: number;
+  }): Promise<PlaybackLog[]> {
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+    let paramIndex = 1;
+
+    if (filter?.client_id) {
+      conditions.push(`client_id = ${this.placeholder(paramIndex++)}`);
+      values.push(filter.client_id);
+    }
+    if (filter?.media_id) {
+      conditions.push(`media_id = ${this.placeholder(paramIndex++)}`);
+      values.push(filter.media_id);
+    }
+    if (filter?.from) {
+      conditions.push(`started_at >= ${this.placeholder(paramIndex++)}`);
+      values.push(filter.from);
+    }
+    if (filter?.to) {
+      conditions.push(`started_at <= ${this.placeholder(paramIndex++)}`);
+      values.push(filter.to);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const limit = filter?.limit || 100;
+
+    const rows = await this.rawQuery<PlaybackLog>(
+      `SELECT * FROM playback_logs ${where} ORDER BY started_at DESC LIMIT ${limit}`,
+      values
+    );
+    return rows.map((r) => ({ ...r, completed: Boolean(r.completed) }));
+  }
+
+  async getPlaybackSummaryByClient(from?: string, to?: string): Promise<PlaybackSummary[]> {
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+    let paramIndex = 1;
+
+    if (from) {
+      conditions.push(`pl.started_at >= ${this.placeholder(paramIndex++)}`);
+      values.push(from);
+    }
+    if (to) {
+      conditions.push(`pl.started_at <= ${this.placeholder(paramIndex++)}`);
+      values.push(to);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    return this.rawQuery<PlaybackSummary>(
+      `SELECT pl.client_id, c.name as client_name,
+              SUM(pl.duration_watched) as total_duration,
+              COUNT(pl.id) as total_plays
+       FROM playback_logs pl
+       JOIN clients c ON pl.client_id = c.id
+       ${where}
+       GROUP BY pl.client_id, c.name
+       ORDER BY total_duration DESC`,
+      values
+    );
+  }
+
+  async getMediaPopularity(limit: number = 20): Promise<MediaPopularity[]> {
+    return this.rawQuery<MediaPopularity>(
+      `SELECT pl.media_id, mf.filename, mf.original_filename, mf.type,
+              COUNT(pl.id) as play_count,
+              SUM(pl.duration_watched) as total_duration
+       FROM playback_logs pl
+       JOIN media_files mf ON pl.media_id = mf.id
+       GROUP BY pl.media_id, mf.filename, mf.original_filename, mf.type
+       ORDER BY play_count DESC
+       LIMIT ${limit}`
+    );
+  }
+
+  async getClientUptimeStats(): Promise<UptimeStat[]> {
+    return this.rawQuery<UptimeStat>(
+      `SELECT c.id as client_id, c.name as client_name, c.status, c.last_seen,
+              COUNT(pl.id) as total_logs
+       FROM clients c
+       LEFT JOIN playback_logs pl ON c.id = pl.client_id
+       GROUP BY c.id, c.name, c.status, c.last_seen
+       ORDER BY c.name ASC`
+    );
+  }
+
+  async deleteOldPlaybackLogs(olderThanDays: number): Promise<number> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - olderThanDays);
+
+    const result = await this.rawExecute(
+      `DELETE FROM playback_logs WHERE started_at < ${this.placeholder(1)}`,
+      [cutoff.toISOString()]
+    );
+    return result.affectedRows;
   }
 }

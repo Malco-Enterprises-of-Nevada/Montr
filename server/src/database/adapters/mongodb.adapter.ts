@@ -31,6 +31,11 @@ import {
   UpdateScheduleInput,
   ClientPlaylist,
   ClientPlaylistWithDetails,
+  PlaybackLog,
+  CreatePlaybackLogInput,
+  PlaybackSummary,
+  MediaPopularity,
+  UptimeStat,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -701,6 +706,156 @@ export class MongoDBAdapter implements DatabaseAdapter {
     });
     if (!doc) throw new Error('Client playlist assignment not found');
     return this.docToObj<ClientPlaylist>(doc)!;
+  }
+
+  // ── Playback log operations ─────────────────────────────────────────────
+
+  async createPlaybackLog(input: CreatePlaybackLogInput): Promise<PlaybackLog> {
+    const id = await this.nextId('playback_logs');
+    const doc = {
+      id,
+      client_id: input.client_id,
+      media_id: input.media_id,
+      started_at: input.started_at || new Date().toISOString(),
+      ended_at: input.ended_at || null,
+      duration_watched: input.duration_watched || 0,
+      completed: input.completed || false,
+    };
+    await this.col('playback_logs').insertOne(doc);
+    return doc as PlaybackLog;
+  }
+
+  async updatePlaybackLog(
+    id: number,
+    updates: { ended_at?: string; duration_watched?: number; completed?: boolean }
+  ): Promise<PlaybackLog> {
+    const setFields: Record<string, unknown> = {};
+    if (updates.ended_at !== undefined) setFields.ended_at = updates.ended_at;
+    if (updates.duration_watched !== undefined)
+      setFields.duration_watched = updates.duration_watched;
+    if (updates.completed !== undefined) setFields.completed = updates.completed;
+
+    if (Object.keys(setFields).length > 0) {
+      await this.col('playback_logs').updateOne({ id }, { $set: setFields });
+    }
+    const doc = await this.col('playback_logs').findOne({ id });
+    if (!doc) throw new Error(`Playback log with ID ${id} not found`);
+    return this.docToObj<PlaybackLog>(doc)!;
+  }
+
+  async getPlaybackLogs(filter?: {
+    client_id?: string;
+    media_id?: number;
+    from?: string;
+    to?: string;
+    limit?: number;
+  }): Promise<PlaybackLog[]> {
+    const query: Record<string, unknown> = {};
+    if (filter?.client_id) query.client_id = filter.client_id;
+    if (filter?.media_id) query.media_id = filter.media_id;
+    if (filter?.from || filter?.to) {
+      query.started_at = {};
+      if (filter?.from) (query.started_at as Record<string, unknown>).$gte = filter.from;
+      if (filter?.to) (query.started_at as Record<string, unknown>).$lte = filter.to;
+    }
+
+    const docs = await this.col('playback_logs')
+      .find(query)
+      .sort({ started_at: -1 })
+      .limit(filter?.limit || 100)
+      .toArray();
+    return docs.map((d) => this.docToObj<PlaybackLog>(d)!);
+  }
+
+  async getPlaybackSummaryByClient(_from?: string, _to?: string): Promise<PlaybackSummary[]> {
+    const pipeline: object[] = [];
+    const matchStage: Record<string, unknown> = {};
+    if (_from || _to) {
+      matchStage.started_at = {};
+      if (_from) (matchStage.started_at as Record<string, unknown>).$gte = _from;
+      if (_to) (matchStage.started_at as Record<string, unknown>).$lte = _to;
+      pipeline.push({ $match: matchStage });
+    }
+    pipeline.push(
+      {
+        $group: {
+          _id: '$client_id',
+          total_duration: { $sum: '$duration_watched' },
+          total_plays: { $sum: 1 },
+        },
+      },
+      { $sort: { total_duration: -1 } }
+    );
+
+    const results = await this.col('playback_logs').aggregate(pipeline).toArray();
+    const summaries: PlaybackSummary[] = [];
+    for (const r of results) {
+      const client = await this.col('clients').findOne({ id: r._id });
+      summaries.push({
+        client_id: r._id as string,
+        client_name: client ? (client.name as string) : 'Unknown',
+        total_duration: r.total_duration as number,
+        total_plays: r.total_plays as number,
+      });
+    }
+    return summaries;
+  }
+
+  async getMediaPopularity(limit: number = 20): Promise<MediaPopularity[]> {
+    const results = await this.col('playback_logs')
+      .aggregate([
+        {
+          $group: {
+            _id: '$media_id',
+            play_count: { $sum: 1 },
+            total_duration: { $sum: '$duration_watched' },
+          },
+        },
+        { $sort: { play_count: -1 } },
+        { $limit: limit },
+      ])
+      .toArray();
+
+    const popularity: MediaPopularity[] = [];
+    for (const r of results) {
+      const media = await this.col('media_files').findOne({ id: r._id });
+      if (media) {
+        popularity.push({
+          media_id: r._id as number,
+          filename: media.filename as string,
+          original_filename: media.original_filename as string,
+          type: media.type as string,
+          play_count: r.play_count as number,
+          total_duration: r.total_duration as number,
+        });
+      }
+    }
+    return popularity;
+  }
+
+  async getClientUptimeStats(): Promise<UptimeStat[]> {
+    const clients = await this.col('clients').find().sort({ name: 1 }).toArray();
+    const stats: UptimeStat[] = [];
+    for (const c of clients) {
+      const logCount = await this.col('playback_logs').countDocuments({ client_id: c.id });
+      stats.push({
+        client_id: c.id as string,
+        client_name: c.name as string,
+        status: c.status as string,
+        last_seen: (c.last_seen as string) || null,
+        total_logs: logCount,
+      });
+    }
+    return stats;
+  }
+
+  async deleteOldPlaybackLogs(olderThanDays: number): Promise<number> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - olderThanDays);
+    const result = await this.col('playback_logs').deleteMany({
+      started_at: { $lt: cutoff.toISOString() },
+    });
+    return result.deletedCount;
   }
 
   getMigrationExecutor(): MigrationExecutor {

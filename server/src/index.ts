@@ -12,6 +12,7 @@ import playlistRoutes from './api/routes/playlist.routes';
 import clientRoutes from './api/routes/client.routes';
 import groupRoutes from './api/routes/group.routes';
 import scheduleRoutes from './api/routes/schedule.routes';
+import analyticsRoutes from './api/routes/analytics.routes';
 import { apiKeyAuth } from './api/middleware/auth';
 import { webSocketServer } from './websocket/server';
 import { scheduleService } from './services/schedule.service';
@@ -133,6 +134,7 @@ class MontrServer {
     this.app.use('/api/clients', apiKeyAuth(), clientRoutes);
     this.app.use('/api/groups', apiKeyAuth(), groupRoutes);
     this.app.use('/api/schedules', apiKeyAuth(), scheduleRoutes);
+    this.app.use('/api/analytics', apiKeyAuth(), analyticsRoutes);
   }
 
   /**

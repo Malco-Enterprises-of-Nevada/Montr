@@ -372,6 +372,9 @@ function navigateTo(view) {
         case 'schedules':
             loadSchedules();
             break;
+        case 'analytics':
+            loadAnalytics();
+            break;
     }
 }
 
@@ -1558,6 +1561,108 @@ function enlargePreview(clientId, clientName) {
     modal.style.display = 'flex';
 }
 
+// ===== Analytics View =====
+
+async function loadAnalytics() {
+    await Promise.all([
+        loadPlaybackSummary(),
+        loadMediaPopularity(),
+        loadUptimeStats(),
+        loadRecentPlayback(),
+    ]);
+}
+
+async function loadPlaybackSummary() {
+    const el = document.getElementById('analyticsPlaybackSummary');
+    try {
+        const summary = await apiCall('/analytics/summary');
+        if (summary.length === 0) {
+            el.innerHTML = '<p class="text-muted">No playback data yet</p>';
+            return;
+        }
+        el.innerHTML = `<table class="analytics-table">
+            <thead><tr><th>Client</th><th>Total Plays</th><th>Total Duration</th></tr></thead>
+            <tbody>${summary.map(s => `<tr>
+                <td>${escapeHtml(s.client_name)}</td>
+                <td>${s.total_plays}</td>
+                <td>${formatDuration(s.total_duration)}</td>
+            </tr>`).join('')}</tbody>
+        </table>`;
+    } catch (error) {
+        el.innerHTML = '<p class="text-muted">Failed to load</p>';
+    }
+}
+
+async function loadMediaPopularity() {
+    const el = document.getElementById('analyticsMediaPopularity');
+    try {
+        const popularity = await apiCall('/analytics/media-popularity?limit=10');
+        if (popularity.length === 0) {
+            el.innerHTML = '<p class="text-muted">No playback data yet</p>';
+            return;
+        }
+        el.innerHTML = `<table class="analytics-table">
+            <thead><tr><th>Media</th><th>Type</th><th>Plays</th><th>Duration</th></tr></thead>
+            <tbody>${popularity.map(p => `<tr>
+                <td>${escapeHtml(p.original_filename)}</td>
+                <td>${p.type}</td>
+                <td>${p.play_count}</td>
+                <td>${formatDuration(p.total_duration)}</td>
+            </tr>`).join('')}</tbody>
+        </table>`;
+    } catch (error) {
+        el.innerHTML = '<p class="text-muted">Failed to load</p>';
+    }
+}
+
+async function loadUptimeStats() {
+    const el = document.getElementById('analyticsUptime');
+    try {
+        const stats = await apiCall('/analytics/uptime');
+        if (stats.length === 0) {
+            el.innerHTML = '<p class="text-muted">No clients</p>';
+            return;
+        }
+        el.innerHTML = `<table class="analytics-table">
+            <thead><tr><th>Client</th><th>Status</th><th>Last Seen</th><th>Logs</th></tr></thead>
+            <tbody>${stats.map(s => `<tr>
+                <td>${escapeHtml(s.client_name)}</td>
+                <td><span class="badge badge-${s.status === 'online' ? 'success' : s.status === 'error' ? 'danger' : 'secondary'}">${s.status}</span></td>
+                <td>${s.last_seen ? formatRelativeTime(s.last_seen) : 'Never'}</td>
+                <td>${s.total_logs}</td>
+            </tr>`).join('')}</tbody>
+        </table>`;
+    } catch (error) {
+        el.innerHTML = '<p class="text-muted">Failed to load</p>';
+    }
+}
+
+async function loadRecentPlayback() {
+    const el = document.getElementById('analyticsRecent');
+    try {
+        const logs = await apiCall('/analytics/playback?limit=15');
+        if (logs.length === 0) {
+            el.innerHTML = '<p class="text-muted">No playback history</p>';
+            return;
+        }
+        el.innerHTML = `<table class="analytics-table">
+            <thead><tr><th>Client</th><th>Media</th><th>Duration</th><th>When</th></tr></thead>
+            <tbody>${logs.map(l => `<tr>
+                <td>${l.client_id.substring(0, 8)}...</td>
+                <td>${l.media_id}</td>
+                <td>${formatDuration(l.duration_watched)}</td>
+                <td>${formatRelativeTime(l.started_at)}</td>
+            </tr>`).join('')}</tbody>
+        </table>`;
+    } catch (error) {
+        el.innerHTML = '<p class="text-muted">Failed to load</p>';
+    }
+}
+
+function initAnalytics() {
+    document.getElementById('refreshAnalyticsBtn').addEventListener('click', loadAnalytics);
+}
+
 // ===== Client Control Modal =====
 
 let controlClientId = null;
@@ -1693,6 +1798,9 @@ async function init() {
 
     // Initialize client control modal
     initClientControlModal();
+
+    // Initialize analytics
+    initAnalytics();
 
     // Load initial view
     loadDashboard();
