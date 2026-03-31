@@ -36,6 +36,10 @@ import {
   PlaybackSummary,
   MediaPopularity,
   UptimeStat,
+  NotificationRule,
+  CreateNotificationRuleInput,
+  NotificationEventType,
+  NotificationHistory,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -999,5 +1003,84 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
       [cutoff.toISOString()]
     );
     return result.affectedRows;
+  }
+
+  // ── Notification operations ─────────────────────────────────────────────
+
+  async createNotificationRule(input: CreateNotificationRuleInput): Promise<NotificationRule> {
+    const p = this.placeholder;
+    const result = await this.rawExecute(
+      `INSERT INTO notification_rules (name, event_type, channel, destination, enabled)
+       VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)})`,
+      [
+        input.name,
+        input.event_type,
+        input.channel,
+        input.destination,
+        input.enabled !== false ? 1 : 0,
+      ]
+    );
+    const rule = await this.getNotificationRuleById(result.lastInsertId);
+    if (!rule) throw new Error('Failed to retrieve created notification rule');
+    return rule;
+  }
+
+  async getNotificationRuleById(id: number): Promise<NotificationRule | null> {
+    const row = await this.rawQueryOne<Omit<NotificationRule, 'enabled'> & { enabled: number }>(
+      `SELECT * FROM notification_rules WHERE id = ${this.placeholder(1)}`,
+      [id]
+    );
+    if (!row) return null;
+    return { ...row, enabled: Boolean(row.enabled) };
+  }
+
+  async getAllNotificationRules(): Promise<NotificationRule[]> {
+    const rows = await this.rawQuery<Omit<NotificationRule, 'enabled'> & { enabled: number }>(
+      'SELECT * FROM notification_rules ORDER BY created_at DESC'
+    );
+    return rows.map((r) => ({ ...r, enabled: Boolean(r.enabled) }));
+  }
+
+  async getEnabledRulesForEvent(eventType: NotificationEventType): Promise<NotificationRule[]> {
+    const rows = await this.rawQuery<Omit<NotificationRule, 'enabled'> & { enabled: number }>(
+      `SELECT * FROM notification_rules WHERE event_type = ${this.placeholder(1)} AND enabled = 1`,
+      [eventType]
+    );
+    return rows.map((r) => ({ ...r, enabled: Boolean(r.enabled) }));
+  }
+
+  async deleteNotificationRule(id: number): Promise<void> {
+    await this.rawExecute(`DELETE FROM notification_rules WHERE id = ${this.placeholder(1)}`, [id]);
+  }
+
+  async createNotificationHistory(
+    entry: Omit<NotificationHistory, 'id' | 'sent_at'>
+  ): Promise<NotificationHistory> {
+    const p = this.placeholder;
+    const result = await this.rawExecute(
+      `INSERT INTO notification_history (rule_id, event_type, channel, destination, payload, status, error_message)
+       VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)})`,
+      [
+        entry.rule_id,
+        entry.event_type,
+        entry.channel,
+        entry.destination,
+        entry.payload,
+        entry.status,
+        entry.error_message || null,
+      ]
+    );
+    const row = await this.rawQueryOne<NotificationHistory>(
+      `SELECT * FROM notification_history WHERE id = ${p(1)}`,
+      [result.lastInsertId]
+    );
+    if (!row) throw new Error('Failed to retrieve created notification history');
+    return row;
+  }
+
+  async getNotificationHistory(limit: number = 50): Promise<NotificationHistory[]> {
+    return this.rawQuery<NotificationHistory>(
+      `SELECT * FROM notification_history ORDER BY sent_at DESC LIMIT ${limit}`
+    );
   }
 }

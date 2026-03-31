@@ -375,6 +375,9 @@ function navigateTo(view) {
         case 'analytics':
             loadAnalytics();
             break;
+        case 'notifications':
+            loadNotifications();
+            break;
     }
 }
 
@@ -1561,6 +1564,121 @@ function enlargePreview(clientId, clientName) {
     modal.style.display = 'flex';
 }
 
+// ===== Notifications View =====
+
+async function loadNotifications() {
+    await Promise.all([loadNotificationRules(), loadNotificationHistory()]);
+}
+
+async function loadNotificationRules() {
+    const el = document.getElementById('notificationRulesList');
+    try {
+        const rules = await apiCall('/notifications/rules');
+        if (rules.length === 0) {
+            el.innerHTML = '<p class="text-muted">No notification rules configured</p>';
+            return;
+        }
+        el.innerHTML = rules.map(rule => `
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        ${escapeHtml(rule.name)}
+                        <span class="badge badge-${rule.enabled ? 'success' : 'secondary'}">${rule.enabled ? 'Active' : 'Disabled'}</span>
+                    </h3>
+                    <div class="card-actions">
+                        <button class="btn btn-sm btn-danger delete-rule-btn" data-id="${rule.id}">Delete</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="card-meta">
+                        <span>Event: ${rule.event_type}</span>
+                        <span>Channel: ${rule.channel}</span>
+                    </div>
+                    <div class="card-meta">
+                        <span>Destination: ${escapeHtml(rule.destination)}</span>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+        el.querySelectorAll('.delete-rule-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                if (confirm('Delete this notification rule?')) {
+                    try {
+                        await apiCall(`/notifications/rules/${btn.dataset.id}`, { method: 'DELETE' });
+                        showToast('Rule deleted', 'success');
+                        loadNotifications();
+                    } catch (error) {
+                        showToast('Failed to delete rule', 'error');
+                    }
+                }
+            });
+        });
+    } catch (error) {
+        el.innerHTML = '<p class="text-muted">Failed to load rules</p>';
+    }
+}
+
+async function loadNotificationHistory() {
+    const el = document.getElementById('notificationHistoryList');
+    try {
+        const history = await apiCall('/notifications/history?limit=20');
+        if (history.length === 0) {
+            el.innerHTML = '<p class="text-muted">No notifications sent yet</p>';
+            return;
+        }
+        el.innerHTML = `<table class="analytics-table">
+            <thead><tr><th>Event</th><th>Channel</th><th>Destination</th><th>Status</th><th>When</th></tr></thead>
+            <tbody>${history.map(h => `<tr>
+                <td>${h.event_type}</td>
+                <td>${h.channel}</td>
+                <td>${escapeHtml(h.destination).substring(0, 30)}${h.destination.length > 30 ? '...' : ''}</td>
+                <td><span class="badge badge-${h.status === 'sent' ? 'success' : 'danger'}">${h.status}</span></td>
+                <td>${formatRelativeTime(h.sent_at)}</td>
+            </tr>`).join('')}</tbody>
+        </table>`;
+    } catch (error) {
+        el.innerHTML = '<p class="text-muted">Failed to load history</p>';
+    }
+}
+
+function initNotifications() {
+    const modal = document.getElementById('createRuleModal');
+
+    document.getElementById('createRuleBtn').addEventListener('click', () => {
+        document.getElementById('ruleName').value = '';
+        document.getElementById('ruleDestination').value = '';
+        modal.style.display = 'flex';
+    });
+
+    document.getElementById('closeRuleModal').addEventListener('click', () => { modal.style.display = 'none'; });
+    document.getElementById('cancelRuleModal').addEventListener('click', () => { modal.style.display = 'none'; });
+
+    document.getElementById('saveRuleBtn').addEventListener('click', async () => {
+        const name = document.getElementById('ruleName').value.trim();
+        const event_type = document.getElementById('ruleEventType').value;
+        const channel = document.getElementById('ruleChannel').value;
+        const destination = document.getElementById('ruleDestination').value.trim();
+
+        if (!name || !destination) {
+            showToast('Name and destination are required', 'error');
+            return;
+        }
+
+        try {
+            await apiCall('/notifications/rules', {
+                method: 'POST',
+                body: JSON.stringify({ name, event_type, channel, destination })
+            });
+            showToast('Rule created', 'success');
+            modal.style.display = 'none';
+            loadNotifications();
+        } catch (error) {
+            showToast(error.message || 'Failed to create rule', 'error');
+        }
+    });
+}
+
 // ===== Analytics View =====
 
 async function loadAnalytics() {
@@ -1801,6 +1919,9 @@ async function init() {
 
     // Initialize analytics
     initAnalytics();
+
+    // Initialize notifications
+    initNotifications();
 
     // Load initial view
     loadDashboard();

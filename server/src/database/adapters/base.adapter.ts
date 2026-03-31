@@ -34,6 +34,10 @@ import {
   PlaybackSummary,
   MediaPopularity,
   UptimeStat,
+  NotificationRule,
+  CreateNotificationRuleInput,
+  NotificationEventType,
+  NotificationHistory,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -136,4 +140,15 @@ export interface DatabaseAdapter {
   getMediaPopularity(limit?: number): Promise<MediaPopularity[]>;
   getClientUptimeStats(): Promise<UptimeStat[]>;
   deleteOldPlaybackLogs(olderThanDays: number): Promise<number>;
+
+  // Notification operations
+  createNotificationRule(input: CreateNotificationRuleInput): Promise<NotificationRule>;
+  getNotificationRuleById(id: number): Promise<NotificationRule | null>;
+  getAllNotificationRules(): Promise<NotificationRule[]>;
+  getEnabledRulesForEvent(eventType: NotificationEventType): Promise<NotificationRule[]>;
+  deleteNotificationRule(id: number): Promise<void>;
+  createNotificationHistory(
+    entry: Omit<NotificationHistory, 'id' | 'sent_at'>
+  ): Promise<NotificationHistory>;
+  getNotificationHistory(limit?: number): Promise<NotificationHistory[]>;
 }

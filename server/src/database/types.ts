@@ -288,3 +288,41 @@ export interface UptimeStat {
   last_seen: string | null;
   total_logs: number;
 }
+
+// Notification types
+export type NotificationEventType =
+  | 'client_offline'
+  | 'client_error'
+  | 'playlist_empty'
+  | 'storage_full';
+export type NotificationChannel = 'email' | 'webhook';
+
+export interface NotificationRule {
+  id: number;
+  name: string;
+  event_type: NotificationEventType;
+  channel: NotificationChannel;
+  destination: string;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface CreateNotificationRuleInput {
+  name: string;
+  event_type: NotificationEventType;
+  channel: NotificationChannel;
+  destination: string;
+  enabled?: boolean;
+}
+
+export interface NotificationHistory {
+  id: number;
+  rule_id: number;
+  event_type: NotificationEventType;
+  channel: NotificationChannel;
+  destination: string;
+  payload: string;
+  status: 'sent' | 'failed';
+  error_message: string | null;
+  sent_at: string;
+}

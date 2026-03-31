@@ -13,9 +13,11 @@ import clientRoutes from './api/routes/client.routes';
 import groupRoutes from './api/routes/group.routes';
 import scheduleRoutes from './api/routes/schedule.routes';
 import analyticsRoutes from './api/routes/analytics.routes';
+import notificationRoutes from './api/routes/notification.routes';
 import { apiKeyAuth } from './api/middleware/auth';
 import { webSocketServer } from './websocket/server';
 import { scheduleService } from './services/schedule.service';
+import { notificationService } from './services/notification.service';
 
 /**
  * Montr Server Application
@@ -135,6 +137,7 @@ class MontrServer {
     this.app.use('/api/groups', apiKeyAuth(), groupRoutes);
     this.app.use('/api/schedules', apiKeyAuth(), scheduleRoutes);
     this.app.use('/api/analytics', apiKeyAuth(), analyticsRoutes);
+    this.app.use('/api/notifications', apiKeyAuth(), notificationRoutes);
   }
 
   /**
@@ -167,6 +170,9 @@ class MontrServer {
       // Start schedule evaluation
       scheduleService.startEvaluation();
       this.logger.info('Schedule evaluation started');
+
+      // Initialize notification email transport
+      notificationService.initializeEmail();
 
       // Start listening
       await new Promise<void>((resolve, reject) => {

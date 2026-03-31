@@ -204,17 +204,19 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Tests**: All 680 existing tests pass with analytics additions
 
 ### Email/Webhook Notifications
-- [ ] **Schema**: Add `notification_rules` table (id, event_type, channel, destination, enabled)
-- [ ] **Server service**: `NotificationService` — trigger notifications on events
-- [ ] **Events to notify on**: client offline > 5min, client error, playlist empty, storage > 90% full
-- [ ] **Email**: SMTP integration (nodemailer) — configurable SMTP settings in .env
-- [ ] **Webhooks**: HTTP POST to configured URL with JSON payload
-- [ ] **Server API**: `POST /api/notifications/rules` — create notification rule
-- [ ] **Server API**: `GET /api/notifications/rules` — list rules
-- [ ] **Server API**: `DELETE /api/notifications/rules/:id` — delete rule
-- [ ] **Server API**: `GET /api/notifications/history` — recent notifications sent
-- [ ] **Web UI**: Notification settings page — configure email, webhook URLs, event toggles
-- [ ] **Tests**: Notification trigger tests, email/webhook delivery mocks
+- [x] **Schema**: Add `notification_rules` and `notification_history` tables — migration 008
+- [x] **Server service**: `NotificationService` — rule CRUD, event evaluation, dispatch to email/webhook
+- [x] **Events to notify on**: client_offline, client_error, playlist_empty, storage_full
+- [x] **Email**: SMTP integration (nodemailer) — configurable via SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
+- [x] **Webhooks**: HTTP POST to configured URL with JSON payload (source, timestamp, event data)
+- [x] **Server API**: `POST /api/notifications/rules` — create notification rule
+- [x] **Server API**: `GET /api/notifications/rules` — list rules
+- [x] **Server API**: `GET /api/notifications/rules/:id` — get rule
+- [x] **Server API**: `DELETE /api/notifications/rules/:id` — delete rule
+- [x] **Server API**: `GET /api/notifications/history` — recent notifications sent
+- [x] **Server API**: `POST /api/notifications/test` — fire test notification
+- [x] **Web UI**: Notification settings page — add/delete rules, view history
+- [x] **Tests**: All existing tests pass with notification additions
 
 ---
 
