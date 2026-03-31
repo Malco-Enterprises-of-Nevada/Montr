@@ -14,7 +14,12 @@ import {
   updateClientSchema,
   clientStatusSchema,
   listClientsQuerySchema,
+  addClientPlaylistSchema,
+  updateClientPlaylistPrioritySchema,
+  clientPlaylistParamsSchema,
 } from '../middleware/validation';
+import { sendPlaylistToClient } from '../../websocket/handlers';
+import { clientConnectionManager } from '../../websocket/client-manager';
 
 const router = Router();
 
@@ -151,6 +156,100 @@ router.post(
         message: 'Heartbeat recorded',
         timestamp: new Date().toISOString(),
       })
+    );
+  })
+);
+
+/**
+ * GET /api/clients/:id/playlists
+ * Get all playlist assignments for a client
+ */
+router.get(
+  '/:id/playlists',
+  validateParams(uuidParamSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params as { id: string };
+    const assignments = await clientService.getPlaylistAssignments(id);
+    res.json(successResponse(assignments));
+  })
+);
+
+/**
+ * POST /api/clients/:id/playlists
+ * Assign a playlist to a client with priority
+ */
+router.post(
+  '/:id/playlists',
+  validateParams(uuidParamSchema),
+  validateBody(addClientPlaylistSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params as { id: string };
+    const { playlistId, priority } = req.body as { playlistId: number; priority: number };
+
+    const assignment = await clientService.addPlaylistAssignment(id, playlistId, priority);
+
+    // Send the active playlist to the client via WebSocket
+    if (clientConnectionManager.isConnected(id)) {
+      const client = await clientService.getClientById(id);
+      if (client.assigned_playlist_id) {
+        await sendPlaylistToClient(id, client.assigned_playlist_id);
+      }
+    }
+
+    res.status(201).json(successResponse(assignment));
+  })
+);
+
+/**
+ * PUT /api/clients/:id/playlists/:playlistId
+ * Update playlist assignment priority
+ */
+router.put(
+  '/:id/playlists/:playlistId',
+  validateParams(clientPlaylistParamsSchema),
+  validateBody(updateClientPlaylistPrioritySchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const params = req.params as unknown as { id: string; playlistId: number };
+    const { id, playlistId } = params;
+    const { priority } = req.body as { priority: number };
+
+    const updated = await clientService.updatePlaylistPriority(id, playlistId, priority);
+
+    // Send updated active playlist via WebSocket
+    if (clientConnectionManager.isConnected(id)) {
+      const client = await clientService.getClientById(id);
+      if (client.assigned_playlist_id) {
+        await sendPlaylistToClient(id, client.assigned_playlist_id);
+      }
+    }
+
+    res.json(successResponse(updated));
+  })
+);
+
+/**
+ * DELETE /api/clients/:id/playlists/:playlistId
+ * Remove a playlist assignment from a client
+ */
+router.delete(
+  '/:id/playlists/:playlistId',
+  validateParams(clientPlaylistParamsSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const params = req.params as unknown as { id: string; playlistId: number };
+    const { id, playlistId } = params;
+
+    await clientService.removePlaylistAssignment(id, playlistId);
+
+    // Send updated active playlist via WebSocket
+    if (clientConnectionManager.isConnected(id)) {
+      const client = await clientService.getClientById(id);
+      if (client.assigned_playlist_id) {
+        await sendPlaylistToClient(id, client.assigned_playlist_id);
+      }
+    }
+
+    res.json(
+      successResponse({ message: 'Playlist removed from client', clientId: id, playlistId })
     );
   })
 );

@@ -43,7 +43,7 @@ describe('MigrationRunner', () => {
 
   it('should create all expected tables', async () => {
     const executor = adapter.getMigrationExecutor();
-    for (const table of ['media_files', 'playlists', 'playlist_items', 'clients', 'client_status', 'system_state', 'client_groups', 'client_group_members', 'schedules']) {
+    for (const table of ['media_files', 'playlists', 'playlist_items', 'clients', 'client_status', 'system_state', 'client_groups', 'client_group_members', 'schedules', 'client_playlists']) {
       const exists = await executor.tableExists(table);
       expect(exists).toBe(true);
     }
@@ -55,7 +55,7 @@ describe('MigrationRunner', () => {
       "SELECT value FROM system_state WHERE key = 'schema_version'",
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0].value).toBe('1.3.0');
+    expect(rows[0].value).toBe('1.4.0');
   });
 
   it('should not re-run already applied migrations', async () => {
@@ -67,8 +67,8 @@ describe('MigrationRunner', () => {
     const rows = await executor.querySql!<{ version: string }>(
       'SELECT version FROM schema_migrations',
     );
-    // Should still have exactly four migrations (001-004)
-    expect(rows).toHaveLength(4);
+    // Should still have exactly five migrations (001-005)
+    expect(rows).toHaveLength(5);
   });
 
   it('should report migration status', async () => {
@@ -96,11 +96,12 @@ describe('MigrationRunner', () => {
     const rows = await executor.querySql!<{ version: string }>(
       'SELECT version FROM schema_migrations',
     );
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(5);
     expect(rows[0].version).toBe('1.0.0');
     expect(rows[1].version).toBe('1.1.0');
     expect(rows[2].version).toBe('1.2.0');
     expect(rows[3].version).toBe('1.3.0');
+    expect(rows[4].version).toBe('1.4.0');
 
     await baselineAdapter.disconnect();
     fs.rmSync(baselineDir, { recursive: true, force: true });
