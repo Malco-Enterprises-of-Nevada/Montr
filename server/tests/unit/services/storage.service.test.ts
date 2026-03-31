@@ -37,7 +37,7 @@ describe('StorageService', () => {
       // Create new instance to trigger initialization
       new StorageService();
 
-      expect(mockFsSync.mkdirSync).toHaveBeenCalledTimes(4);
+      expect(mockFsSync.mkdirSync).toHaveBeenCalledTimes(5);
       expect(mockFsSync.mkdirSync).toHaveBeenCalledWith(
         expect.stringContaining('media'),
         expect.objectContaining({ recursive: true })

@@ -924,6 +924,7 @@ async function loadClients() {
         state.clients = clients || [];
         renderClientsGrid(clients || []);
         updateClientStats(clients || []);
+        loadPreviews(clients || []);
     } catch (error) {
         console.error('Failed to load clients:', error);
         showToast('Failed to load clients', 'error');
@@ -1530,6 +1531,31 @@ async function openEditSchedule(id) {
     } catch (error) {
         showToast('Failed to load schedule', 'error');
     }
+}
+
+// ===== Live Previews =====
+
+async function loadPreviews(clients) {
+    const grid = document.getElementById('previewsGrid');
+    if (!clients || clients.length === 0) {
+        grid.innerHTML = '<p class="text-muted">No clients to preview</p>';
+        return;
+    }
+
+    grid.innerHTML = clients.map(client => `
+        <div class="preview-card" onclick="enlargePreview('${client.id}', '${escapeHtml(client.name || client.id)}')">
+            <img src="/api/clients/${client.id}/preview?t=${Date.now()}" alt="${escapeHtml(client.name || client.id)}"
+                 onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 200 140%22><rect fill=%22%23222%22 width=%22200%22 height=%22140%22/><text fill=%22%23666%22 x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22 font-size=%2214%22>No Preview</text></svg>'">
+            <div class="preview-label">${escapeHtml(client.name || client.id.substring(0, 8))}</div>
+        </div>
+    `).join('');
+}
+
+function enlargePreview(clientId, clientName) {
+    const modal = document.getElementById('previewEnlargeModal');
+    document.getElementById('previewEnlargeTitle').textContent = clientName;
+    document.getElementById('previewEnlargeImg').src = `/api/clients/${clientId}/preview?t=${Date.now()}`;
+    modal.style.display = 'flex';
 }
 
 // ===== Client Control Modal =====
