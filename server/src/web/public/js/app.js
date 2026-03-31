@@ -142,7 +142,7 @@ const mediaAPI = {
             });
 
             xhr.addEventListener('load', () => {
-                if (xhr.status === 200) {
+                if (xhr.status >= 200 && xhr.status < 300) {
                     const response = JSON.parse(xhr.responseText);
                     resolve(response.data);
                 } else {
