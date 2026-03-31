@@ -14,6 +14,7 @@ import groupRoutes from './api/routes/group.routes';
 import scheduleRoutes from './api/routes/schedule.routes';
 import analyticsRoutes from './api/routes/analytics.routes';
 import notificationRoutes from './api/routes/notification.routes';
+import authRoutes from './api/routes/auth.routes';
 import { apiKeyAuth } from './api/middleware/auth';
 import { webSocketServer } from './websocket/server';
 import { scheduleService } from './services/schedule.service';
@@ -138,6 +139,10 @@ class MontrServer {
     this.app.use('/api/schedules', apiKeyAuth(), scheduleRoutes);
     this.app.use('/api/analytics', apiKeyAuth(), analyticsRoutes);
     this.app.use('/api/notifications', apiKeyAuth(), notificationRoutes);
+
+    // Auth routes (no API key required)
+    this.app.use('/api/auth', authRoutes);
+    this.app.use('/api/users', authRoutes);
   }
 
   /**

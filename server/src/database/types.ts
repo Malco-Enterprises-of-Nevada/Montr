@@ -291,6 +291,33 @@ export interface UptimeStat {
 }
 
 // Notification types
+// User types
+export type UserRole = 'admin' | 'editor' | 'viewer';
+
+export interface User {
+  id: number;
+  username: string;
+  email: string;
+  password_hash: string;
+  role: UserRole;
+  created_at: string;
+}
+
+export interface CreateUserInput {
+  username: string;
+  email: string;
+  password_hash: string;
+  role?: UserRole;
+}
+
+export interface UserPublic {
+  id: number;
+  username: string;
+  email: string;
+  role: UserRole;
+  created_at: string;
+}
+
 // Content approval types
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
