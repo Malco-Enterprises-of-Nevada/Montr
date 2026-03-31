@@ -28,6 +28,7 @@
                 <li><a href="#groups" class="nav-link" data-page="groups">Groups</a></li>
                 <li><a href="#schedules" class="nav-link" data-page="schedules">Schedules</a></li>
                 <li><a href="#analytics" class="nav-link" data-page="analytics">Analytics</a></li>
+                <li><a href="#notifications" class="nav-link" data-page="notifications">Notifications</a></li>
             </ul>
         </div>
     </nav>
@@ -340,7 +341,68 @@
                 </div>
             </div>
         </section>
+
+        <!-- Notifications View -->
+        <section id="notifications-view" class="view">
+            <div class="page-header">
+                <h2>Notifications</h2>
+                <button class="btn btn-primary" id="createRuleBtn">Add Rule</button>
+            </div>
+
+            <div id="notificationRulesList" class="grid">
+                <div class="loading">Loading rules...</div>
+            </div>
+
+            <h3 style="margin-top:2rem">Recent History</h3>
+            <div id="notificationHistoryList" class="analytics-table-container">
+                <div class="loading">Loading history...</div>
+            </div>
+        </section>
     </main>
+
+    <!-- Create Notification Rule Modal -->
+    <div id="createRuleModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add Notification Rule</h3>
+                <button class="modal-close" id="closeRuleModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="ruleForm">
+                    <div class="form-group">
+                        <label for="ruleName">Name</label>
+                        <input type="text" id="ruleName" placeholder="e.g., Alert on client offline" required maxlength="255">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="ruleEventType">Event</label>
+                            <select id="ruleEventType" class="form-select" required>
+                                <option value="client_offline">Client Offline</option>
+                                <option value="client_error">Client Error</option>
+                                <option value="playlist_empty">Playlist Empty</option>
+                                <option value="storage_full">Storage Full</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="ruleChannel">Channel</label>
+                            <select id="ruleChannel" class="form-select" required>
+                                <option value="webhook">Webhook</option>
+                                <option value="email">Email</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="ruleDestination">Destination (URL or email address)</label>
+                        <input type="text" id="ruleDestination" placeholder="https://hooks.example.com/montr or admin@example.com" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelRuleModal">Cancel</button>
+                <button class="btn btn-primary" id="saveRuleBtn">Add Rule</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Create Group Modal -->
     <div id="createGroupModal" class="modal">

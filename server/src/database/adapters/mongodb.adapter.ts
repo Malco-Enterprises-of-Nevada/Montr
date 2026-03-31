@@ -36,6 +36,10 @@ import {
   PlaybackSummary,
   MediaPopularity,
   UptimeStat,
+  NotificationRule,
+  CreateNotificationRuleInput,
+  NotificationEventType,
+  NotificationHistory,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -856,6 +860,67 @@ export class MongoDBAdapter implements DatabaseAdapter {
       started_at: { $lt: cutoff.toISOString() },
     });
     return result.deletedCount;
+  }
+
+  // ── Notification operations ─────────────────────────────────────────────
+
+  async createNotificationRule(input: CreateNotificationRuleInput): Promise<NotificationRule> {
+    const id = await this.nextId('notification_rules');
+    const doc = {
+      id,
+      name: input.name,
+      event_type: input.event_type,
+      channel: input.channel,
+      destination: input.destination,
+      enabled: input.enabled !== false,
+      created_at: new Date().toISOString(),
+    };
+    await this.col('notification_rules').insertOne(doc);
+    return doc as NotificationRule;
+  }
+
+  async getNotificationRuleById(id: number): Promise<NotificationRule | null> {
+    const doc = await this.col('notification_rules').findOne({ id });
+    return this.docToObj<NotificationRule>(doc);
+  }
+
+  async getAllNotificationRules(): Promise<NotificationRule[]> {
+    const docs = await this.col('notification_rules').find().sort({ created_at: -1 }).toArray();
+    return docs.map((d) => this.docToObj<NotificationRule>(d)!);
+  }
+
+  async getEnabledRulesForEvent(eventType: NotificationEventType): Promise<NotificationRule[]> {
+    const docs = await this.col('notification_rules')
+      .find({ event_type: eventType, enabled: true })
+      .toArray();
+    return docs.map((d) => this.docToObj<NotificationRule>(d)!);
+  }
+
+  async deleteNotificationRule(id: number): Promise<void> {
+    await this.col('notification_history').deleteMany({ rule_id: id });
+    await this.col('notification_rules').deleteOne({ id });
+  }
+
+  async createNotificationHistory(
+    entry: Omit<NotificationHistory, 'id' | 'sent_at'>
+  ): Promise<NotificationHistory> {
+    const id = await this.nextId('notification_history');
+    const doc = {
+      id,
+      ...entry,
+      sent_at: new Date().toISOString(),
+    };
+    await this.col('notification_history').insertOne(doc);
+    return doc as NotificationHistory;
+  }
+
+  async getNotificationHistory(limit: number = 50): Promise<NotificationHistory[]> {
+    const docs = await this.col('notification_history')
+      .find()
+      .sort({ sent_at: -1 })
+      .limit(limit)
+      .toArray();
+    return docs.map((d) => this.docToObj<NotificationHistory>(d)!);
   }
 
   getMigrationExecutor(): MigrationExecutor {
