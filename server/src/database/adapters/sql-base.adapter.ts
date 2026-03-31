@@ -42,6 +42,8 @@ import {
   NotificationHistory,
   ApprovalStatus,
   ApprovalLog,
+  User,
+  CreateUserInput,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -1125,5 +1127,48 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     return this.rawQuery<MediaFile>(
       `SELECT * FROM media_files WHERE approval_status = 'pending' ORDER BY created_at DESC`
     );
+  }
+
+  // ── User operations ─────────────────────────────────────────────────────
+
+  async createUser(input: CreateUserInput): Promise<User> {
+    const p = this.placeholder;
+    const result = await this.rawExecute(
+      `INSERT INTO users (username, email, password_hash, role)
+       VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)})`,
+      [input.username, input.email, input.password_hash, input.role || 'viewer']
+    );
+    const user = await this.getUserById(result.lastInsertId);
+    if (!user) throw new Error('Failed to retrieve created user');
+    return user;
+  }
+
+  async getUserById(id: number): Promise<User | null> {
+    return this.rawQueryOne<User>(`SELECT * FROM users WHERE id = ${this.placeholder(1)}`, [id]);
+  }
+
+  async getUserByUsername(username: string): Promise<User | null> {
+    return this.rawQueryOne<User>(`SELECT * FROM users WHERE username = ${this.placeholder(1)}`, [
+      username,
+    ]);
+  }
+
+  async getUserByEmail(email: string): Promise<User | null> {
+    return this.rawQueryOne<User>(`SELECT * FROM users WHERE email = ${this.placeholder(1)}`, [
+      email,
+    ]);
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    return this.rawQuery<User>('SELECT * FROM users ORDER BY created_at DESC');
+  }
+
+  async deleteUser(id: number): Promise<void> {
+    await this.rawExecute(`DELETE FROM users WHERE id = ${this.placeholder(1)}`, [id]);
+  }
+
+  async getUserCount(): Promise<number> {
+    const row = await this.rawQueryOne<{ count: number }>('SELECT COUNT(*) as count FROM users');
+    return row?.count || 0;
   }
 }

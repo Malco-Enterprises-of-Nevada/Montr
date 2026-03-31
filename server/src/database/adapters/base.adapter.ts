@@ -40,6 +40,8 @@ import {
   NotificationHistory,
   ApprovalStatus,
   ApprovalLog,
+  User,
+  CreateUserInput,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -163,4 +165,13 @@ export interface DatabaseAdapter {
   ): Promise<ApprovalLog>;
   getApprovalLogs(mediaId: number): Promise<ApprovalLog[]>;
   getPendingMedia(): Promise<MediaFile[]>;
+
+  // User operations
+  createUser(input: CreateUserInput): Promise<User>;
+  getUserById(id: number): Promise<User | null>;
+  getUserByUsername(username: string): Promise<User | null>;
+  getUserByEmail(email: string): Promise<User | null>;
+  getAllUsers(): Promise<User[]>;
+  deleteUser(id: number): Promise<void>;
+  getUserCount(): Promise<number>;
 }

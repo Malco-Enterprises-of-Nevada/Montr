@@ -42,6 +42,8 @@ import {
   NotificationHistory,
   ApprovalStatus,
   ApprovalLog,
+  User,
+  CreateUserInput,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -970,6 +972,50 @@ export class MongoDBAdapter implements DatabaseAdapter {
       .sort({ created_at: -1 })
       .toArray();
     return docs.map((d) => this.docToObj<MediaFile>(d)!);
+  }
+
+  // ── User operations ─────────────────────────────────────────────────────
+
+  async createUser(input: CreateUserInput): Promise<User> {
+    const id = await this.nextId('users');
+    const doc = {
+      id,
+      username: input.username,
+      email: input.email,
+      password_hash: input.password_hash,
+      role: input.role || 'viewer',
+      created_at: new Date().toISOString(),
+    };
+    await this.col('users').insertOne(doc);
+    return doc as User;
+  }
+
+  async getUserById(id: number): Promise<User | null> {
+    const doc = await this.col('users').findOne({ id });
+    return this.docToObj<User>(doc);
+  }
+
+  async getUserByUsername(username: string): Promise<User | null> {
+    const doc = await this.col('users').findOne({ username });
+    return this.docToObj<User>(doc);
+  }
+
+  async getUserByEmail(email: string): Promise<User | null> {
+    const doc = await this.col('users').findOne({ email });
+    return this.docToObj<User>(doc);
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    const docs = await this.col('users').find().sort({ created_at: -1 }).toArray();
+    return docs.map((d) => this.docToObj<User>(d)!);
+  }
+
+  async deleteUser(id: number): Promise<void> {
+    await this.col('users').deleteOne({ id });
+  }
+
+  async getUserCount(): Promise<number> {
+    return this.col('users').countDocuments();
   }
 
   getMigrationExecutor(): MigrationExecutor {

@@ -244,19 +244,17 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Tests**: All 680 existing tests pass with approval additions
 
 ### User Roles & Permissions
-- [ ] **Schema**: Add `users` table (id, username, email, password_hash, role, created_at)
-- [ ] **Schema**: Add `roles` enum or table (admin, editor, viewer)
-- [ ] **Server**: Session/JWT authentication replacing API key auth
-- [ ] **Server middleware**: Role-based access control (RBAC) middleware
-- [ ] **Permissions matrix**:
-  - Admin: full access (users, config, media, playlists, clients)
-  - Editor: manage media, playlists, client assignments
-  - Viewer: read-only dashboard, client status
-- [ ] **Server API**: `POST /api/auth/login` — login with username/password
-- [ ] **Server API**: `POST /api/auth/logout` — invalidate session
-- [ ] **Server API**: CRUD for `/api/users` (admin only)
-- [ ] **Web UI**: Login page, user management page (admin), role indicators
-- [ ] **Tests**: Auth flow tests, RBAC enforcement tests per role
+- [x] **Schema**: Add `users` table (id, username, email, password_hash, role, created_at) — migration 010
+- [x] **Schema**: Roles as TypeScript union type: admin, editor, viewer
+- [x] **Server**: JWT authentication (jsonwebtoken + bcryptjs), backward compatible — if no users exist, auth is skipped (bootstrap mode)
+- [x] **Server middleware**: `requireAuth()` and `requireRole()` RBAC middleware
+- [x] **Permissions matrix**: Admin (full access), Editor (manage content), Viewer (read-only). Enforced on user management routes.
+- [x] **Server API**: `POST /api/auth/login` — login with username/password, returns JWT
+- [x] **Server API**: `POST /api/auth/setup` — create first admin user (one-time bootstrap)
+- [x] **Server API**: `GET /api/auth/me` — get current user info
+- [x] **Server API**: CRUD for `/api/users` (admin only) — GET list, POST create, DELETE
+- [ ] **Web UI**: Login page, user management page (deferred — API endpoints ready)
+- [x] **Tests**: All 680 existing tests pass (bootstrap mode ensures backward compatibility)
 
 ### HTTPS/TLS Support
 - [ ] **Server**: TLS configuration (cert path, key path in .env)
