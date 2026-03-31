@@ -17,8 +17,13 @@ import {
   addClientPlaylistSchema,
   updateClientPlaylistPrioritySchema,
   clientPlaylistParamsSchema,
+  interruptClientSchema,
 } from '../middleware/validation';
-import { sendPlaylistToClient } from '../../websocket/handlers';
+import {
+  sendPlaylistToClient,
+  sendPlaylistInterrupt,
+  sendPlaylistResume,
+} from '../../websocket/handlers';
 import { clientConnectionManager } from '../../websocket/client-manager';
 
 const router = Router();
@@ -250,6 +255,63 @@ router.delete(
 
     res.json(
       successResponse({ message: 'Playlist removed from client', clientId: id, playlistId })
+    );
+  })
+);
+
+/**
+ * POST /api/clients/:id/interrupt
+ * Interrupt a client with a high-priority playlist
+ */
+router.post(
+  '/:id/interrupt',
+  validateParams(uuidParamSchema),
+  validateBody(interruptClientSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params as { id: string };
+    const { playlistId } = req.body as { playlistId: number };
+
+    const client = await clientService.interruptWithPlaylist(id, playlistId);
+
+    // Send interrupt message via WebSocket
+    if (clientConnectionManager.isConnected(id)) {
+      await sendPlaylistInterrupt(id, playlistId, client.interrupted_from_playlist_id);
+    }
+
+    res.json(
+      successResponse({
+        message: `Client interrupted with playlist ${playlistId}`,
+        client,
+      })
+    );
+  })
+);
+
+/**
+ * POST /api/clients/:id/resume
+ * Resume previous playlist after interruption
+ */
+router.post(
+  '/:id/resume',
+  validateParams(uuidParamSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params as { id: string };
+
+    const previousClient = await clientService.getClientById(id);
+    const resumePlaylistId = previousClient.interrupted_from_playlist_id;
+
+    const client = await clientService.resumeFromInterrupt(id);
+
+    // Send resume message via WebSocket
+    if (clientConnectionManager.isConnected(id)) {
+      await sendPlaylistResume(id, resumePlaylistId);
+    }
+
+    res.json(
+      successResponse({
+        message: `Client resumed to playlist ${resumePlaylistId}`,
+        client,
+      })
     );
   })
 );

@@ -443,6 +443,15 @@ export const clientPlaylistParamsSchema = z.object({
   playlistId: z.string().regex(/^\d+$/).transform(Number),
 });
 
+// Interrupt validation schema
+
+/**
+ * Request body for interrupting a client with a playlist
+ */
+export const interruptClientSchema = z.object({
+  playlistId: z.number().int().positive('Playlist ID must be a positive integer'),
+});
+
 // Type exports for better TypeScript inference
 
 export type CreatePlaylistInput = z.infer<typeof createPlaylistSchema>;

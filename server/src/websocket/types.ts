@@ -139,11 +139,36 @@ export interface SuccessResponseMessage {
 }
 
 /**
+ * Playlist interrupt message — high-priority playlist overrides current
+ */
+export interface PlaylistInterruptMessage {
+  type: 'playlist_interrupt';
+  playlistId: number;
+  playlistName: string;
+  loopPlaylist: boolean;
+  items: PlaylistMediaItem[];
+  previousPlaylistId: number | null;
+}
+
+/**
+ * Playlist resume message — revert to previous playlist after interruption
+ */
+export interface PlaylistResumeMessage {
+  type: 'playlist_resume';
+  playlistId: number | null;
+  playlistName: string | null;
+  loopPlaylist: boolean;
+  items: PlaylistMediaItem[];
+}
+
+/**
  * Union type of all server-to-client messages
  */
 export type ServerMessage =
   | PlaylistAssignedMessage
   | PlaylistUpdatedMessage
+  | PlaylistInterruptMessage
+  | PlaylistResumeMessage
   | CommandMessage
   | ErrorResponseMessage
   | SuccessResponseMessage;

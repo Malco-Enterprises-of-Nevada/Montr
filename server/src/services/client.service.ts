@@ -274,6 +274,63 @@ export class ClientService {
     return activePlaylistId;
   }
 
+  // ── Interruption operations ────────────────────────────────────────────
+
+  /**
+   * Interrupts a client with a high-priority playlist.
+   * Saves the current playlist so it can be resumed later.
+   */
+  async interruptWithPlaylist(clientId: string, playlistId: number): Promise<Client> {
+    const client = await this.getClientById(clientId);
+
+    const db = await getDatabase();
+    const playlist = await db.getPlaylistById(playlistId);
+    if (!playlist) {
+      throw new AppError(
+        ErrorCode.PLAYLIST_NOT_FOUND,
+        `Playlist with ID ${playlistId} not found`,
+        404
+      );
+    }
+
+    // Save current playlist for later resume (only if not already interrupted)
+    const previousPlaylistId = client.interrupted_from_playlist_id ?? client.assigned_playlist_id;
+
+    const updated = await db.updateClient(clientId, {
+      assigned_playlist_id: playlistId,
+      interrupted_from_playlist_id: previousPlaylistId,
+    });
+
+    logger.info(
+      `Client ${clientId} interrupted: playlist ${playlistId} (previous: ${previousPlaylistId})`
+    );
+    return updated;
+  }
+
+  /**
+   * Resumes the previous playlist after an interruption.
+   */
+  async resumeFromInterrupt(clientId: string): Promise<Client> {
+    const client = await this.getClientById(clientId);
+
+    if (client.interrupted_from_playlist_id === null) {
+      throw new AppError(
+        ErrorCode.BAD_REQUEST,
+        `Client ${clientId} is not currently interrupted`,
+        400
+      );
+    }
+
+    const db = await getDatabase();
+    const updated = await db.updateClient(clientId, {
+      assigned_playlist_id: client.interrupted_from_playlist_id,
+      interrupted_from_playlist_id: null,
+    });
+
+    logger.info(`Client ${clientId} resumed: playlist ${client.interrupted_from_playlist_id}`);
+    return updated;
+  }
+
   /**
    * Marks offline clients based on last_seen timestamp
    * @param timeoutMs - Timeout in milliseconds (default: 2 minutes)

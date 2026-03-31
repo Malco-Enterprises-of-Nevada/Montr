@@ -50,6 +50,7 @@ export interface Client {
   id: string;
   name: string;
   assigned_playlist_id: number | null;
+  interrupted_from_playlist_id: number | null;
   status: 'online' | 'offline' | 'error';
   last_seen: string | null;
   version: string | null;
@@ -119,6 +120,7 @@ export interface CreateClientInput {
 export interface UpdateClientInput {
   name?: string;
   assigned_playlist_id?: number | null;
+  interrupted_from_playlist_id?: number | null;
   status?: 'online' | 'offline' | 'error';
   last_seen?: string;
   version?: string;
