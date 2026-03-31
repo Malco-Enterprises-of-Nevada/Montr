@@ -473,7 +473,7 @@ function renderMediaGrid(media) {
 
     if (!media || media.length === 0) {
         gridEl.innerHTML = '';
-        emptyEl.style.display = 'block';
+        emptyEl.style.display = '';
         return;
     }
 
@@ -669,7 +669,7 @@ function renderPlaylistsList(playlists) {
 
     if (!playlists || playlists.length === 0) {
         listEl.innerHTML = '';
-        emptyEl.style.display = 'block';
+        emptyEl.style.display = '';
         return;
     }
 
@@ -977,7 +977,7 @@ function renderClientsGrid(clients) {
 
     if (!clients || clients.length === 0) {
         gridEl.innerHTML = '';
-        emptyEl.style.display = 'block';
+        emptyEl.style.display = '';
         return;
     }
 
@@ -1121,7 +1121,7 @@ async function loadGroups() {
 
         if (groups.length === 0) {
             gridEl.innerHTML = '';
-            emptyEl.style.display = 'flex';
+            emptyEl.style.display = '';
             return;
         }
 
@@ -1352,7 +1352,7 @@ async function loadSchedules() {
 
         if (schedules.length === 0) {
             gridEl.innerHTML = '';
-            emptyEl.style.display = 'flex';
+            emptyEl.style.display = '';
             return;
         }
 
