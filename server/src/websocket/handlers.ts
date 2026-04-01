@@ -17,8 +17,16 @@ import {
 } from './types';
 import { AppError, ErrorCode } from '../api/middleware/error-handler';
 import { config } from '../config/config';
+import { storageService } from '../services/storage.service';
 
 const logger = getLogger();
+
+function getMediaDownloadUrl(mediaId: number, filepath: string): string {
+  if (config.storage.backend === 'spaces') {
+    return storageService.getDownloadUrl(filepath);
+  }
+  return `${config.server.publicUrl || `http://localhost:${config.server.port}`}/api/media/${mediaId}/download`;
+}
 
 /**
  * Handles client registration
@@ -209,7 +217,7 @@ export async function sendPlaylistToClient(clientId: string, playlistId: number)
       id: item.id,
       mediaId: item.media_id,
       filename: item.media.filename,
-      downloadUrl: `${config.server.publicUrl || `http://localhost:${config.server.port}`}/api/media/${item.media_id}/download`,
+      downloadUrl: getMediaDownloadUrl(item.media_id, item.media.filepath),
       type: item.media.type,
       duration: item.media.type === 'image' ? item.image_duration : item.media.duration || 0,
       checksum: item.media.checksum,
@@ -250,7 +258,7 @@ export async function broadcastPlaylistUpdate(playlistId: number): Promise<void>
       id: item.id,
       mediaId: item.media_id,
       filename: item.media.filename,
-      downloadUrl: `${config.server.publicUrl || `http://localhost:${config.server.port}`}/api/media/${item.media_id}/download`,
+      downloadUrl: getMediaDownloadUrl(item.media_id, item.media.filepath),
       type: item.media.type,
       duration: item.media.type === 'image' ? item.image_duration : item.media.duration || 0,
       checksum: item.media.checksum,
@@ -364,7 +372,7 @@ export async function sendPlaylistInterrupt(
       id: item.id,
       mediaId: item.media_id,
       filename: item.media.filename,
-      downloadUrl: `${config.server.publicUrl || `http://localhost:${config.server.port}`}/api/media/${item.media_id}/download`,
+      downloadUrl: getMediaDownloadUrl(item.media_id, item.media.filepath),
       type: item.media.type,
       duration: item.media.type === 'image' ? item.image_duration : item.media.duration || 0,
       checksum: item.media.checksum,
@@ -409,7 +417,7 @@ export async function sendPlaylistResume(
         id: item.id,
         mediaId: item.media_id,
         filename: item.media.filename,
-        downloadUrl: `${config.server.publicUrl || `http://localhost:${config.server.port}`}/api/media/${item.media_id}/download`,
+        downloadUrl: getMediaDownloadUrl(item.media_id, item.media.filepath),
         type: item.media.type,
         duration: item.media.type === 'image' ? item.image_duration : item.media.duration || 0,
         checksum: item.media.checksum,

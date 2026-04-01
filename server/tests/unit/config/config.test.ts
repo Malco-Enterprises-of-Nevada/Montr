@@ -403,13 +403,13 @@ describe('Config', () => {
       expect(cfg.logging.level).toBe('info');
     });
 
-    it('should default storage maxUploadSizeMB to 500', () => {
+    it('should default storage maxUploadSizeMB to 2048', () => {
       process.env.DB_TYPE = 'sqlite';
       process.env.DB_PATH = ':memory:';
 
       const cfg = loadConfigIsolated();
 
-      expect(cfg.storage.maxUploadSizeMB).toBe(500);
+      expect(cfg.storage.maxUploadSizeMB).toBe(2048);
     });
   });
 });

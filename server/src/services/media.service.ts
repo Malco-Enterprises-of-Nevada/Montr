@@ -218,6 +218,65 @@ export class MediaService {
   }
 
   /**
+   * Creates a media entry from pre-stored file info (used by chunked uploads)
+   */
+  async createMediaFromStorageInfo(
+    storageInfo: StorageFileInfo,
+    originalFilename: string,
+    mimeType: string
+  ): Promise<MediaFile> {
+    const mediaType = this.getMediaType(mimeType);
+
+    // Get a local path for metadata extraction
+    const localPath = await storageService.downloadToTemp(storageInfo.filepath);
+
+    let metadata: MediaMetadata = {};
+    try {
+      if (mediaType === 'video') {
+        metadata = await this.extractVideoMetadata(localPath);
+      } else if (mediaType === 'image') {
+        metadata = await this.extractImageMetadata(localPath);
+      }
+    } catch (error) {
+      logger.warn(`Failed to extract metadata for ${originalFilename}:`, error);
+    }
+
+    // Check for duplicate by checksum
+    const db = await getDatabase();
+    const existingMedia = await db.getMediaByChecksum(storageInfo.checksum);
+    if (existingMedia) {
+      await storageService.deleteFile(storageInfo.filepath);
+      throw new AppError(
+        ErrorCode.RESOURCE_ALREADY_EXISTS,
+        'A media file with the same content already exists',
+        409,
+        true,
+        { existingMediaId: existingMedia.id }
+      );
+    }
+
+    const input: CreateMediaInput = {
+      filename: storageInfo.filename,
+      original_filename: originalFilename,
+      filepath: storageInfo.filepath,
+      type: mediaType,
+      mime_type: mimeType,
+      file_size: storageInfo.size,
+      duration: metadata.duration,
+      width: metadata.width,
+      height: metadata.height,
+      checksum: storageInfo.checksum,
+    };
+
+    const media = await db.createMedia(input);
+
+    this.generateThumbnailAsync(media.id, localPath, storageInfo.filename, mediaType);
+
+    logger.info(`Media created from chunked upload: ${media.id} - ${media.filename}`);
+    return media;
+  }
+
+  /**
    * Generates thumbnail asynchronously and persists status to the database.
    */
   private generateThumbnailAsync(

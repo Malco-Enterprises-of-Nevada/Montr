@@ -130,6 +130,62 @@ const mediaAPI = {
     },
 
     async upload(file, onProgress) {
+        const CHUNK_SIZE = 50 * 1024 * 1024; // 50MB
+
+        // Small files: use simple upload
+        if (file.size <= CHUNK_SIZE) {
+            return this._simpleUpload(file, onProgress);
+        }
+
+        // Large files: chunked upload
+        const { uploadId, chunkSize, totalChunks } = await apiCall('/media/upload/init', {
+            method: 'POST',
+            body: JSON.stringify({
+                filename: file.name,
+                mimeType: file.type || 'application/octet-stream',
+                totalSize: file.size,
+            }),
+        });
+
+        let totalUploaded = 0;
+
+        for (let i = 0; i < totalChunks; i++) {
+            const start = i * chunkSize;
+            const end = Math.min(start + chunkSize, file.size);
+            const chunk = file.slice(start, end);
+
+            await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable && onProgress) {
+                        onProgress(((totalUploaded + e.loaded) / file.size) * 100);
+                    }
+                });
+
+                xhr.addEventListener('load', () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        totalUploaded += (end - start);
+                        resolve();
+                    } else {
+                        reject(new Error(`Chunk ${i + 1}/${totalChunks} upload failed`));
+                    }
+                });
+
+                xhr.addEventListener('error', () => {
+                    reject(new Error(`Chunk ${i + 1}/${totalChunks} upload failed`));
+                });
+
+                xhr.open('POST', `${API_BASE}/media/upload/${uploadId}/chunk/${i}`);
+                xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+                xhr.send(chunk);
+            });
+        }
+
+        return await apiCall(`/media/upload/${uploadId}/complete`, { method: 'POST' });
+    },
+
+    _simpleUpload(file, onProgress) {
         const formData = new FormData();
         formData.append('files', file);
 

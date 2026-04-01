@@ -112,12 +112,14 @@ describe('Media Routes Integration Tests', () => {
       expect(data.count).toBe(1);
     });
 
-    it('should reject files exceeding upload limit', async () => {
+    it('should reject unsupported file types', async () => {
       const response = await request(app)
         .post('/api/media/upload')
-        .attach('files', Buffer.alloc(600 * 1024 * 1024), 'huge_file.mp4'); // 600MB
+        .attach('files', Buffer.from('not-a-real-file'), {
+          filename: 'test.exe',
+          contentType: 'application/x-msdownload',
+        });
 
-      // This should be rejected by multer before reaching the route handler
       expect(response.status).toBeGreaterThanOrEqual(400);
     });
   });

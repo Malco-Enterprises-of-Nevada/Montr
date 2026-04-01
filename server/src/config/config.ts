@@ -54,8 +54,18 @@ export interface Config {
 
   // Storage configuration
   storage: {
+    backend: 'local' | 'spaces';
     path: string;
     maxUploadSizeMB: number;
+    chunkSizeMB: number;
+    spaces?: {
+      endpoint: string;
+      region: string;
+      bucket: string;
+      accessKeyId: string;
+      secretAccessKey: string;
+      cdnEndpoint?: string;
+    };
   };
 
   // Security configuration
@@ -152,15 +162,19 @@ function loadConfig(): Config {
     },
 
     storage: {
+      backend: (process.env.STORAGE_BACKEND as 'local' | 'spaces') || 'local',
       path: process.env.STORAGE_PATH || './storage',
-      maxUploadSizeMB: parseInt(process.env.MAX_UPLOAD_SIZE_MB || '500', 10),
+      maxUploadSizeMB: parseInt(process.env.MAX_UPLOAD_SIZE_MB || '2048', 10),
+      chunkSizeMB: parseInt(process.env.CHUNK_SIZE_MB || '50', 10),
     },
 
     security: {
       apiKeyRequired: process.env.API_KEY_REQUIRED === 'true',
       apiKey: process.env.API_KEY,
       allowedOrigins: process.env.ALLOWED_ORIGINS
-        ? process.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)
+        ? process.env.ALLOWED_ORIGINS.split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
         : ['http://localhost:3000'],
     },
 
@@ -175,6 +189,30 @@ function loadConfig(): Config {
       heartbeatTimeout: parseInt(process.env.WS_HEARTBEAT_TIMEOUT || '60000', 10),
     },
   };
+
+  // Add Spaces configuration if backend is spaces
+  if (config.storage.backend === 'spaces') {
+    const endpoint = process.env.SPACES_ENDPOINT;
+    const region = process.env.SPACES_REGION;
+    const bucket = process.env.SPACES_BUCKET;
+    const accessKeyId = process.env.SPACES_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.SPACES_SECRET_ACCESS_KEY;
+
+    if (!endpoint || !region || !bucket || !accessKeyId || !secretAccessKey) {
+      throw new Error(
+        'STORAGE_BACKEND=spaces requires: SPACES_ENDPOINT, SPACES_REGION, SPACES_BUCKET, SPACES_ACCESS_KEY_ID, SPACES_SECRET_ACCESS_KEY'
+      );
+    }
+
+    config.storage.spaces = {
+      endpoint,
+      region,
+      bucket,
+      accessKeyId,
+      secretAccessKey,
+      cdnEndpoint: process.env.SPACES_CDN_ENDPOINT,
+    };
+  }
 
   // Add database-specific configuration
   switch (dbType) {

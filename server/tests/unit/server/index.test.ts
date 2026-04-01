@@ -30,8 +30,10 @@ jest.mock('../../../src/config/config', () => ({
       type: 'sqlite',
     },
     storage: {
+      backend: 'local',
       path: './test-storage',
-      maxUploadSizeMB: 500,
+      maxUploadSizeMB: 2048,
+      chunkSizeMB: 50,
     },
     security: {
       apiKeyRequired: false,

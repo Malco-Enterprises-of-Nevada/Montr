@@ -1,12 +1,25 @@
 /**
  * Storage Service
- * Handles file system operations for media files
+ * Handles file system operations for media files with pluggable storage backends.
  */
 
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { Readable } from 'stream';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+} from '@aws-sdk/client-s3';
 import { config } from '../config/config';
 import { getLogger } from '../utils/logger';
 import { AppError, ErrorCode } from '../api/middleware/error-handler';
@@ -20,7 +33,38 @@ export interface StorageFileInfo {
   size: number;
 }
 
-export class StorageService {
+export interface IStorageService {
+  generateUniqueFilename(originalFilename: string): string;
+  saveFile(fileBuffer: Buffer, originalFilename: string): Promise<StorageFileInfo>;
+  saveUploadedFile(file: Express.Multer.File): Promise<StorageFileInfo>;
+  deleteFile(filepath: string): Promise<void>;
+  getFullPath(filepath: string): string;
+  fileExists(filepath: string): Promise<boolean>;
+  calculateChecksum(buffer: Buffer): string;
+  calculateFileChecksum(filepath: string): Promise<string>;
+  getFileSize(filepath: string): Promise<number>;
+  saveThumbnail(buffer: Buffer, mediaFilename: string): Promise<string>;
+  getThumbnailPath(mediaFilename: string): Promise<string | null>;
+  cleanupTempFiles(maxAgeMs?: number): Promise<void>;
+  getStorageStats(): Promise<{
+    totalFiles: number;
+    totalSize: number;
+    mediaFiles: number;
+    thumbnails: number;
+  }>;
+  getDownloadUrl(filepath: string): string;
+  downloadToTemp(filepath: string): Promise<string>;
+  initMultipartUpload(key: string): Promise<string>;
+  uploadPart(key: string, uploadId: string, partNumber: number, body: Buffer): Promise<string>;
+  completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: Array<{ PartNumber: number; ETag: string }>
+  ): Promise<void>;
+  abortMultipartUpload(key: string, uploadId: string): Promise<void>;
+}
+
+export class LocalStorageService implements IStorageService {
   private storagePath: string;
 
   constructor() {
@@ -267,7 +311,418 @@ export class StorageService {
       thumbnails: thumbnails.length,
     };
   }
+
+  getDownloadUrl(_filepath: string): string {
+    return '';
+  }
+
+  async downloadToTemp(filepath: string): Promise<string> {
+    return this.getFullPath(filepath);
+  }
+
+  async initMultipartUpload(_key: string): Promise<string> {
+    throw new AppError(
+      ErrorCode.BAD_REQUEST,
+      'Multipart upload is not supported for local storage',
+      400
+    );
+  }
+
+  async uploadPart(
+    _key: string,
+    _uploadId: string,
+    _partNumber: number,
+    _body: Buffer
+  ): Promise<string> {
+    throw new AppError(
+      ErrorCode.BAD_REQUEST,
+      'Multipart upload is not supported for local storage',
+      400
+    );
+  }
+
+  async completeMultipartUpload(
+    _key: string,
+    _uploadId: string,
+    _parts: Array<{ PartNumber: number; ETag: string }>
+  ): Promise<void> {
+    throw new AppError(
+      ErrorCode.BAD_REQUEST,
+      'Multipart upload is not supported for local storage',
+      400
+    );
+  }
+
+  async abortMultipartUpload(_key: string, _uploadId: string): Promise<void> {
+    throw new AppError(
+      ErrorCode.BAD_REQUEST,
+      'Multipart upload is not supported for local storage',
+      400
+    );
+  }
 }
 
-// Export singleton instance
-export const storageService = new StorageService();
+export class SpacesStorageService implements IStorageService {
+  private s3Client: S3Client;
+
+  private bucket: string;
+
+  private endpoint: string;
+
+  private cdnEndpoint: string | undefined;
+
+  private localStoragePath: string;
+
+  constructor() {
+    const spacesConfig = config.storage.spaces;
+    if (!spacesConfig) {
+      throw new Error('Spaces configuration is required for SpacesStorageService');
+    }
+
+    this.bucket = spacesConfig.bucket;
+    this.endpoint = spacesConfig.endpoint;
+    this.cdnEndpoint = spacesConfig.cdnEndpoint;
+    this.localStoragePath = path.resolve(config.storage.path);
+
+    this.s3Client = new S3Client({
+      endpoint: spacesConfig.endpoint,
+      region: spacesConfig.region,
+      credentials: {
+        accessKeyId: spacesConfig.accessKeyId,
+        secretAccessKey: spacesConfig.secretAccessKey,
+      },
+      forcePathStyle: false,
+    });
+
+    this.initializeLocalDirs();
+    logger.info(`Spaces storage initialized: bucket=${this.bucket}`);
+  }
+
+  private initializeLocalDirs(): void {
+    const directories = [
+      this.localStoragePath,
+      path.join(this.localStoragePath, 'temp'),
+      path.join(this.localStoragePath, 'previews'),
+    ];
+
+    directories.forEach((dir) => {
+      if (!fsSync.existsSync(dir)) {
+        fsSync.mkdirSync(dir, { recursive: true });
+        logger.info(`Created local directory: ${dir}`);
+      }
+    });
+  }
+
+  generateUniqueFilename(originalFilename: string): string {
+    const ext = path.extname(originalFilename);
+    const basename = path.basename(originalFilename, ext);
+    const timestamp = Date.now();
+    const random = crypto.randomBytes(4).toString('hex');
+    return `${basename}_${timestamp}_${random}${ext}`;
+  }
+
+  async saveFile(fileBuffer: Buffer, originalFilename: string): Promise<StorageFileInfo> {
+    const filename = this.generateUniqueFilename(originalFilename);
+    const key = `media/${filename}`;
+
+    await this.s3Client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: fileBuffer,
+        ACL: 'private',
+      })
+    );
+
+    const checksum = this.calculateChecksum(fileBuffer);
+    const size = fileBuffer.length;
+
+    logger.info(`File saved to Spaces: ${key} (${size} bytes)`);
+
+    return {
+      filename,
+      filepath: key,
+      checksum,
+      size,
+    };
+  }
+
+  async saveUploadedFile(file: Express.Multer.File): Promise<StorageFileInfo> {
+    const fileBuffer = await fs.readFile(file.path);
+    const result = await this.saveFile(fileBuffer, file.originalname);
+
+    await fs.unlink(file.path);
+
+    return result;
+  }
+
+  async deleteFile(filepath: string): Promise<void> {
+    try {
+      await this.s3Client.send(
+        new DeleteObjectCommand({
+          Bucket: this.bucket,
+          Key: filepath,
+        })
+      );
+      logger.info(`File deleted from Spaces: ${filepath}`);
+    } catch (error) {
+      logger.warn(`Failed to delete file from Spaces: ${filepath}`, { error });
+    }
+  }
+
+  getFullPath(filepath: string): string {
+    const tempPath = path.resolve(this.localStoragePath, 'temp', path.basename(filepath));
+    const tempDir = path.resolve(this.localStoragePath, 'temp');
+    if (!tempPath.startsWith(tempDir + path.sep) && tempPath !== tempDir) {
+      throw new AppError(ErrorCode.FORBIDDEN, 'Invalid file path: path traversal detected', 403);
+    }
+    return tempPath;
+  }
+
+  async fileExists(filepath: string): Promise<boolean> {
+    try {
+      await this.s3Client.send(
+        new HeadObjectCommand({
+          Bucket: this.bucket,
+          Key: filepath,
+        })
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  calculateChecksum(buffer: Buffer): string {
+    return crypto.createHash('sha256').update(buffer).digest('hex');
+  }
+
+  async calculateFileChecksum(filepath: string): Promise<string> {
+    const tempPath = await this.downloadToTemp(filepath);
+    const buffer = await fs.readFile(tempPath);
+    return this.calculateChecksum(buffer);
+  }
+
+  async getFileSize(filepath: string): Promise<number> {
+    const response = await this.s3Client.send(
+      new HeadObjectCommand({
+        Bucket: this.bucket,
+        Key: filepath,
+      })
+    );
+    return response.ContentLength ?? 0;
+  }
+
+  async saveThumbnail(buffer: Buffer, mediaFilename: string): Promise<string> {
+    const ext = '.jpg';
+    const basename = path.basename(mediaFilename, path.extname(mediaFilename));
+    const filename = `${basename}_thumb${ext}`;
+    const key = `thumbnails/${filename}`;
+
+    await this.s3Client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: buffer,
+        ContentType: 'image/jpeg',
+        ACL: 'private',
+      })
+    );
+
+    logger.info(`Thumbnail saved to Spaces: ${key}`);
+    return key;
+  }
+
+  async getThumbnailPath(mediaFilename: string): Promise<string | null> {
+    const basename = path.basename(mediaFilename, path.extname(mediaFilename));
+    const filename = `${basename}_thumb.jpg`;
+    const key = `thumbnails/${filename}`;
+
+    if (await this.fileExists(key)) {
+      return key;
+    }
+    return null;
+  }
+
+  async cleanupTempFiles(maxAgeMs: number = 3600000): Promise<void> {
+    const tempDir = path.join(this.localStoragePath, 'temp');
+    let files: string[];
+    try {
+      files = await fs.readdir(tempDir);
+    } catch {
+      return;
+    }
+    const now = Date.now();
+
+    let cleaned = 0;
+    for (const file of files) {
+      const filePath = path.join(tempDir, file);
+      const stats = await fs.stat(filePath);
+
+      if (now - stats.mtimeMs > maxAgeMs) {
+        await fs.unlink(filePath);
+        cleaned += 1;
+      }
+    }
+
+    if (cleaned > 0) {
+      logger.info(`Cleaned up ${cleaned} temporary file(s)`);
+    }
+  }
+
+  async getStorageStats(): Promise<{
+    totalFiles: number;
+    totalSize: number;
+    mediaFiles: number;
+    thumbnails: number;
+  }> {
+    let mediaCount = 0;
+    let thumbnailCount = 0;
+    let totalSize = 0;
+
+    let mediaContinuationToken: string | undefined;
+    do {
+      const mediaResponse = await this.s3Client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: 'media/',
+          ContinuationToken: mediaContinuationToken,
+        })
+      );
+      const contents = mediaResponse.Contents ?? [];
+      mediaCount += contents.length;
+      for (const obj of contents) {
+        totalSize += obj.Size ?? 0;
+      }
+      mediaContinuationToken = mediaResponse.IsTruncated
+        ? mediaResponse.NextContinuationToken
+        : undefined;
+    } while (mediaContinuationToken);
+
+    let thumbContinuationToken: string | undefined;
+    do {
+      const thumbResponse = await this.s3Client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: 'thumbnails/',
+          ContinuationToken: thumbContinuationToken,
+        })
+      );
+      thumbnailCount += (thumbResponse.Contents ?? []).length;
+      thumbContinuationToken = thumbResponse.IsTruncated
+        ? thumbResponse.NextContinuationToken
+        : undefined;
+    } while (thumbContinuationToken);
+
+    return {
+      totalFiles: mediaCount,
+      totalSize,
+      mediaFiles: mediaCount,
+      thumbnails: thumbnailCount,
+    };
+  }
+
+  getDownloadUrl(filepath: string): string {
+    if (this.cdnEndpoint) {
+      return `${this.cdnEndpoint}/${filepath}`;
+    }
+    return `${this.endpoint}/${this.bucket}/${filepath}`;
+  }
+
+  async downloadToTemp(filepath: string): Promise<string> {
+    const tempPath = this.getFullPath(filepath);
+
+    const response = await this.s3Client.send(
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: filepath,
+      })
+    );
+
+    if (!response.Body) {
+      throw new AppError(ErrorCode.FILE_NOT_FOUND, `File not found in Spaces: ${filepath}`, 404);
+    }
+
+    const readable = response.Body as Readable;
+    const chunks: Buffer[] = [];
+    for await (const chunk of readable) {
+      chunks.push(Buffer.from(chunk as Uint8Array));
+    }
+    await fs.writeFile(tempPath, Buffer.concat(chunks));
+
+    return tempPath;
+  }
+
+  async initMultipartUpload(key: string): Promise<string> {
+    const response = await this.s3Client.send(
+      new CreateMultipartUploadCommand({
+        Bucket: this.bucket,
+        Key: key,
+      })
+    );
+
+    if (!response.UploadId) {
+      throw new AppError(ErrorCode.STORAGE_ERROR, 'Failed to initiate multipart upload', 500);
+    }
+
+    logger.info(`Multipart upload initiated for ${key}: ${response.UploadId}`);
+    return response.UploadId;
+  }
+
+  async uploadPart(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    body: Buffer
+  ): Promise<string> {
+    const response = await this.s3Client.send(
+      new UploadPartCommand({
+        Bucket: this.bucket,
+        Key: key,
+        UploadId: uploadId,
+        PartNumber: partNumber,
+        Body: body,
+      })
+    );
+
+    if (!response.ETag) {
+      throw new AppError(ErrorCode.STORAGE_ERROR, `Failed to upload part ${partNumber}`, 500);
+    }
+
+    return response.ETag;
+  }
+
+  async completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: Array<{ PartNumber: number; ETag: string }>
+  ): Promise<void> {
+    await this.s3Client.send(
+      new CompleteMultipartUploadCommand({
+        Bucket: this.bucket,
+        Key: key,
+        UploadId: uploadId,
+        MultipartUpload: {
+          Parts: parts,
+        },
+      })
+    );
+
+    logger.info(`Multipart upload completed for ${key}`);
+  }
+
+  async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+    await this.s3Client.send(
+      new AbortMultipartUploadCommand({
+        Bucket: this.bucket,
+        Key: key,
+        UploadId: uploadId,
+      })
+    );
+
+    logger.warn(`Multipart upload aborted for ${key}: ${uploadId}`);
+  }
+}
+
+export const storageService: IStorageService =
+  config.storage.backend === 'spaces' ? new SpacesStorageService() : new LocalStorageService();
