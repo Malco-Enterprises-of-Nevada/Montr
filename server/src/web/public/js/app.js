@@ -254,10 +254,10 @@ const playlistAPI = {
         return await apiCall(`/playlists/${id}`, { method: 'DELETE' });
     },
 
-    async addItem(playlistId, mediaId, imageDuration = 5) {
+    async addItem(playlistId, mediaId) {
         return await apiCall(`/playlists/${playlistId}/items`, {
             method: 'POST',
-            body: JSON.stringify({ mediaId, imageDuration })
+            body: JSON.stringify({ mediaIds: [mediaId] })
         });
     },
 
@@ -788,8 +788,12 @@ function initCreatePlaylist() {
 async function openPlaylistDetail(playlistId) {
     try {
         showLoading();
-        const playlist = await playlistAPI.get(playlistId);
+        const [playlist, mediaResult] = await Promise.all([
+            playlistAPI.get(playlistId),
+            mediaAPI.list(),
+        ]);
         state.currentPlaylist = playlist;
+        state.media = mediaResult?.data || mediaResult || [];
 
         document.getElementById('playlistDetailTitle').textContent = playlist.name;
         document.getElementById('playlistDetailDescription').textContent = playlist.description || 'No description';
