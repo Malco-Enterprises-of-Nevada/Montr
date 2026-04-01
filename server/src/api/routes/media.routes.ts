@@ -17,6 +17,7 @@ import {
   idParamSchema,
   listMediaQuerySchema,
 } from '../middleware/validation';
+import { requireRole } from '../middleware/jwt-auth';
 
 const router = Router();
 
@@ -61,6 +62,7 @@ const upload = multer({
  */
 router.post(
   '/upload',
+  requireRole('admin', 'editor'),
   upload.array('files', 10), // Accept up to 10 files
   asyncHandler(async (req: Request, res: Response) => {
     const files = req.files as Express.Multer.File[];
@@ -101,6 +103,7 @@ router.post(
  */
 router.post(
   '/upload/init',
+  requireRole('admin', 'editor'),
   asyncHandler(async (req: Request, res: Response) => {
     const { filename, mimeType, totalSize } = req.body as {
       filename: string;
@@ -140,6 +143,7 @@ router.post(
  */
 router.post(
   '/upload/:uploadId/chunk/:chunkIndex',
+  requireRole('admin', 'editor'),
   express.raw({ type: 'application/octet-stream', limit: `${config.storage.chunkSizeMB + 5}mb` }),
   asyncHandler(async (req: Request, res: Response) => {
     const uploadId = req.params.uploadId as string;
@@ -166,6 +170,7 @@ router.post(
  */
 router.post(
   '/upload/:uploadId/complete',
+  requireRole('admin', 'editor'),
   asyncHandler(async (req: Request, res: Response) => {
     const uploadId = req.params.uploadId as string;
 
@@ -193,6 +198,7 @@ router.post(
  */
 router.delete(
   '/upload/:uploadId',
+  requireRole('admin', 'editor'),
   asyncHandler(async (req: Request, res: Response) => {
     const uploadId = req.params.uploadId as string;
     await chunkedUploadService.abortUpload(uploadId);
@@ -258,6 +264,7 @@ router.get(
  */
 router.delete(
   '/:id',
+  requireRole('admin', 'editor'),
   validateParams(idParamSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const params = req.params as unknown as { id: number };
@@ -316,6 +323,7 @@ router.get(
  */
 router.post(
   '/:id/thumbnail/retry',
+  requireRole('admin', 'editor'),
   validateParams(idParamSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const params = req.params as unknown as { id: number };
@@ -331,6 +339,7 @@ router.post(
  */
 router.post(
   '/:id/approve',
+  requireRole('admin'),
   validateParams(idParamSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const params = req.params as unknown as { id: number };
@@ -349,6 +358,7 @@ router.post(
  */
 router.post(
   '/:id/reject',
+  requireRole('admin'),
   validateParams(idParamSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const params = req.params as unknown as { id: number };

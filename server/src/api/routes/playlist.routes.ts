@@ -16,6 +16,7 @@ import {
   updatePlaylistItemSchema,
   reorderPlaylistItemsSchema,
 } from '../middleware/validation';
+import { requireRole } from '../middleware/jwt-auth';
 
 const router = Router();
 
@@ -25,6 +26,7 @@ const router = Router();
  */
 router.post(
   '/',
+  requireRole('admin', 'editor'),
   validateBody(createPlaylistSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const playlist = await playlistService.createPlaylist(req.body);
@@ -65,6 +67,7 @@ router.get(
  */
 router.put(
   '/:id',
+  requireRole('admin', 'editor'),
   validateParams(idParamSchema),
   validateBody(updatePlaylistSchema),
   asyncHandler(async (req: Request, res: Response) => {
@@ -81,6 +84,7 @@ router.put(
  */
 router.delete(
   '/:id',
+  requireRole('admin', 'editor'),
   validateParams(idParamSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const params = req.params as unknown as { id: number };
@@ -101,6 +105,7 @@ router.delete(
  */
 router.post(
   '/:id/items',
+  requireRole('admin', 'editor'),
   validateParams(idParamSchema),
   validateBody(addPlaylistItemsSchema),
   asyncHandler(async (req: Request, res: Response) => {
@@ -124,6 +129,7 @@ router.post(
  */
 router.put(
   '/:id/items/:itemId',
+  requireRole('admin', 'editor'),
   validateParams(playlistItemParamsSchema),
   validateBody(updatePlaylistItemSchema),
   asyncHandler(async (req: Request, res: Response) => {
@@ -140,6 +146,7 @@ router.put(
  */
 router.delete(
   '/:id/items/:itemId',
+  requireRole('admin', 'editor'),
   validateParams(playlistItemParamsSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const params = req.params as unknown as { id: number; itemId: number };
@@ -160,6 +167,7 @@ router.delete(
  */
 router.post(
   '/:id/reorder',
+  requireRole('admin', 'editor'),
   validateParams(idParamSchema),
   validateBody(reorderPlaylistItemsSchema),
   asyncHandler(async (req: Request, res: Response) => {

@@ -8,7 +8,7 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
-import { StorageService } from '../../../src/services/storage.service';
+import { LocalStorageService as StorageService } from '../../../src/services/storage.service';
 
 // Mock all fs operations
 jest.mock('fs/promises');
@@ -308,7 +308,7 @@ describe('StorageService', () => {
       );
 
       const results = await Promise.all(checks);
-      expect(results.every(r => r === true)).toBe(true);
+      expect(results.every((r: boolean) => r === true)).toBe(true);
     });
   });
 

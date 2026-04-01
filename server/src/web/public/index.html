@@ -6,9 +6,61 @@
     <meta http-equiv="X-UA-Compatible" content="ie=edge">
     <title>Montr - Media Playlist Management</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/styles.css?v=3">
+    <link rel="stylesheet" href="/css/styles.css?v=4">
 </head>
 <body>
+    <!-- Login Screen -->
+    <div id="login-view" class="auth-screen" style="display: none;">
+        <div class="auth-card">
+            <div class="auth-brand">
+                <h1>Montr</h1>
+                <p>Media Playlist System</p>
+            </div>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="loginUsername">Username</label>
+                    <input type="text" id="loginUsername" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">Password</label>
+                    <input type="password" id="loginPassword" required autocomplete="current-password">
+                </div>
+                <div id="loginError" class="auth-error" style="display: none;"></div>
+                <button type="submit" class="btn btn-primary btn-block">Sign In</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Setup Screen (first-time admin creation) -->
+    <div id="setup-view" class="auth-screen" style="display: none;">
+        <div class="auth-card">
+            <div class="auth-brand">
+                <h1>Montr</h1>
+                <p>Create Admin Account</p>
+            </div>
+            <form id="setupForm">
+                <div class="form-group">
+                    <label for="setupUsername">Username</label>
+                    <input type="text" id="setupUsername" required minlength="3" maxlength="100" autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="setupEmail">Email</label>
+                    <input type="email" id="setupEmail" required autocomplete="email">
+                </div>
+                <div class="form-group">
+                    <label for="setupPassword">Password</label>
+                    <input type="password" id="setupPassword" required minlength="8" autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                    <label for="setupConfirmPassword">Confirm Password</label>
+                    <input type="password" id="setupConfirmPassword" required minlength="8" autocomplete="new-password">
+                </div>
+                <div id="setupError" class="auth-error" style="display: none;"></div>
+                <button type="submit" class="btn btn-primary btn-block">Create Account</button>
+            </form>
+        </div>
+    </div>
+
     <!-- Navigation -->
     <nav class="navbar">
         <div class="nav-container">
@@ -30,7 +82,18 @@
                 <li><a href="#schedules" class="nav-link" data-page="schedules">Schedules</a></li>
                 <li><a href="#analytics" class="nav-link" data-page="analytics">Analytics</a></li>
                 <li><a href="#notifications" class="nav-link" data-page="notifications">Notifications</a></li>
+                <li class="admin-only" style="display:none"><a href="#users" class="nav-link" data-page="users">Users</a></li>
             </ul>
+            <div class="nav-user" id="navUser" style="display: none;">
+                <button class="nav-user-btn" id="navUserBtn">
+                    <span id="navUsername"></span>
+                    <span class="badge badge-info" id="navUserRole"></span>
+                </button>
+                <div class="nav-user-dropdown" id="navUserDropdown">
+                    <a href="#" id="changePasswordLink">Change Password</a>
+                    <a href="#" id="logoutLink">Logout</a>
+                </div>
+            </div>
         </div>
     </nav>
 
@@ -133,7 +196,7 @@
         <section id="media-view" class="view">
             <div class="page-header">
                 <h2>Media Library</h2>
-                <button class="btn btn-primary" id="uploadBtn">Upload Media</button>
+                <button class="btn btn-primary editor-action" id="uploadBtn">Upload Media</button>
             </div>
 
             <!-- Search and Filter -->
@@ -179,7 +242,7 @@
                 </svg>
                 <h3>No Media Files</h3>
                 <p>Upload your first media file to get started</p>
-                <button class="btn btn-primary" id="emptyUploadBtn">Upload Media</button>
+                <button class="btn btn-primary editor-action" id="emptyUploadBtn">Upload Media</button>
             </div>
         </section>
 
@@ -187,7 +250,7 @@
         <section id="playlists-view" class="view">
             <div class="page-header">
                 <h2>Playlists</h2>
-                <button class="btn btn-primary" id="createPlaylistBtn">Create Playlist</button>
+                <button class="btn btn-primary editor-action" id="createPlaylistBtn">Create Playlist</button>
             </div>
 
             <!-- Playlists List -->
@@ -204,7 +267,7 @@
                 </svg>
                 <h3>No Playlists</h3>
                 <p>Create your first playlist to organize media files</p>
-                <button class="btn btn-primary" id="emptyCreatePlaylistBtn">Create Playlist</button>
+                <button class="btn btn-primary editor-action" id="emptyCreatePlaylistBtn">Create Playlist</button>
             </div>
         </section>
 
@@ -262,7 +325,7 @@
         <section id="groups-view" class="view">
             <div class="page-header">
                 <h2>Client Groups</h2>
-                <button class="btn btn-primary" id="createGroupBtn">Create Group</button>
+                <button class="btn btn-primary editor-action" id="createGroupBtn">Create Group</button>
             </div>
 
             <!-- Groups Grid -->
@@ -287,7 +350,7 @@
         <section id="schedules-view" class="view">
             <div class="page-header">
                 <h2>Schedules</h2>
-                <button class="btn btn-primary" id="createScheduleBtn">Create Schedule</button>
+                <button class="btn btn-primary editor-action" id="createScheduleBtn">Create Schedule</button>
             </div>
 
             <div id="schedulesGrid" class="grid">
@@ -347,7 +410,7 @@
         <section id="notifications-view" class="view">
             <div class="page-header">
                 <h2>Notifications</h2>
-                <button class="btn btn-primary" id="createRuleBtn">Add Rule</button>
+                <button class="btn btn-primary admin-only" id="createRuleBtn">Add Rule</button>
             </div>
 
             <div id="notificationRulesList" class="grid">
@@ -359,7 +422,85 @@
                 <div class="loading">Loading history...</div>
             </div>
         </section>
+        <!-- Users View (Admin Only) -->
+        <section id="users-view" class="view">
+            <div class="page-header">
+                <h2>User Management</h2>
+                <button class="btn btn-primary" id="createUserBtn">Create User</button>
+            </div>
+            <div id="usersGrid" class="grid">
+                <div class="loading">Loading users...</div>
+            </div>
+        </section>
     </main>
+
+    <!-- Create User Modal -->
+    <div id="createUserModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create User</h3>
+                <button class="modal-close" id="closeCreateUserModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="createUserForm">
+                    <div class="form-group">
+                        <label for="newUserUsername">Username</label>
+                        <input type="text" id="newUserUsername" required minlength="3" maxlength="100">
+                    </div>
+                    <div class="form-group">
+                        <label for="newUserEmail">Email</label>
+                        <input type="email" id="newUserEmail" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="newUserPassword">Password</label>
+                        <input type="password" id="newUserPassword" required minlength="8">
+                    </div>
+                    <div class="form-group">
+                        <label for="newUserRole">Role</label>
+                        <select id="newUserRole" class="form-select">
+                            <option value="viewer">Viewer (read-only)</option>
+                            <option value="editor">Editor (manage content)</option>
+                            <option value="admin">Admin (full access)</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelCreateUserModal">Cancel</button>
+                <button class="btn btn-primary" id="saveCreateUserBtn">Create User</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Change Password Modal -->
+    <div id="changePasswordModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Change Password</h3>
+                <button class="modal-close" id="closeChangePasswordModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="changePasswordForm">
+                    <div class="form-group">
+                        <label for="currentPassword">Current Password</label>
+                        <input type="password" id="currentPassword" required autocomplete="current-password">
+                    </div>
+                    <div class="form-group">
+                        <label for="newPassword">New Password</label>
+                        <input type="password" id="newPassword" required minlength="8" autocomplete="new-password">
+                    </div>
+                    <div class="form-group">
+                        <label for="confirmNewPassword">Confirm New Password</label>
+                        <input type="password" id="confirmNewPassword" required minlength="8" autocomplete="new-password">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelChangePassword">Cancel</button>
+                <button class="btn btn-primary" id="saveChangePassword">Change Password</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Create Notification Rule Modal -->
     <div id="createRuleModal" class="modal">
@@ -716,6 +857,6 @@
         <div class="spinner"></div>
     </div>
 
-    <script src="/js/app.js?v=9"></script>
+    <script src="/js/app.js?v=10"></script>
 </body>
 </html>

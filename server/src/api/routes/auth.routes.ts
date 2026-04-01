@@ -20,6 +20,11 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8, 'Password must be at least 8 characters'),
+});
+
 const createUserSchema = z.object({
   username: z.string().min(3).max(100).trim(),
   email: z.string().email(),
@@ -121,6 +126,43 @@ router.get(
     }
 
     res.json(successResponse(toPublicUser(user)));
+  })
+);
+
+/**
+ * PUT /api/auth/password
+ * Change current user's password
+ */
+router.put(
+  '/password',
+  requireAuth(),
+  validateBody(changePasswordSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const jwtUser = (req as Request & { user?: JwtPayload }).user;
+    if (!jwtUser) {
+      throw new AppError(ErrorCode.UNAUTHORIZED, 'Authentication required', 401);
+    }
+
+    const { currentPassword, newPassword } = req.body as {
+      currentPassword: string;
+      newPassword: string;
+    };
+
+    const db = await getDatabase();
+    const user = await db.getUserById(jwtUser.userId);
+    if (!user) {
+      throw new AppError(ErrorCode.UNAUTHORIZED, 'User not found', 401);
+    }
+
+    if (!(await bcrypt.compare(currentPassword, user.password_hash))) {
+      throw new AppError(ErrorCode.UNAUTHORIZED, 'Current password is incorrect', 401);
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await db.updateUserPassword(jwtUser.userId, newHash);
+
+    logger.info(`Password changed for user: ${user.username}`);
+    res.json(successResponse({ message: 'Password changed successfully' }));
   })
 );
 

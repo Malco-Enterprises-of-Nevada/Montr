@@ -24,6 +24,7 @@ import {
   interruptClientSchema,
   sendCommandSchema,
 } from '../middleware/validation';
+import { requireRole } from '../middleware/jwt-auth';
 import {
   sendPlaylistToClient,
   sendPlaylistInterrupt,
@@ -91,6 +92,7 @@ router.get(
  */
 router.put(
   '/:id',
+  requireRole('admin', 'editor'),
   validateParams(uuidParamSchema),
   validateBody(updateClientSchema),
   asyncHandler(async (req: Request, res: Response) => {
@@ -116,6 +118,7 @@ router.put(
  */
 router.delete(
   '/:id',
+  requireRole('admin', 'editor'),
   validateParams(uuidParamSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params as { id: string };
@@ -202,6 +205,7 @@ router.get(
  */
 router.post(
   '/:id/playlists',
+  requireRole('admin', 'editor'),
   validateParams(uuidParamSchema),
   validateBody(addClientPlaylistSchema),
   asyncHandler(async (req: Request, res: Response) => {
@@ -228,6 +232,7 @@ router.post(
  */
 router.put(
   '/:id/playlists/:playlistId',
+  requireRole('admin', 'editor'),
   validateParams(clientPlaylistParamsSchema),
   validateBody(updateClientPlaylistPrioritySchema),
   asyncHandler(async (req: Request, res: Response) => {
@@ -255,6 +260,7 @@ router.put(
  */
 router.delete(
   '/:id/playlists/:playlistId',
+  requireRole('admin', 'editor'),
   validateParams(clientPlaylistParamsSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const params = req.params as unknown as { id: string; playlistId: number };
@@ -282,6 +288,7 @@ router.delete(
  */
 router.post(
   '/:id/interrupt',
+  requireRole('admin', 'editor'),
   validateParams(uuidParamSchema),
   validateBody(interruptClientSchema),
   asyncHandler(async (req: Request, res: Response) => {
@@ -310,6 +317,7 @@ router.post(
  */
 router.post(
   '/:id/resume',
+  requireRole('admin', 'editor'),
   validateParams(uuidParamSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params as { id: string };
@@ -339,6 +347,7 @@ router.post(
  */
 router.post(
   '/:id/command',
+  requireRole('admin', 'editor'),
   validateParams(uuidParamSchema),
   validateBody(sendCommandSchema),
   asyncHandler(async (req: Request, res: Response) => {

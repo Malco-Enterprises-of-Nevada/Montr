@@ -6,6 +6,7 @@ import { Router, Request, Response } from 'express';
 import { notificationService } from '../../services/notification.service';
 import { asyncHandler, successResponse } from '../middleware/error-handler';
 import { validateParams, validateBody, idParamSchema } from '../middleware/validation';
+import { requireRole } from '../middleware/jwt-auth';
 import { z } from 'zod';
 
 const router = Router();
@@ -24,6 +25,7 @@ const createRuleSchema = z.object({
  */
 router.post(
   '/rules',
+  requireRole('admin'),
   validateBody(createRuleSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const rule = await notificationService.createRule(req.body);
@@ -63,6 +65,7 @@ router.get(
  */
 router.delete(
   '/rules/:id',
+  requireRole('admin'),
   validateParams(idParamSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const params = req.params as unknown as { id: number };
@@ -90,6 +93,7 @@ router.get(
  */
 router.post(
   '/test',
+  requireRole('admin'),
   asyncHandler(async (req: Request, res: Response) => {
     const { event_type } = req.body as { event_type: string };
     const count = await notificationService.fireEvent(

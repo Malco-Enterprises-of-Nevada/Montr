@@ -5,6 +5,7 @@
 import { Router, Request, Response } from 'express';
 import { analyticsService } from '../../services/analytics.service';
 import { asyncHandler, successResponse } from '../middleware/error-handler';
+import { requireRole } from '../middleware/jwt-auth';
 
 const router = Router();
 
@@ -101,6 +102,7 @@ router.get(
  */
 router.post(
   '/cleanup',
+  requireRole('admin'),
   asyncHandler(async (req: Request, res: Response) => {
     const retentionDays = req.body?.retentionDays || 90;
     const deleted = await analyticsService.cleanupOldLogs(retentionDays);

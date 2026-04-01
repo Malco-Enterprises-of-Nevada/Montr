@@ -46,6 +46,12 @@ jest.mock('../../config/config', () => ({
       staleTimeout: 300000,
       heartbeatTimeout: 60000,
     },
+    storage: {
+      backend: 'local',
+      path: '/tmp/montr-test-storage',
+      maxUploadSizeMB: 500,
+      chunkSizeMB: 50,
+    },
   },
 }));
 
