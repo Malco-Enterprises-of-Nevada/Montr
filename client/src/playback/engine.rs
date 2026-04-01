@@ -277,13 +277,23 @@ impl PlaybackEngine {
 
     /// Poll mpv for events and position updates
     async fn event_loop(&self) {
+        let mut eof_sent_for_file: Option<String> = None;
+
         loop {
             if self.cancel_token.is_cancelled() {
                 break;
             }
 
-            // Poll position if playing a video
             let state = self.state.read().await.clone();
+
+            // Reset EOF tracking when a new file starts playing
+            if let Some(ref current) = state.current_file {
+                if eof_sent_for_file.as_ref() != Some(current) && state.is_playing {
+                    eof_sent_for_file = None;
+                }
+            }
+
+            // Poll position if playing a video
             if state.is_playing && !state.is_image {
                 if let Ok(response) = self.send_command(&[
                     serde_json::json!("get_property"),
@@ -296,16 +306,19 @@ impl PlaybackEngine {
                     }
                 }
 
-                // Check for end of file
-                if let Ok(response) = self.send_command(&[
-                    serde_json::json!("get_property"),
-                    serde_json::json!("eof-reached"),
-                ]).await {
-                    if response.get("data").and_then(|d| d.as_bool()) == Some(true) {
-                        tracing::info!("End of file reached");
-                        let mut s = self.state.write().await;
-                        s.is_playing = false;
-                        let _ = self.event_tx.send(PlaybackEvent::EndFile).await;
+                // Check for end of file (only once per file)
+                if eof_sent_for_file.is_none() {
+                    if let Ok(response) = self.send_command(&[
+                        serde_json::json!("get_property"),
+                        serde_json::json!("eof-reached"),
+                    ]).await {
+                        if response.get("data").and_then(|d| d.as_bool()) == Some(true) {
+                            tracing::info!("End of file reached");
+                            eof_sent_for_file = state.current_file.clone();
+                            let mut s = self.state.write().await;
+                            s.is_playing = false;
+                            let _ = self.event_tx.send(PlaybackEvent::EndFile).await;
+                        }
                     }
                 }
             }
@@ -341,11 +354,19 @@ impl PlaybackEngine {
 
         tracing::info!("Playing: {} (image: {})", path_str, is_image);
 
-        // Load file via IPC
+        // Load file via IPC and ensure playback starts
         self.send_command(&[
             serde_json::json!("loadfile"),
             serde_json::json!(path_str),
+            serde_json::json!("replace"),
         ]).await?;
+
+        // Unpause in case mpv was paused at end of previous file
+        let _ = self.send_command(&[
+            serde_json::json!("set_property"),
+            serde_json::json!("pause"),
+            serde_json::json!(false),
+        ]).await;
 
         // Update state
         {
