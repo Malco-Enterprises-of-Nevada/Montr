@@ -919,7 +919,7 @@ async function addToPlaylist(mediaId) {
     if (!state.currentPlaylist) return;
 
     try {
-        await playlistAPI.addItem(state.currentPlaylist.id, mediaId);
+        await playlistAPI.addItem(state.currentPlaylist.id, parseInt(mediaId, 10));
         showToast('Item added to playlist', 'success');
 
         // Reload playlist details
