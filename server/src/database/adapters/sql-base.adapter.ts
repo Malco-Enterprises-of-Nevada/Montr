@@ -1167,6 +1167,13 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     await this.rawExecute(`DELETE FROM users WHERE id = ${this.placeholder(1)}`, [id]);
   }
 
+  async updateUserPassword(id: number, passwordHash: string): Promise<void> {
+    await this.rawExecute(
+      `UPDATE users SET password_hash = ${this.placeholder(1)} WHERE id = ${this.placeholder(2)}`,
+      [passwordHash, id]
+    );
+  }
+
   async getUserCount(): Promise<number> {
     const row = await this.rawQueryOne<{ count: number }>('SELECT COUNT(*) as count FROM users');
     return row?.count || 0;

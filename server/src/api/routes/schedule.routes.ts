@@ -12,6 +12,7 @@ import {
   createScheduleSchema,
   updateScheduleSchema,
 } from '../middleware/validation';
+import { requireRole } from '../middleware/jwt-auth';
 
 const router = Router();
 
@@ -21,6 +22,7 @@ const router = Router();
  */
 router.post(
   '/',
+  requireRole('admin', 'editor'),
   validateBody(createScheduleSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const schedule = await scheduleService.createSchedule(req.body);
@@ -61,6 +63,7 @@ router.get(
  */
 router.put(
   '/:id',
+  requireRole('admin', 'editor'),
   validateParams(idParamSchema),
   validateBody(updateScheduleSchema),
   asyncHandler(async (req: Request, res: Response) => {
@@ -77,6 +80,7 @@ router.put(
  */
 router.delete(
   '/:id',
+  requireRole('admin', 'editor'),
   validateParams(idParamSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const params = req.params as unknown as { id: number };
@@ -92,6 +96,7 @@ router.delete(
  */
 router.post(
   '/evaluate',
+  requireRole('admin'),
   asyncHandler(async (_req: Request, res: Response) => {
     await scheduleService.evaluateSchedules();
     res.json(successResponse({ message: 'Schedule evaluation completed' }));

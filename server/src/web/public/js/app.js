@@ -10,6 +10,12 @@ let UI_CONFIG = {
     toastDisplayDuration: 3000,
 };
 
+// Auth state
+const auth = {
+    token: localStorage.getItem('montr_token'),
+    user: null, // { id, username, email, role }
+};
+
 // State management
 const state = {
     currentView: 'dashboard',
@@ -90,13 +96,27 @@ function showLoading(show = true) {
 // Generic API call
 async function apiCall(endpoint, options = {}) {
     try {
+        const headers = {
+            'Content-Type': 'application/json',
+            ...options.headers
+        };
+        if (auth.token) {
+            headers['Authorization'] = 'Bearer ' + auth.token;
+        }
+
         const response = await fetch(API_BASE + endpoint, {
             ...options,
-            headers: {
-                'Content-Type': 'application/json',
-                ...options.headers
-            }
+            headers
         });
+
+        // Handle auth errors
+        if (response.status === 401) {
+            auth.token = null;
+            auth.user = null;
+            localStorage.removeItem('montr_token');
+            showAuthScreen('login');
+            throw new Error('Session expired');
+        }
 
         const data = await response.json();
 
@@ -178,6 +198,7 @@ const mediaAPI = {
 
                 xhr.open('POST', `${API_BASE}/media/upload/${uploadId}/chunk/${i}`);
                 xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+                if (auth.token) xhr.setRequestHeader('Authorization', 'Bearer ' + auth.token);
                 xhr.send(chunk);
             });
         }
@@ -213,6 +234,7 @@ const mediaAPI = {
             });
 
             xhr.open('POST', API_BASE + '/media/upload');
+            if (auth.token) xhr.setRequestHeader('Authorization', 'Bearer ' + auth.token);
             xhr.send(formData);
         });
     },
@@ -222,7 +244,25 @@ const mediaAPI = {
     },
 
     async download(id) {
-        window.open(API_BASE + `/media/${id}/download`, '_blank');
+        const headers = {};
+        if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
+        const response = await fetch(API_BASE + `/media/${id}/download`, { headers });
+        if (!response.ok) throw new Error('Download failed');
+        const blob = await response.blob();
+        const disposition = response.headers.get('Content-Disposition');
+        let filename = `media_${id}`;
+        if (disposition) {
+            const match = disposition.match(/filename="?(.+?)"?$/);
+            if (match) filename = match[1];
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 };
 
@@ -436,6 +476,9 @@ function navigateTo(view) {
         case 'notifications':
             loadNotifications();
             break;
+        case 'users':
+            loadUsers();
+            break;
     }
 }
 
@@ -561,9 +604,9 @@ function renderMediaGrid(media) {
                 <button class="btn btn-sm btn-secondary media-download-btn" data-id="${item.id}">
                     Download
                 </button>
-                <button class="btn btn-sm btn-danger media-delete-btn" data-id="${item.id}">
+                ${auth.user?.role !== 'viewer' ? `<button class="btn btn-sm btn-danger media-delete-btn" data-id="${item.id}">
                     Delete
-                </button>
+                </button>` : ''}
             </div>
         </div>
     `).join('');
@@ -1991,6 +2034,343 @@ function initClientControlModal() {
     });
 }
 
+// ===== Authentication =====
+
+function showAuthScreen(type) {
+    document.body.classList.add('auth-active');
+    document.getElementById('login-view').style.display = type === 'login' ? '' : 'none';
+    document.getElementById('setup-view').style.display = type === 'setup' ? '' : 'none';
+}
+
+function hideAuthScreens() {
+    document.body.classList.remove('auth-active');
+    document.getElementById('login-view').style.display = 'none';
+    document.getElementById('setup-view').style.display = 'none';
+}
+
+async function checkAuthStatus() {
+    try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
+
+        const response = await fetch(API_BASE + '/auth/me', { headers });
+
+        if (response.status === 401) {
+            auth.token = null;
+            localStorage.removeItem('montr_token');
+            showAuthScreen('login');
+            return false;
+        }
+
+        const data = await response.json();
+
+        if (data.data === null) {
+            // Bootstrap mode — no users exist
+            showAuthScreen('setup');
+            return false;
+        }
+
+        // Authenticated
+        auth.user = data.data;
+        hideAuthScreens();
+        return true;
+    } catch {
+        showAuthScreen('login');
+        return false;
+    }
+}
+
+function initAuthForms() {
+    const loginForm = document.getElementById('loginForm');
+    const setupForm = document.getElementById('setupForm');
+
+    loginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const errorEl = document.getElementById('loginError');
+        errorEl.style.display = 'none';
+
+        const username = document.getElementById('loginUsername').value;
+        const password = document.getElementById('loginPassword').value;
+
+        try {
+            const response = await fetch(API_BASE + '/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            const data = await response.json();
+
+            if (!response.ok) {
+                errorEl.textContent = data.error?.message || 'Login failed';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            auth.token = data.data.token;
+            auth.user = data.data.user;
+            localStorage.setItem('montr_token', auth.token);
+            hideAuthScreens();
+            initApp();
+        } catch (err) {
+            errorEl.textContent = 'Connection failed';
+            errorEl.style.display = 'block';
+        }
+    });
+
+    setupForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const errorEl = document.getElementById('setupError');
+        errorEl.style.display = 'none';
+
+        const username = document.getElementById('setupUsername').value;
+        const email = document.getElementById('setupEmail').value;
+        const password = document.getElementById('setupPassword').value;
+        const confirmPassword = document.getElementById('setupConfirmPassword').value;
+
+        if (password !== confirmPassword) {
+            errorEl.textContent = 'Passwords do not match';
+            errorEl.style.display = 'block';
+            return;
+        }
+
+        try {
+            const response = await fetch(API_BASE + '/auth/setup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, email, password })
+            });
+            const data = await response.json();
+
+            if (!response.ok) {
+                errorEl.textContent = data.error?.message || 'Setup failed';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            auth.token = data.data.token;
+            auth.user = data.data.user;
+            localStorage.setItem('montr_token', auth.token);
+            hideAuthScreens();
+            initApp();
+        } catch (err) {
+            errorEl.textContent = 'Connection failed';
+            errorEl.style.display = 'block';
+        }
+    });
+}
+
+function logout() {
+    auth.token = null;
+    auth.user = null;
+    localStorage.removeItem('montr_token');
+    showAuthScreen('login');
+    document.getElementById('navUser').style.display = 'none';
+}
+
+function applyRolePermissions() {
+    const role = auth.user?.role;
+
+    // Admin-only elements
+    document.querySelectorAll('.admin-only').forEach(el => {
+        el.style.display = role === 'admin' ? '' : 'none';
+    });
+
+    // Editor+ elements (hidden from viewers)
+    document.querySelectorAll('.editor-action').forEach(el => {
+        el.style.display = (role === 'admin' || role === 'editor') ? '' : 'none';
+    });
+
+    // Show user menu
+    const navUser = document.getElementById('navUser');
+    if (auth.user) {
+        document.getElementById('navUsername').textContent = auth.user.username;
+        document.getElementById('navUserRole').textContent = auth.user.role;
+        navUser.style.display = '';
+    }
+}
+
+function initUserMenu() {
+    const btn = document.getElementById('navUserBtn');
+    const dropdown = document.getElementById('navUserDropdown');
+
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.toggle('active');
+    });
+
+    document.addEventListener('click', () => {
+        dropdown.classList.remove('active');
+    });
+
+    document.getElementById('logoutLink').addEventListener('click', (e) => {
+        e.preventDefault();
+        logout();
+    });
+
+    document.getElementById('changePasswordLink').addEventListener('click', (e) => {
+        e.preventDefault();
+        dropdown.classList.remove('active');
+        openModal('changePasswordModal');
+    });
+}
+
+function initChangePasswordModal() {
+    const closeBtn = document.getElementById('closeChangePasswordModal');
+    const cancelBtn = document.getElementById('cancelChangePassword');
+    const saveBtn = document.getElementById('saveChangePassword');
+
+    closeBtn.addEventListener('click', () => closeModal('changePasswordModal'));
+    cancelBtn.addEventListener('click', () => closeModal('changePasswordModal'));
+
+    saveBtn.addEventListener('click', async () => {
+        const currentPassword = document.getElementById('currentPassword').value;
+        const newPassword = document.getElementById('newPassword').value;
+        const confirmNewPassword = document.getElementById('confirmNewPassword').value;
+
+        if (!currentPassword || !newPassword) {
+            showToast('Please fill in all fields', 'error');
+            return;
+        }
+
+        if (newPassword !== confirmNewPassword) {
+            showToast('New passwords do not match', 'error');
+            return;
+        }
+
+        if (newPassword.length < 8) {
+            showToast('Password must be at least 8 characters', 'error');
+            return;
+        }
+
+        try {
+            await apiCall('/auth/password', {
+                method: 'PUT',
+                body: JSON.stringify({ currentPassword, newPassword })
+            });
+            showToast('Password changed successfully', 'success');
+            closeModal('changePasswordModal');
+            document.getElementById('changePasswordForm').reset();
+        } catch (error) {
+            showToast(error.message || 'Failed to change password', 'error');
+        }
+    });
+}
+
+// ===== User Management (Admin) =====
+
+const usersAPI = {
+    async list() {
+        return await apiCall('/users');
+    },
+    async create(data) {
+        return await apiCall('/users', {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+    },
+    async delete(id) {
+        return await apiCall(`/users/${id}`, { method: 'DELETE' });
+    }
+};
+
+async function loadUsers() {
+    const grid = document.getElementById('usersGrid');
+    grid.innerHTML = '<div class="loading">Loading users...</div>';
+
+    try {
+        const users = await usersAPI.list();
+        renderUsersGrid(users || []);
+    } catch (error) {
+        console.error('Failed to load users:', error);
+        grid.innerHTML = '<div class="empty-state"><p>Failed to load users</p></div>';
+    }
+}
+
+function renderUsersGrid(users) {
+    const grid = document.getElementById('usersGrid');
+
+    if (!users || users.length === 0) {
+        grid.innerHTML = '<div class="empty-state"><p>No users found</p></div>';
+        return;
+    }
+
+    grid.innerHTML = `
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${users.map(user => `
+                    <tr>
+                        <td><strong>${user.username}</strong>${user.id === auth.user?.id ? ' <span class="badge badge-info">you</span>' : ''}</td>
+                        <td>${user.email}</td>
+                        <td><span class="badge badge-${user.role === 'admin' ? 'danger' : user.role === 'editor' ? 'warning' : 'info'}">${user.role}</span></td>
+                        <td>${formatDate(user.created_at)}</td>
+                        <td>
+                            ${user.id !== auth.user?.id
+                                ? `<button class="btn btn-sm btn-danger delete-user-btn" data-id="${user.id}" data-username="${user.username}">Delete</button>`
+                                : ''}
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+
+    grid.querySelectorAll('.delete-user-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const username = btn.dataset.username;
+            if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+            try {
+                await usersAPI.delete(parseInt(btn.dataset.id));
+                showToast(`User "${username}" deleted`, 'success');
+                loadUsers();
+            } catch (error) {
+                showToast(error.message || 'Failed to delete user', 'error');
+            }
+        });
+    });
+}
+
+function initCreateUserModal() {
+    const createBtn = document.getElementById('createUserBtn');
+    const closeBtn = document.getElementById('closeCreateUserModal');
+    const cancelBtn = document.getElementById('cancelCreateUserModal');
+    const saveBtn = document.getElementById('saveCreateUserBtn');
+
+    createBtn.addEventListener('click', () => openModal('createUserModal'));
+    closeBtn.addEventListener('click', () => closeModal('createUserModal'));
+    cancelBtn.addEventListener('click', () => closeModal('createUserModal'));
+
+    saveBtn.addEventListener('click', async () => {
+        const username = document.getElementById('newUserUsername').value;
+        const email = document.getElementById('newUserEmail').value;
+        const password = document.getElementById('newUserPassword').value;
+        const role = document.getElementById('newUserRole').value;
+
+        if (!username || !email || !password) {
+            showToast('Please fill in all fields', 'error');
+            return;
+        }
+
+        try {
+            await usersAPI.create({ username, email, password, role });
+            showToast(`User "${username}" created`, 'success');
+            closeModal('createUserModal');
+            document.getElementById('createUserForm').reset();
+            loadUsers();
+        } catch (error) {
+            showToast(error.message || 'Failed to create user', 'error');
+        }
+    });
+}
+
 // ===== Initialization =====
 
 async function init() {
@@ -2006,6 +2386,26 @@ async function init() {
     } catch (e) {
         console.warn('Failed to load UI config, using defaults:', e);
     }
+
+    // Initialize auth forms (always needed)
+    initAuthForms();
+    initUserMenu();
+    initChangePasswordModal();
+
+    // Check auth status
+    const authenticated = await checkAuthStatus();
+    if (!authenticated) {
+        console.log('Auth required — showing login/setup');
+        return;
+    }
+
+    // User is authenticated — initialize the app
+    initApp();
+}
+
+function initApp() {
+    // Apply role-based visibility
+    applyRolePermissions();
 
     // Initialize navigation
     initNavigation();
@@ -2036,6 +2436,9 @@ async function init() {
 
     // Initialize notifications
     initNotifications();
+
+    // Initialize user management (admin only)
+    initCreateUserModal();
 
     // Wire up empty state buttons
     document.getElementById('emptyUploadBtn')?.addEventListener('click', () => {

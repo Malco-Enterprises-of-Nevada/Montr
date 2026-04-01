@@ -59,7 +59,69 @@ export const createMockDatabase = (): jest.Mocked<DatabaseAdapter> => ({
   createClientStatus: jest.fn(),
   getLatestClientStatus: jest.fn(),
   getClientWithStatus: jest.fn(),
-});
+
+  // Client playlist assignment methods
+  addClientPlaylist: jest.fn(),
+  getClientPlaylists: jest.fn(),
+  updateClientPlaylistPriority: jest.fn(),
+  removeClientPlaylist: jest.fn(),
+
+  // Client group methods
+  createGroup: jest.fn(),
+  getGroupById: jest.fn(),
+  getAllGroups: jest.fn(),
+  updateGroup: jest.fn(),
+  deleteGroup: jest.fn(),
+  addGroupMember: jest.fn(),
+  getGroupMembers: jest.fn(),
+  removeGroupMember: jest.fn(),
+  getGroupsForClient: jest.fn(),
+
+  // Schedule methods
+  createSchedule: jest.fn(),
+  getScheduleById: jest.fn(),
+  getAllSchedules: jest.fn(),
+  updateSchedule: jest.fn(),
+  deleteSchedule: jest.fn(),
+  getActiveSchedules: jest.fn(),
+
+  // Analytics / playback log methods
+  createPlaybackLog: jest.fn(),
+  updatePlaybackLog: jest.fn(),
+  getPlaybackLogs: jest.fn(),
+  getPlaybackSummary: jest.fn(),
+  getMediaPopularity: jest.fn(),
+  getUptimeStats: jest.fn(),
+  deleteOldPlaybackLogs: jest.fn(),
+
+  // Notification methods
+  createNotificationRule: jest.fn(),
+  getNotificationRuleById: jest.fn(),
+  getAllNotificationRules: jest.fn(),
+  getNotificationRulesByEvent: jest.fn(),
+  deleteNotificationRule: jest.fn(),
+  createNotificationHistory: jest.fn(),
+  getNotificationHistory: jest.fn(),
+
+  // Approval methods
+  updateMediaApproval: jest.fn(),
+  createApprovalLog: jest.fn(),
+  getApprovalLogs: jest.fn(),
+  getPendingMedia: jest.fn(),
+
+  // User methods
+  createUser: jest.fn(),
+  getUserById: jest.fn(),
+  getUserByUsername: jest.fn(),
+  getUserByEmail: jest.fn(),
+  getAllUsers: jest.fn(),
+  deleteUser: jest.fn(),
+  updateUserPassword: jest.fn(),
+  getUserCount: jest.fn().mockResolvedValue(0),
+
+  // Migration executor
+  getMigrationExecutor: jest.fn(),
+} as unknown as jest.Mocked<DatabaseAdapter>);
 
 /**
  * Helper to create a paginated result for testing

@@ -1014,6 +1014,10 @@ export class MongoDBAdapter implements DatabaseAdapter {
     await this.col('users').deleteOne({ id });
   }
 
+  async updateUserPassword(id: number, passwordHash: string): Promise<void> {
+    await this.col('users').updateOne({ id }, { $set: { password_hash: passwordHash } });
+  }
+
   async getUserCount(): Promise<number> {
     return this.col('users').countDocuments();
   }

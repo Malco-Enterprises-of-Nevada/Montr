@@ -16,6 +16,7 @@ import {
   assignGroupPlaylistSchema,
   sendCommandSchema,
 } from '../middleware/validation';
+import { requireRole } from '../middleware/jwt-auth';
 import { sendPlaylistToClient, sendCommandToGroup } from '../../websocket/handlers';
 import { clientConnectionManager } from '../../websocket/client-manager';
 import { CommandType } from '../../websocket/types';
@@ -28,6 +29,7 @@ const router = Router();
  */
 router.post(
   '/',
+  requireRole('admin', 'editor'),
   validateBody(createGroupSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const group = await groupService.createGroup(req.body);
@@ -68,6 +70,7 @@ router.get(
  */
 router.put(
   '/:id',
+  requireRole('admin', 'editor'),
   validateParams(idParamSchema),
   validateBody(updateGroupSchema),
   asyncHandler(async (req: Request, res: Response) => {
@@ -84,6 +87,7 @@ router.put(
  */
 router.delete(
   '/:id',
+  requireRole('admin', 'editor'),
   validateParams(idParamSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const params = req.params as unknown as { id: number };
@@ -114,6 +118,7 @@ router.get(
  */
 router.post(
   '/:id/members',
+  requireRole('admin', 'editor'),
   validateParams(idParamSchema),
   validateBody(addGroupMemberSchema),
   asyncHandler(async (req: Request, res: Response) => {
@@ -131,6 +136,7 @@ router.post(
  */
 router.delete(
   '/:id/members/:clientId',
+  requireRole('admin', 'editor'),
   validateParams(groupMemberParamsSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const params = req.params as unknown as { id: number; clientId: string };
@@ -146,6 +152,7 @@ router.delete(
  */
 router.post(
   '/:id/assign',
+  requireRole('admin', 'editor'),
   validateParams(idParamSchema),
   validateBody(assignGroupPlaylistSchema),
   asyncHandler(async (req: Request, res: Response) => {
@@ -179,6 +186,7 @@ router.post(
  */
 router.post(
   '/:id/command',
+  requireRole('admin', 'editor'),
   validateParams(idParamSchema),
   validateBody(sendCommandSchema),
   asyncHandler(async (req: Request, res: Response) => {

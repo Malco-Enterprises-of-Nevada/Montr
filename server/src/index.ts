@@ -17,7 +17,7 @@ import scheduleRoutes from './api/routes/schedule.routes';
 import analyticsRoutes from './api/routes/analytics.routes';
 import notificationRoutes from './api/routes/notification.routes';
 import authRoutes from './api/routes/auth.routes';
-import { apiKeyAuth } from './api/middleware/auth';
+import { requireAuth } from './api/middleware/jwt-auth';
 import { webSocketServer } from './websocket/server';
 import { scheduleService } from './services/schedule.service';
 import { notificationService } from './services/notification.service';
@@ -136,14 +136,14 @@ class MontrServer {
       res.sendFile(path.join(__dirname, 'web', 'public', 'index.html'));
     });
 
-    // API routes (with optional API key auth)
-    this.app.use('/api/media', apiKeyAuth(), mediaRoutes);
-    this.app.use('/api/playlists', apiKeyAuth(), playlistRoutes);
-    this.app.use('/api/clients', apiKeyAuth(), clientRoutes);
-    this.app.use('/api/groups', apiKeyAuth(), groupRoutes);
-    this.app.use('/api/schedules', apiKeyAuth(), scheduleRoutes);
-    this.app.use('/api/analytics', apiKeyAuth(), analyticsRoutes);
-    this.app.use('/api/notifications', apiKeyAuth(), notificationRoutes);
+    // API routes (JWT auth required — passes through in bootstrap mode when 0 users)
+    this.app.use('/api/media', requireAuth(), mediaRoutes);
+    this.app.use('/api/playlists', requireAuth(), playlistRoutes);
+    this.app.use('/api/clients', requireAuth(), clientRoutes);
+    this.app.use('/api/groups', requireAuth(), groupRoutes);
+    this.app.use('/api/schedules', requireAuth(), scheduleRoutes);
+    this.app.use('/api/analytics', requireAuth(), analyticsRoutes);
+    this.app.use('/api/notifications', requireAuth(), notificationRoutes);
 
     // Auth routes (no API key required)
     this.app.use('/api/auth', authRoutes);
