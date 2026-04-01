@@ -56,6 +56,9 @@ pub struct PlaybackEngine {
     /// Event channel sender
     event_tx: mpsc::Sender<PlaybackEvent>,
 
+    /// Event channel receiver (taken by subscriber)
+    event_rx: Arc<RwLock<Option<mpsc::Receiver<PlaybackEvent>>>>,
+
     /// Command channel sender (for external control)
     command_tx: mpsc::UnboundedSender<PlaybackCommand>,
 
@@ -168,7 +171,7 @@ impl PlaybackEngine {
 
         tracing::info!("mpv subprocess started (PID: {:?})", child.id());
 
-        let (event_tx, _rx) = mpsc::channel(100);
+        let (event_tx, event_rx) = mpsc::channel(100);
         let (command_tx, command_rx) = mpsc::unbounded_channel();
 
         Ok(Self {
@@ -176,6 +179,7 @@ impl PlaybackEngine {
             ipc_path,
             state: Arc::new(RwLock::new(PlaybackState::default())),
             event_tx,
+            event_rx: Arc::new(RwLock::new(Some(event_rx))),
             command_tx,
             command_rx: Arc::new(RwLock::new(Some(command_rx))),
             cancel_token,
@@ -323,20 +327,10 @@ impl PlaybackEngine {
         }
     }
 
-    /// Subscribe to playback events
-    pub fn subscribe_events(&self) -> mpsc::Receiver<PlaybackEvent> {
-        let (tx, rx) = mpsc::channel(100);
-        let event_tx = self.event_tx.clone();
-
-        // Forward events from internal channel to subscriber
-        tokio::spawn(async move {
-            // This is a simple bridge — in a full implementation we'd have
-            // a broadcast channel, but for now one subscriber is sufficient
-            let _ = event_tx;
-            let _ = tx;
-        });
-
-        rx
+    /// Subscribe to playback events (can only be called once)
+    pub async fn subscribe_events(&self) -> mpsc::Receiver<PlaybackEvent> {
+        self.event_rx.write().await.take()
+            .expect("subscribe_events can only be called once")
     }
 
     /// Play a media file
