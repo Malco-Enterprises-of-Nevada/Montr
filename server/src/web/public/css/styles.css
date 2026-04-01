@@ -718,6 +718,7 @@ p {
     text-align: center;
     padding: var(--spacing-2xl);
     color: var(--text-secondary);
+    grid-column: 1 / -1;
 }
 
 .spinner {
