@@ -150,6 +150,15 @@ impl HttpClient {
             .send()
             .await?;
 
+        // Handle Range Not Satisfiable — partial file is larger than source, delete and retry
+        if response.status().as_u16() == 416 && start_byte > 0 {
+            tracing::warn!("Range not satisfiable (partial file invalid), restarting download from scratch");
+            let _ = tokio::fs::remove_file(dest_path).await;
+            return Err(MontrError::HttpRequest(
+                "Server returned status: 416 Range Not Satisfiable".to_string()
+            ));
+        }
+
         // Check status
         if !response.status().is_success() {
             return Err(MontrError::HttpRequest(format!(
