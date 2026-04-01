@@ -8,6 +8,7 @@ import { execFile as execFileCallback } from 'child_process';
 import path from 'path';
 import sharp from 'sharp';
 import { getDatabase } from '../database/connection';
+import { config } from '../config/config';
 import { storageService, StorageFileInfo } from './storage.service';
 import {
   MediaFile,
@@ -227,18 +228,30 @@ export class MediaService {
   ): Promise<MediaFile> {
     const mediaType = this.getMediaType(mimeType);
 
-    // Get a local path for metadata extraction
-    const localPath = await storageService.downloadToTemp(storageInfo.filepath);
-
+    // Extract metadata — skip temp download for large files (>500MB) to avoid timeout
     let metadata: MediaMetadata = {};
-    try {
-      if (mediaType === 'video') {
-        metadata = await this.extractVideoMetadata(localPath);
-      } else if (mediaType === 'image') {
-        metadata = await this.extractImageMetadata(localPath);
+    let localPath: string | null = null;
+    const MAX_METADATA_SIZE = 500 * 1024 * 1024;
+    if (storageInfo.size <= MAX_METADATA_SIZE) {
+      try {
+        localPath = await storageService.downloadToTemp(storageInfo.filepath);
+        if (mediaType === 'video') {
+          metadata = await this.extractVideoMetadata(localPath);
+        } else if (mediaType === 'image') {
+          metadata = await this.extractImageMetadata(localPath);
+        }
+        // Clean up temp file for Spaces backend
+        if (config.storage.backend === 'spaces') {
+          const fs = await import('fs/promises');
+          await fs.unlink(localPath).catch(() => {});
+        }
+      } catch (error) {
+        logger.warn(`Failed to extract metadata for ${originalFilename}:`, error);
       }
-    } catch (error) {
-      logger.warn(`Failed to extract metadata for ${originalFilename}:`, error);
+    } else {
+      logger.info(
+        `Skipping metadata extraction for large file (${Math.round(storageInfo.size / 1024 / 1024)}MB): ${originalFilename}`
+      );
     }
 
     // Check for duplicate by checksum
@@ -270,7 +283,9 @@ export class MediaService {
 
     const media = await db.createMedia(input);
 
-    this.generateThumbnailAsync(media.id, localPath, storageInfo.filename, mediaType);
+    if (localPath) {
+      this.generateThumbnailAsync(media.id, localPath, storageInfo.filename, mediaType);
+    }
 
     logger.info(`Media created from chunked upload: ${media.id} - ${media.filename}`);
     return media;
