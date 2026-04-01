@@ -96,6 +96,16 @@ router.put(
   asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params as { id: string };
     const client = await clientService.updateClient(id, req.body);
+
+    // If playlist assignment changed, push via WebSocket
+    if (
+      req.body.assigned_playlist_id &&
+      client.assigned_playlist_id &&
+      clientConnectionManager.isConnected(id)
+    ) {
+      await sendPlaylistToClient(id, client.assigned_playlist_id);
+    }
+
     res.json(successResponse(client));
   })
 );
