@@ -1,0 +1,27 @@
+[server]
+url = "https://montr.budgetvegas.com"
+api_key = ""
+reconnect_interval = 5
+heartbeat_interval = 30
+
+[client]
+id = "041c601a-18fa-481e-a613-089189d514dc"
+name = "Mac-Display-1"
+
+[playback]
+default_image_duration = 5
+loop_playlist = true
+media_cache_dir = "/tmp/montr-client-cache"
+max_cache_size_mb = 2000
+preload_next_items = 2
+
+[system]
+auto_start = false
+log_level = "info"
+log_file = "/tmp/montr-client.log"
+log_max_size_mb = 50
+log_max_files = 3
+
+[display]
+fullscreen = false
+screen_index = 0
