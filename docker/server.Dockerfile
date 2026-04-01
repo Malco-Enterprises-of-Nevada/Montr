@@ -34,7 +34,7 @@ RUN npm ci --omit=dev --legacy-peer-deps
 FROM node:20-bookworm-slim
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
+    apt-get install -y --no-install-recommends curl ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/montr-server
