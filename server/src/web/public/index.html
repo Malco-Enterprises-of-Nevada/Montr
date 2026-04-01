@@ -6,7 +6,7 @@
     <meta http-equiv="X-UA-Compatible" content="ie=edge">
     <title>Montr - Media Playlist Management</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/styles.css?v=2">
+    <link rel="stylesheet" href="/css/styles.css?v=3">
 </head>
 <body>
     <!-- Navigation -->
@@ -179,7 +179,7 @@
                 </svg>
                 <h3>No Media Files</h3>
                 <p>Upload your first media file to get started</p>
-                <button class="btn btn-primary" onclick="document.getElementById('uploadBtn').click()">Upload Media</button>
+                <button class="btn btn-primary" id="emptyUploadBtn">Upload Media</button>
             </div>
         </section>
 
@@ -204,7 +204,7 @@
                 </svg>
                 <h3>No Playlists</h3>
                 <p>Create your first playlist to organize media files</p>
-                <button class="btn btn-primary" onclick="document.getElementById('createPlaylistBtn').click()">Create Playlist</button>
+                <button class="btn btn-primary" id="emptyCreatePlaylistBtn">Create Playlist</button>
             </div>
         </section>
 
@@ -696,11 +696,11 @@
     </div>
 
     <!-- Preview Enlarge Modal -->
-    <div id="previewEnlargeModal" class="modal" onclick="this.style.display='none'">
-        <div class="modal-content preview-enlarge-content" onclick="event.stopPropagation()">
+    <div id="previewEnlargeModal" class="modal">
+        <div class="modal-content preview-enlarge-content">
             <div class="modal-header">
                 <h3 id="previewEnlargeTitle">Preview</h3>
-                <button class="modal-close" onclick="document.getElementById('previewEnlargeModal').style.display='none'">&times;</button>
+                <button class="modal-close" id="closePreviewEnlarge">&times;</button>
             </div>
             <div class="modal-body" style="text-align:center">
                 <img id="previewEnlargeImg" src="" alt="Client preview" style="max-width:100%;max-height:70vh;border-radius:4px">
@@ -716,6 +716,6 @@
         <div class="spinner"></div>
     </div>
 
-    <script src="/js/app.js?v=3"></script>
+    <script src="/js/app.js?v=4"></script>
 </body>
 </html>

@@ -431,7 +431,7 @@ function updateHealthStatus(health) {
     document.getElementById('db-status').textContent = 'Connected';
     document.getElementById('db-status').className = 'badge badge-success';
 
-    const wsActive = health.websocket?.connections >= 0;
+    const wsActive = health.websocket?.totalConnections >= 0;
     document.getElementById('ws-status').textContent = wsActive ? 'Active' : 'Inactive';
     document.getElementById('ws-status').className = `badge badge-${wsActive ? 'success' : 'danger'}`;
 
@@ -498,7 +498,7 @@ function renderMediaGrid(media) {
                 <div class="media-name" title="${item.filename}">${item.filename}</div>
                 <div class="media-meta">
                     <span class="badge badge-info">${item.type}</span>
-                    <span>${item.file_size ? formatFileSize(item.file_size) : 'N/A'}</span>
+                    <span>${item.file_size ? formatFileSize(item.file_size) : 'N/A'}${item.duration ? ' / ' + formatDuration(item.duration) : ''}</span>
                 </div>
             </div>
             <div class="media-actions">
@@ -790,12 +790,22 @@ function renderPlaylistItems(items) {
                 </div>
             </div>
             <div class="item-controls">
-                ${index > 0 ? `<button class="btn btn-sm btn-secondary" onclick="moveItemUp(${index})">↑</button>` : ''}
-                ${index < items.length - 1 ? `<button class="btn btn-sm btn-secondary" onclick="moveItemDown(${index})">↓</button>` : ''}
-                <button class="btn btn-sm btn-danger" onclick="removePlaylistItem('${item.id}')">×</button>
+                ${index > 0 ? `<button class="btn btn-sm btn-secondary move-up-btn" data-index="${index}">↑</button>` : ''}
+                ${index < items.length - 1 ? `<button class="btn btn-sm btn-secondary move-down-btn" data-index="${index}">↓</button>` : ''}
+                <button class="btn btn-sm btn-danger remove-item-btn" data-item-id="${item.id}">×</button>
             </div>
         </div>
     `).join('');
+
+    container.querySelectorAll('.move-up-btn').forEach(btn => {
+        btn.addEventListener('click', () => moveItemUp(parseInt(btn.dataset.index)));
+    });
+    container.querySelectorAll('.move-down-btn').forEach(btn => {
+        btn.addEventListener('click', () => moveItemDown(parseInt(btn.dataset.index)));
+    });
+    container.querySelectorAll('.remove-item-btn').forEach(btn => {
+        btn.addEventListener('click', () => removePlaylistItem(btn.dataset.itemId));
+    });
 }
 
 function renderPlaylistMediaLibrary() {
@@ -822,7 +832,7 @@ function renderMediaLibraryItems(media) {
     }
 
     container.innerHTML = media.map(item => `
-        <div class="playlist-media-item" onclick="addToPlaylist('${item.id}')">
+        <div class="playlist-media-item" data-media-id="${item.id}">
             <div class="playlist-media-thumb">
                 ${item.type === 'video' ? `
                     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -839,6 +849,10 @@ function renderMediaLibraryItems(media) {
             <div class="playlist-media-name" title="${item.filename}">${item.filename}</div>
         </div>
     `).join('');
+
+    container.querySelectorAll('.playlist-media-item').forEach(el => {
+        el.addEventListener('click', () => addToPlaylist(el.dataset.mediaId));
+    });
 }
 
 async function addToPlaylist(mediaId) {
@@ -1011,16 +1025,23 @@ function renderClientsGrid(clients) {
                     </div>
                 </div>
                 <div class="client-actions">
-                    <button class="btn btn-sm btn-secondary" onclick="openClientControl('${client.id}')">
+                    <button class="btn btn-sm btn-secondary client-control-btn" data-client-id="${client.id}">
                         Controls
                     </button>
-                    <button class="btn btn-sm btn-primary" onclick="openAssignPlaylistModal('${client.id}', '${client.name || client.id}')">
+                    <button class="btn btn-sm btn-primary client-assign-btn" data-client-id="${client.id}" data-client-name="${client.name || client.id}">
                         Assign Playlist
                     </button>
                 </div>
             </div>
         `;
     }).join('');
+
+    gridEl.querySelectorAll('.client-control-btn').forEach(btn => {
+        btn.addEventListener('click', () => openClientControl(btn.dataset.clientId));
+    });
+    gridEl.querySelectorAll('.client-assign-btn').forEach(btn => {
+        btn.addEventListener('click', () => openAssignPlaylistModal(btn.dataset.clientId, btn.dataset.clientName));
+    });
 }
 
 function initRefreshClients() {
@@ -1146,7 +1167,7 @@ async function loadGroups() {
                         <button class="btn btn-sm btn-danger delete-group-btn" data-id="${group.id}" title="Delete">Delete</button>
                     </div>
                 </div>
-                <div class="card-body" style="cursor:pointer" onclick="openGroupDetail(${group.id})">
+                <div class="card-body group-detail-link" style="cursor:pointer" data-group-id="${group.id}">
                     <p class="text-muted">${group.description ? escapeHtml(group.description) : 'No description'}</p>
                     <div class="card-meta">
                         <span>${group.memberCount} member${group.memberCount !== 1 ? 's' : ''}</span>
@@ -1178,6 +1199,10 @@ async function loadGroups() {
                     }
                 }
             });
+        });
+
+        gridEl.querySelectorAll('.group-detail-link').forEach(el => {
+            el.addEventListener('click', () => openGroupDetail(parseInt(el.dataset.groupId)));
         });
     } catch (error) {
         console.error('Failed to load groups:', error);
@@ -1570,12 +1595,20 @@ async function loadPreviews(clients) {
     }
 
     grid.innerHTML = clients.map(client => `
-        <div class="preview-card" onclick="enlargePreview('${client.id}', '${escapeHtml(client.name || client.id)}')">
-            <img src="/api/clients/${client.id}/preview?t=${Date.now()}" alt="${escapeHtml(client.name || client.id)}"
-                 onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 200 140%22><rect fill=%22%23222%22 width=%22200%22 height=%22140%22/><text fill=%22%23666%22 x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22 font-size=%2214%22>No Preview</text></svg>'">
+        <div class="preview-card" data-client-id="${client.id}" data-client-name="${escapeHtml(client.name || client.id)}">
+            <img class="preview-img" src="/api/clients/${client.id}/preview?t=${Date.now()}" alt="${escapeHtml(client.name || client.id)}">
             <div class="preview-label">${escapeHtml(client.name || client.id.substring(0, 8))}</div>
         </div>
     `).join('');
+
+    grid.querySelectorAll('.preview-card').forEach(card => {
+        card.addEventListener('click', () => enlargePreview(card.dataset.clientId, card.dataset.clientName));
+    });
+    grid.querySelectorAll('.preview-img').forEach(img => {
+        img.addEventListener('error', () => {
+            img.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 140"><rect fill="#222" width="200" height="140"/><text fill="#666" x="50%" y="50%" text-anchor="middle" dy=".3em" font-size="14">No Preview</text></svg>');
+        });
+    });
 }
 
 function enlargePreview(clientId, clientName) {
@@ -1943,6 +1976,20 @@ async function init() {
 
     // Initialize notifications
     initNotifications();
+
+    // Wire up empty state buttons
+    document.getElementById('emptyUploadBtn')?.addEventListener('click', () => {
+        document.getElementById('uploadBtn').click();
+    });
+    document.getElementById('emptyCreatePlaylistBtn')?.addEventListener('click', () => {
+        document.getElementById('createPlaylistBtn').click();
+    });
+
+    // Wire up preview enlarge modal
+    const previewModal = document.getElementById('previewEnlargeModal');
+    previewModal?.addEventListener('click', () => { previewModal.style.display = 'none'; });
+    previewModal?.querySelector('.modal-content')?.addEventListener('click', (e) => e.stopPropagation());
+    document.getElementById('closePreviewEnlarge')?.addEventListener('click', () => { previewModal.style.display = 'none'; });
 
     // Load initial view
     loadDashboard();
