@@ -4,7 +4,7 @@
 #   Extract binary: docker build -f docker/client.Dockerfile --target binary-export --output type=local,dest=build/client .
 
 # ── Stage 1: Build ──────────────────────────────────────────
-FROM rust:1.75-bookworm AS builder
+FROM rust:1-bookworm AS builder
 
 # Install libmpv and pkg-config for linking
 RUN apt-get update && \
