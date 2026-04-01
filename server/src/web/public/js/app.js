@@ -1149,7 +1149,7 @@ function initAssignPlaylistModal() {
         }
 
         try {
-            await clientAPI.assignPlaylist(clientId, playlistId);
+            await clientAPI.assignPlaylist(clientId, parseInt(playlistId, 10));
             showToast('Playlist assigned successfully', 'success');
             closeModal('assignPlaylistModal');
             loadClients();
