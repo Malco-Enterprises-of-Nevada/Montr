@@ -237,9 +237,9 @@ const clientAPI = {
     },
 
     async assignPlaylist(clientId, playlistId) {
-        return await apiCall(`/clients/${clientId}/playlist`, {
+        return await apiCall(`/clients/${clientId}`, {
             method: 'PUT',
-            body: JSON.stringify({ playlistId })
+            body: JSON.stringify({ assigned_playlist_id: playlistId })
         });
     }
 };
