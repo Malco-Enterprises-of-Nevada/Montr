@@ -257,38 +257,36 @@ class ChunkedUploadService {
 
     await storageService.completeMultipartUpload(session.s3Key!, session.s3UploadId!, parts);
 
-    // Download the completed file to a temp location to compute checksum
-    const tempDir = path.join(path.resolve(config.storage.path), 'temp');
-    const tempFile = path.join(tempDir, `checksum_${session.uploadId}`);
+    const totalSize = Array.from(session.receivedChunks.values()).reduce(
+      (sum, chunk) => sum + chunk.size,
+      0
+    );
+    const filename = path.basename(session.s3Key!);
 
-    try {
-      // For S3, we compute checksum from the parts' sizes as a fallback;
-      // ideally the storage service provides a way to stream the file.
-      // Here we use the assembled file size from chunk metadata.
-      const totalSize = Array.from(session.receivedChunks.values()).reduce(
-        (sum, chunk) => sum + chunk.size,
-        0
-      );
-
-      const filename = path.basename(session.s3Key!);
-
-      return {
-        filename,
-        filepath: session.s3Key!,
-        checksum: crypto
-          .createHash('sha256')
-          .update(`${session.s3Key}:${totalSize}:${session.s3UploadId}`)
-          .digest('hex'),
-        size: totalSize,
-      };
-    } finally {
-      // Clean up temp file if it was created
+    // Compute real checksum by downloading from Spaces (skip for files >500MB)
+    const MAX_CHECKSUM_SIZE = 500 * 1024 * 1024;
+    let checksum = '';
+    if (totalSize <= MAX_CHECKSUM_SIZE) {
       try {
-        await fs.unlink(tempFile);
-      } catch {
-        // File may not exist; ignore
+        const tempPath = await storageService.downloadToTemp(session.s3Key!);
+        checksum = await this.calculateFileChecksumStream(tempPath);
+        await fs.unlink(tempPath).catch(() => {});
+        logger.info(`Computed checksum for ${filename}: ${checksum}`);
+      } catch (error) {
+        logger.warn(`Failed to compute checksum for ${filename}, storing empty: ${error}`);
       }
+    } else {
+      logger.info(
+        `Skipping checksum for large file (${Math.round(totalSize / 1024 / 1024)}MB): ${filename}`
+      );
     }
+
+    return {
+      filename,
+      filepath: session.s3Key!,
+      checksum,
+      size: totalSize,
+    };
   }
 
   /**
