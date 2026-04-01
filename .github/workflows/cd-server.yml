@@ -1,0 +1,35 @@
+name: Deploy Server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'docker/server.Dockerfile'
+      - 'docker-compose.yml'
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            cd /opt/montr
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose build --no-cache server
+            docker compose up -d
+            sleep 10
+            curl -sf http://localhost:3000/api/health || (echo "Health check failed!" && docker logs montr-server-1 --tail 20 && exit 1)
+            echo "Deploy successful!"

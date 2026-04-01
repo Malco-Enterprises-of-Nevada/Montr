@@ -1,3 +1,4 @@
+/* eslint-disable max-classes-per-file */
 /**
  * Storage Service
  * Handles file system operations for media files with pluggable storage backends.
@@ -19,6 +20,7 @@ import {
   UploadPartCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
+  PutObjectAclCommand,
 } from '@aws-sdk/client-s3';
 import { config } from '../config/config';
 import { getLogger } from '../utils/logger';
@@ -316,48 +318,51 @@ export class LocalStorageService implements IStorageService {
     return '';
   }
 
-  async downloadToTemp(filepath: string): Promise<string> {
-    return this.getFullPath(filepath);
+  downloadToTemp(filepath: string): Promise<string> {
+    return Promise.resolve(this.getFullPath(filepath));
   }
 
-  async initMultipartUpload(_key: string): Promise<string> {
-    throw new AppError(
-      ErrorCode.BAD_REQUEST,
-      'Multipart upload is not supported for local storage',
-      400
+  initMultipartUpload(_key: string): Promise<string> {
+    return Promise.reject(
+      new AppError(
+        ErrorCode.BAD_REQUEST,
+        'Multipart upload is not supported for local storage',
+        400
+      )
     );
   }
 
-  async uploadPart(
-    _key: string,
-    _uploadId: string,
-    _partNumber: number,
-    _body: Buffer
-  ): Promise<string> {
-    throw new AppError(
-      ErrorCode.BAD_REQUEST,
-      'Multipart upload is not supported for local storage',
-      400
+  uploadPart(_key: string, _uploadId: string, _partNumber: number, _body: Buffer): Promise<string> {
+    return Promise.reject(
+      new AppError(
+        ErrorCode.BAD_REQUEST,
+        'Multipart upload is not supported for local storage',
+        400
+      )
     );
   }
 
-  async completeMultipartUpload(
+  completeMultipartUpload(
     _key: string,
     _uploadId: string,
     _parts: Array<{ PartNumber: number; ETag: string }>
   ): Promise<void> {
-    throw new AppError(
-      ErrorCode.BAD_REQUEST,
-      'Multipart upload is not supported for local storage',
-      400
+    return Promise.reject(
+      new AppError(
+        ErrorCode.BAD_REQUEST,
+        'Multipart upload is not supported for local storage',
+        400
+      )
     );
   }
 
-  async abortMultipartUpload(_key: string, _uploadId: string): Promise<void> {
-    throw new AppError(
-      ErrorCode.BAD_REQUEST,
-      'Multipart upload is not supported for local storage',
-      400
+  abortMultipartUpload(_key: string, _uploadId: string): Promise<void> {
+    return Promise.reject(
+      new AppError(
+        ErrorCode.BAD_REQUEST,
+        'Multipart upload is not supported for local storage',
+        400
+      )
     );
   }
 }
@@ -430,8 +435,12 @@ export class SpacesStorageService implements IStorageService {
         Bucket: this.bucket,
         Key: key,
         Body: fileBuffer,
-        ACL: 'private',
       })
+    );
+
+    // DO Spaces ignores ACL on PutObject, so set it separately
+    await this.s3Client.send(
+      new PutObjectAclCommand({ Bucket: this.bucket, Key: key, ACL: 'public-read' })
     );
 
     const checksum = this.calculateChecksum(fileBuffer);
@@ -525,8 +534,10 @@ export class SpacesStorageService implements IStorageService {
         Key: key,
         Body: buffer,
         ContentType: 'image/jpeg',
-        ACL: 'private',
       })
+    );
+    await this.s3Client.send(
+      new PutObjectAclCommand({ Bucket: this.bucket, Key: key, ACL: 'public-read' })
     );
 
     logger.info(`Thumbnail saved to Spaces: ${key}`);
@@ -706,6 +717,11 @@ export class SpacesStorageService implements IStorageService {
           Parts: parts,
         },
       })
+    );
+
+    // Set public-read ACL on the completed object
+    await this.s3Client.send(
+      new PutObjectAclCommand({ Bucket: this.bucket, Key: key, ACL: 'public-read' })
     );
 
     logger.info(`Multipart upload completed for ${key}`);
