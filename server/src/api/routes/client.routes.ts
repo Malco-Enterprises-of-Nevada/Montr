@@ -439,7 +439,16 @@ router.get(
       }
     }
 
-    throw new AppError(ErrorCode.RESOURCE_NOT_FOUND, `No preview available for client ${id}`, 404);
+    // Return a placeholder SVG instead of 404
+    res
+      .type('image/svg+xml')
+      .send(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180">' +
+          '<rect fill="#1a1a2e" width="320" height="180"/>' +
+          '<text fill="#555" x="50%" y="45%" text-anchor="middle" font-family="system-ui,sans-serif" font-size="16">No Preview</text>' +
+          '<text fill="#444" x="50%" y="60%" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">Client not streaming</text>' +
+          '</svg>'
+      );
   })
 );
 
