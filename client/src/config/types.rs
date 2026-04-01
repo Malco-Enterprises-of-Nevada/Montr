@@ -76,6 +76,10 @@ pub struct SystemConfig {
     #[serde(default)]
     pub auto_start: bool,
 
+    /// Enable automatic updates from GitHub releases
+    #[serde(default = "default_auto_update")]
+    pub auto_update: bool,
+
     /// Log level (error, warn, info, debug, trace)
     #[serde(default = "default_log_level")]
     pub log_level: String,
@@ -135,6 +139,10 @@ fn default_max_cache_size() -> u64 {
 
 fn default_preload_next_items() -> usize {
     2
+}
+
+fn default_auto_update() -> bool {
+    true
 }
 
 fn default_log_level() -> String {
@@ -258,6 +266,7 @@ mod tests {
             },
             system: SystemConfig {
                 auto_start: false,
+                auto_update: true,
                 log_level: "info".to_string(),
                 log_file: PathBuf::from("./client.log"),
                 log_max_size_mb: 100,

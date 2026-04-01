@@ -7,6 +7,7 @@ pub mod network;
 pub mod playback;
 pub mod state;
 pub mod status;
+pub mod update;
 
 // Re-export commonly used types at crate root for convenience
 pub use error::{MontrError, Result};

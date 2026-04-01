@@ -21,6 +21,9 @@ jobs:
   lint-and-format:
     name: Lint, Format, Typecheck
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,10 +31,10 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: server/package-lock.json
-      - run: cd server && npm ci
-      - run: cd server && npm run lint
-      - run: cd server && npm run format:check
-      - run: cd server && npm run typecheck
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
 
   test:
     name: Test (${{ matrix.os }})
@@ -39,6 +42,9 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: server
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -46,8 +52,8 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: server/package-lock.json
-      - run: cd server && npm ci
-      - run: cd server && npm run test:coverage
+      - run: npm ci
+      - run: npm run test:coverage
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
