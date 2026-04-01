@@ -18,11 +18,16 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: server/package-lock.json
-      - run: cd server && npm ci
-      - run: cd server && npm run lint
-      - run: cd server && npm run format:check
-      - run: cd server && npm run typecheck
-      - run: cd server && npm run test:coverage
+      - run: npm ci
+        working-directory: server
+      - run: npm run lint
+        working-directory: server
+      - run: npm run format:check
+        working-directory: server
+      - run: npm run typecheck
+        working-directory: server
+      - run: npm run test:coverage
+        working-directory: server
 
       # Client validation
       - uses: dtolnay/rust-toolchain@stable
@@ -30,14 +35,20 @@ jobs:
           toolchain: '1.75'
           components: rustfmt, clippy
       - run: sudo apt-get update && sudo apt-get install -y libmpv-dev
-      - run: cd client && cargo fmt --check
-      - run: cd client && cargo clippy -- -D warnings
-      - run: cd client && cargo test
+      - run: cargo fmt --check
+        working-directory: client
+      - run: cargo clippy -- -D warnings
+        working-directory: client
+      - run: cargo test
+        working-directory: client
 
   build-server:
     name: Build Server
     needs: validate
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -45,8 +56,9 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: server/package-lock.json
-      - run: cd server && npm ci && npm run build
+      - run: npm ci && npm run build
       - run: tar -czf montr-server-${{ github.ref_name }}.tar.gz -C server dist package.json package-lock.json
+        working-directory: .
       - uses: actions/upload-artifact@v4
         with:
           name: montr-server-${{ github.ref_name }}

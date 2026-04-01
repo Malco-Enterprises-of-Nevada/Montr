@@ -197,6 +197,7 @@ mod tests {
             },
             system: crate::config::SystemConfig {
                 auto_start: false,
+                auto_update: true,
                 log_level: "info".to_string(),
                 log_file,
                 log_max_size_mb: 100,

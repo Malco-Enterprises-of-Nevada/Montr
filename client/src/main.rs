@@ -30,6 +30,16 @@ async fn main() -> Result<()> {
     // Step 5: Log startup information
     logging::log_startup_info(&cfg);
 
+    // Step 5.5: Check for updates
+    match montr_client::update::check_and_update(cfg.system.auto_update).await {
+        Ok(true) => {
+            tracing::info!("Update applied, restarting...");
+            std::process::exit(0);
+        }
+        Ok(false) => {}
+        Err(e) => tracing::warn!("Update check failed (continuing): {}", e),
+    }
+
     // Step 6: Run the async client application
     if let Err(e) = run_client(cfg).await {
         tracing::error!("Client error: {:?}", e);

@@ -27,6 +27,9 @@ RUN mkdir src && \
 
 # Copy actual source and build
 COPY client/src ./src
+COPY client/build.rs ./build.rs
+ARG BUILD_SHA=unknown
+ENV BUILD_SHA=${BUILD_SHA}
 RUN cargo build --release
 
 # ── Stage 2: Binary export (for cross-compile extraction) ──

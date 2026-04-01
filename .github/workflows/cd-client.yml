@@ -1,0 +1,54 @@
+name: Deploy Client
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'client/**'
+      - 'docker/client.Dockerfile'
+
+concurrency:
+  group: deploy-client
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    name: Build & Release (Linux amd64)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build client binary via Docker
+        run: >
+          DOCKER_BUILDKIT=1 docker build
+          -f docker/client.Dockerfile
+          --build-arg BUILD_SHA=${{ github.sha }}
+          --target binary-export
+          --output type=local,dest=build/client .
+
+      - name: Generate SHA-256 checksum
+        run: |
+          cd build/client
+          sha256sum montr-client > montr-client.sha256
+          cat montr-client.sha256
+
+      - name: Delete existing latest release
+        run: gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Build
+          body: |
+            Automated build from commit ${{ github.sha }}
+            Branch: main
+            Date: ${{ github.event.head_commit.timestamp }}
+          prerelease: true
+          files: |
+            build/client/montr-client
+            build/client/montr-client.sha256
