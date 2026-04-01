@@ -123,9 +123,7 @@ impl StateCoordinator {
             CoordinatorMessage::ServerMessage(server_msg) => {
                 self.handle_server_message(server_msg).await
             }
-            CoordinatorMessage::PlaybackEvent(event) => {
-                self.handle_playback_event(event).await
-            }
+            CoordinatorMessage::PlaybackEvent(event) => self.handle_playback_event(event).await,
             CoordinatorMessage::DownloadComplete { media_id, success } => {
                 self.handle_download_complete(media_id, success).await
             }
@@ -191,15 +189,20 @@ impl StateCoordinator {
                         self.start_playback().await?;
                     }
                     "pause" => {
-                        self.playback_tx
-                            .send(PlaybackCommand::Pause)
-                            .map_err(|e| MontrError::Playback(format!("Failed to send pause command: {}", e)))?;
+                        self.playback_tx.send(PlaybackCommand::Pause).map_err(|e| {
+                            MontrError::Playback(format!("Failed to send pause command: {}", e))
+                        })?;
                         self.state.set_playing(false).await;
                     }
                     "resume" => {
                         self.playback_tx
                             .send(PlaybackCommand::Resume)
-                            .map_err(|e| MontrError::Playback(format!("Failed to send resume command: {}", e)))?;
+                            .map_err(|e| {
+                                MontrError::Playback(format!(
+                                    "Failed to send resume command: {}",
+                                    e
+                                ))
+                            })?;
                         self.state.set_playing(true).await;
                     }
                     "skip" => {
@@ -305,7 +308,10 @@ impl StateCoordinator {
             }
         });
 
-        let results = self.cache_manager.download_batch(items, Some(progress_tx)).await;
+        let results = self
+            .cache_manager
+            .download_batch(items, Some(progress_tx))
+            .await;
 
         let success_count = results.iter().filter(|(_, r)| r.is_ok()).count();
         let failure_count = total - success_count;
@@ -340,7 +346,10 @@ impl StateCoordinator {
                     let checksum = item.checksum.clone().unwrap_or_default();
                     let cm = cache_manager.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = cm.download_media(item.media_id, &item.filename, &checksum).await {
+                        if let Err(e) = cm
+                            .download_media(item.media_id, &item.filename, &checksum)
+                            .await
+                        {
                             tracing::warn!("Preload failed for media {}: {}", item.media_id, e);
                         }
                     });
@@ -390,7 +399,10 @@ impl StateCoordinator {
                 }
                 let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                 if remaining.is_zero() {
-                    tracing::warn!("Media {} not available after timeout, skipping to next", media_id);
+                    tracing::warn!(
+                        "Media {} not available after timeout, skipping to next",
+                        media_id
+                    );
                     // Signal end-of-file so the coordinator loop advances
                     let _ = self.playback_tx.send(PlaybackCommand::Stop);
                     return Ok(());
@@ -450,8 +462,7 @@ mod tests {
             }
         });
 
-        mock.expect_command_sender()
-            .returning(move || tx.clone());
+        mock.expect_command_sender().returning(move || tx.clone());
 
         mock
     }
@@ -472,13 +483,8 @@ mod tests {
         );
 
         let playback_engine = create_mock_playback_engine();
-        let coordinator = StateCoordinator::new(
-            state,
-            cache_manager,
-            &playback_engine,
-            cancel_token,
-            2,
-        );
+        let coordinator =
+            StateCoordinator::new(state, cache_manager, &playback_engine, cancel_token, 2);
 
         // Should be able to get message sender
         let _sender = coordinator.message_sender();
@@ -525,10 +531,7 @@ mod tests {
         });
 
         // Handle message
-        coordinator
-            .handle_server_message(message)
-            .await
-            .unwrap();
+        coordinator.handle_server_message(message).await.unwrap();
 
         // Verify state was updated
         assert_eq!(state.playlist_id().await, Some(42));
@@ -589,7 +592,10 @@ mod tests {
 
         // Simulate the MediaStarted event that would come from the playback engine
         let started_event = PlaybackEventMessage::MediaStarted { media_id: 2 };
-        coordinator.handle_playback_event(started_event).await.unwrap();
+        coordinator
+            .handle_playback_event(started_event)
+            .await
+            .unwrap();
 
         // Now state should reflect the next media
         assert_eq!(state.current_media_id().await, Some(2));
@@ -612,13 +618,8 @@ mod tests {
         );
 
         let playback_engine = create_mock_playback_engine();
-        let coordinator = StateCoordinator::new(
-            state,
-            cache_manager,
-            &playback_engine,
-            cancel_token,
-            2,
-        );
+        let coordinator =
+            StateCoordinator::new(state, cache_manager, &playback_engine, cancel_token, 2);
 
         let sender = coordinator.message_sender();
 
@@ -995,13 +996,13 @@ mod tests {
         cancel_token.cancel();
 
         // run() should exit cleanly
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            coordinator.run(),
-        )
-        .await;
+        let result =
+            tokio::time::timeout(std::time::Duration::from_secs(5), coordinator.run()).await;
 
         assert!(result.is_ok(), "run() should have completed before timeout");
-        assert!(result.unwrap().is_ok(), "run() should return Ok on cancellation");
+        assert!(
+            result.unwrap().is_ok(),
+            "run() should return Ok on cancellation"
+        );
     }
 }

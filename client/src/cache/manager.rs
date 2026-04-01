@@ -59,12 +59,12 @@ impl CacheManager {
     /// Initialize cache directory
     pub async fn init(&self) -> Result<()> {
         if !self.cache_dir.exists() {
-            fs::create_dir_all(&self.cache_dir)
-                .await
-                .map_err(|e| MontrError::DirectoryCreation {
+            fs::create_dir_all(&self.cache_dir).await.map_err(|e| {
+                MontrError::DirectoryCreation {
                     path: self.cache_dir.clone(),
                     source: e,
-                })?;
+                }
+            })?;
         }
 
         tracing::info!("Cache manager initialized at {:?}", self.cache_dir);
@@ -119,12 +119,14 @@ impl CacheManager {
         }
 
         // Acquire semaphore permit to limit concurrent downloads
-        let _permit = self.download_semaphore.acquire().await.map_err(|_| {
-            MontrError::DownloadFailed {
-                url: format!("media/{}", media_id),
-                reason: "Failed to acquire download permit".to_string(),
-            }
-        })?;
+        let _permit =
+            self.download_semaphore
+                .acquire()
+                .await
+                .map_err(|_| MontrError::DownloadFailed {
+                    url: format!("media/{}", media_id),
+                    reason: "Failed to acquire download permit".to_string(),
+                })?;
 
         let final_path = self.get_cache_path(media_id, filename);
         let temp_path = final_path.with_extension("tmp");
@@ -271,12 +273,13 @@ impl CacheManager {
     pub async fn get_cache_size(&self) -> Result<u64> {
         let mut total_size = 0u64;
 
-        let mut entries = fs::read_dir(&self.cache_dir)
-            .await
-            .map_err(|e| MontrError::FileAccess {
-                path: self.cache_dir.clone(),
-                source: e,
-            })?;
+        let mut entries =
+            fs::read_dir(&self.cache_dir)
+                .await
+                .map_err(|e| MontrError::FileAccess {
+                    path: self.cache_dir.clone(),
+                    source: e,
+                })?;
 
         while let Some(entry) = entries.next_entry().await.map_err(|e| MontrError::Io(e))? {
             if let Ok(metadata) = entry.metadata().await {
@@ -293,12 +296,13 @@ impl CacheManager {
     pub async fn list_cached_media(&self) -> Result<Vec<u32>> {
         let mut media_ids = Vec::new();
 
-        let mut entries = fs::read_dir(&self.cache_dir)
-            .await
-            .map_err(|e| MontrError::FileAccess {
-                path: self.cache_dir.clone(),
-                source: e,
-            })?;
+        let mut entries =
+            fs::read_dir(&self.cache_dir)
+                .await
+                .map_err(|e| MontrError::FileAccess {
+                    path: self.cache_dir.clone(),
+                    source: e,
+                })?;
 
         while let Some(entry) = entries.next_entry().await.map_err(|e| MontrError::Io(e))? {
             if let Ok(metadata) = entry.metadata().await {
@@ -320,12 +324,13 @@ impl CacheManager {
 
     /// Clear entire cache directory
     pub async fn clear_cache(&self) -> Result<()> {
-        let mut entries = fs::read_dir(&self.cache_dir)
-            .await
-            .map_err(|e| MontrError::FileAccess {
-                path: self.cache_dir.clone(),
-                source: e,
-            })?;
+        let mut entries =
+            fs::read_dir(&self.cache_dir)
+                .await
+                .map_err(|e| MontrError::FileAccess {
+                    path: self.cache_dir.clone(),
+                    source: e,
+                })?;
 
         let mut removed = 0;
         while let Some(entry) = entries.next_entry().await.map_err(|e| MontrError::Io(e))? {
@@ -372,11 +377,7 @@ mod tests {
         let http_client = create_test_http_client();
         let cancel_token = CancellationToken::new();
 
-        let manager = CacheManager::new(
-            http_client,
-            temp_dir.path().to_path_buf(),
-            cancel_token,
-        );
+        let manager = CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token);
 
         assert!(manager.is_ok());
     }
@@ -401,12 +402,8 @@ mod tests {
         let http_client = create_test_http_client();
         let cancel_token = CancellationToken::new();
 
-        let manager = CacheManager::new(
-            http_client,
-            temp_dir.path().to_path_buf(),
-            cancel_token,
-        )
-        .unwrap();
+        let manager =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
 
         let path = manager.get_cache_path(42, "video.mp4");
         assert!(path.ends_with("42_video.mp4"));
@@ -418,12 +415,8 @@ mod tests {
         let http_client = create_test_http_client();
         let cancel_token = CancellationToken::new();
 
-        let manager = CacheManager::new(
-            http_client,
-            temp_dir.path().to_path_buf(),
-            cancel_token,
-        )
-        .unwrap();
+        let manager =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
         manager.init().await.unwrap();
 
         // Not cached initially
@@ -443,12 +436,8 @@ mod tests {
         let http_client = create_test_http_client();
         let cancel_token = CancellationToken::new();
 
-        let manager = CacheManager::new(
-            http_client,
-            temp_dir.path().to_path_buf(),
-            cancel_token,
-        )
-        .unwrap();
+        let manager =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
         manager.init().await.unwrap();
 
         // Empty cache
@@ -471,12 +460,8 @@ mod tests {
         let http_client = create_test_http_client();
         let cancel_token = CancellationToken::new();
 
-        let manager = CacheManager::new(
-            http_client,
-            temp_dir.path().to_path_buf(),
-            cancel_token,
-        )
-        .unwrap();
+        let manager =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
         manager.init().await.unwrap();
 
         // Create some cached files
@@ -500,12 +485,8 @@ mod tests {
         let http_client = create_test_http_client();
         let cancel_token = CancellationToken::new();
 
-        let manager = CacheManager::new(
-            http_client,
-            temp_dir.path().to_path_buf(),
-            cancel_token,
-        )
-        .unwrap();
+        let manager =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
         manager.init().await.unwrap();
 
         // Create a file
@@ -524,12 +505,8 @@ mod tests {
         let http_client = create_test_http_client();
         let cancel_token = CancellationToken::new();
 
-        let manager = CacheManager::new(
-            http_client,
-            temp_dir.path().to_path_buf(),
-            cancel_token,
-        )
-        .unwrap();
+        let manager =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
         manager.init().await.unwrap();
 
         // Create multiple files
@@ -554,19 +531,12 @@ mod tests {
         let http_client = create_test_http_client();
         let cancel_token = CancellationToken::new();
 
-        let manager1 = CacheManager::new(
-            http_client,
-            temp_dir.path().to_path_buf(),
-            cancel_token,
-        )
-        .unwrap();
+        let manager1 =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
 
         let manager2 = manager1.clone();
 
-        assert_eq!(
-            manager1.cache_dir,
-            manager2.cache_dir
-        );
+        assert_eq!(manager1.cache_dir, manager2.cache_dir);
     }
 
     #[tokio::test]
@@ -603,8 +573,7 @@ mod tests {
         fs::write(&path, b"hello world").await.unwrap();
 
         // Provide a wrong checksum
-        let wrong_checksum =
-            "0000000000000000000000000000000000000000000000000000000000000000";
+        let wrong_checksum = "0000000000000000000000000000000000000000000000000000000000000000";
 
         assert!(!manager.is_cached_valid(1, "test.mp4", wrong_checksum).await);
     }
@@ -619,10 +588,13 @@ mod tests {
         manager.init().await.unwrap();
 
         // No file exists — any checksum should return false
-        let some_checksum =
-            "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+        let some_checksum = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
 
-        assert!(!manager.is_cached_valid(99, "nonexistent.mp4", some_checksum).await);
+        assert!(
+            !manager
+                .is_cached_valid(99, "nonexistent.mp4", some_checksum)
+                .await
+        );
     }
 
     #[tokio::test]
@@ -645,7 +617,9 @@ mod tests {
         // Call download_media — it should return the cached path immediately.
         // The HTTP client points at a non-existent server, so if it attempted
         // an actual download it would fail. Success here proves the cache hit.
-        let result = manager.download_media(1, "cached.mp4", &valid_checksum).await;
+        let result = manager
+            .download_media(1, "cached.mp4", &valid_checksum)
+            .await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), path);
     }

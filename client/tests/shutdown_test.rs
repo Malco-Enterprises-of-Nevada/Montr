@@ -3,7 +3,6 @@
 /// These tests verify that the client handles shutdown signals correctly,
 /// which is essential for E2E testing where the test framework needs to
 /// cleanly stop the client process.
-
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use tempfile::TempDir;
@@ -46,8 +45,7 @@ fn test_client_responds_to_sigterm() {
     std::thread::sleep(Duration::from_millis(500));
 
     // Send SIGTERM
-    signal::kill(Pid::from_raw(pid), Signal::SIGTERM)
-        .expect("Failed to send SIGTERM");
+    signal::kill(Pid::from_raw(pid), Signal::SIGTERM).expect("Failed to send SIGTERM");
 
     // Wait for graceful shutdown (with timeout)
     let timeout = Duration::from_secs(5);
@@ -114,8 +112,7 @@ fn test_client_responds_to_sigint() {
     std::thread::sleep(Duration::from_millis(500));
 
     // Send SIGINT (Ctrl+C)
-    signal::kill(Pid::from_raw(pid), Signal::SIGINT)
-        .expect("Failed to send SIGINT");
+    signal::kill(Pid::from_raw(pid), Signal::SIGINT).expect("Failed to send SIGINT");
 
     // Wait for graceful shutdown (with timeout)
     let timeout = Duration::from_secs(5);
@@ -185,12 +182,14 @@ fn test_client_cleanup_on_shutdown() {
     assert!(cache_dir.exists(), "Cache directory should be created");
 
     // Send SIGTERM
-    signal::kill(Pid::from_raw(pid), Signal::SIGTERM)
-        .expect("Failed to send SIGTERM");
+    signal::kill(Pid::from_raw(pid), Signal::SIGTERM).expect("Failed to send SIGTERM");
 
     // Wait for shutdown
     let _ = child.wait_with_output();
 
     // Verify directories still exist (client shouldn't delete them)
-    assert!(cache_dir.exists(), "Cache directory should persist after shutdown");
+    assert!(
+        cache_dir.exists(),
+        "Cache directory should persist after shutdown"
+    );
 }

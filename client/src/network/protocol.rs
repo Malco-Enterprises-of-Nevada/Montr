@@ -283,11 +283,7 @@ pub struct CommandMessage {
 
 impl ClientMessage {
     /// Create a registration message
-    pub fn register(
-        client_id: String,
-        version: String,
-        capabilities: ClientCapabilities,
-    ) -> Self {
+    pub fn register(client_id: String, version: String, capabilities: ClientCapabilities) -> Self {
         Self::Register(RegisterMessage {
             client_id,
             version,
@@ -326,7 +322,11 @@ impl ClientMessage {
     }
 
     /// Create an error report message
-    pub fn error(client_id: String, error: String, context: Option<HashMap<String, serde_json::Value>>) -> Self {
+    pub fn error(
+        client_id: String,
+        error: String,
+        context: Option<HashMap<String, serde_json::Value>>,
+    ) -> Self {
         Self::Error(ErrorMessage {
             client_id,
             error,

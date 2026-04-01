@@ -109,7 +109,8 @@ impl HttpClient {
     ) -> Result<()> {
         // Check if partial file exists for resume
         let start_byte = if options.resume && dest_path.exists() {
-            dest_path.metadata()
+            dest_path
+                .metadata()
                 .map_err(|e| MontrError::FileAccess {
                     path: dest_path.to_path_buf(),
                     source: e,
@@ -152,10 +153,12 @@ impl HttpClient {
 
         // Handle Range Not Satisfiable — partial file is larger than source, delete and retry
         if response.status().as_u16() == 416 && start_byte > 0 {
-            tracing::warn!("Range not satisfiable (partial file invalid), restarting download from scratch");
+            tracing::warn!(
+                "Range not satisfiable (partial file invalid), restarting download from scratch"
+            );
             let _ = tokio::fs::remove_file(dest_path).await;
             return Err(MontrError::HttpRequest(
-                "Server returned status: 416 Range Not Satisfiable".to_string()
+                "Server returned status: 416 Range Not Satisfiable".to_string(),
             ));
         }
 
@@ -199,7 +202,10 @@ impl HttpClient {
             );
             pb.set_message(format!(
                 "Downloading {}",
-                dest_path.file_name().unwrap_or(OsStr::new("unknown")).to_string_lossy()
+                dest_path
+                    .file_name()
+                    .unwrap_or(OsStr::new("unknown"))
+                    .to_string_lossy()
             ));
             if start_byte > 0 {
                 pb.set_position(start_byte);
@@ -222,12 +228,12 @@ impl HttpClient {
         } else {
             // Create parent directories if needed
             if let Some(parent) = dest_path.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|e| MontrError::DirectoryCreation {
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    MontrError::DirectoryCreation {
                         path: parent.to_path_buf(),
                         source: e,
-                    })?;
+                    }
+                })?;
             }
 
             File::create(dest_path)
@@ -266,17 +272,18 @@ impl HttpClient {
         if let Some(pb) = progress {
             pb.finish_with_message(format!(
                 "Downloaded {}",
-                dest_path.file_name().unwrap_or(OsStr::new("unknown")).to_string_lossy()
+                dest_path
+                    .file_name()
+                    .unwrap_or(OsStr::new("unknown"))
+                    .to_string_lossy()
             ));
         }
 
         // Flush file
-        file.flush()
-            .await
-            .map_err(|e| MontrError::CacheWrite {
-                path: dest_path.to_path_buf(),
-                source: e,
-            })?;
+        file.flush().await.map_err(|e| MontrError::CacheWrite {
+            path: dest_path.to_path_buf(),
+            source: e,
+        })?;
 
         Ok(())
     }
@@ -295,12 +302,7 @@ impl HttpClient {
             );
         }
 
-        let response = self
-            .client
-            .head(&url)
-            .headers(headers)
-            .send()
-            .await?;
+        let response = self.client.head(&url).headers(headers).send().await?;
 
         if !response.status().is_success() {
             return Err(MontrError::HttpRequest(format!(
@@ -314,9 +316,7 @@ impl HttpClient {
             .get(CONTENT_LENGTH)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<u64>().ok())
-            .ok_or_else(|| {
-                MontrError::HttpRequest("Missing Content-Length header".to_string())
-            })?;
+            .ok_or_else(|| MontrError::HttpRequest("Missing Content-Length header".to_string()))?;
 
         Ok(size)
     }
@@ -378,8 +378,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_media_invalid_url() {
-        let client = HttpClient::new("http://invalid-nonexistent-server.test".to_string())
-            .unwrap();
+        let client = HttpClient::new("http://invalid-nonexistent-server.test".to_string()).unwrap();
         let temp_dir = TempDir::new().unwrap();
         let dest = temp_dir.path().join("test.mp4");
 

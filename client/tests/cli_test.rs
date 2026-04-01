@@ -2,7 +2,6 @@
 ///
 /// These tests verify that the client binary correctly handles command-line arguments
 /// and configuration files, which is essential for E2E testing.
-
 use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
@@ -19,8 +18,8 @@ fn test_binary_exists() {
         "target/release/montr-client"
     };
 
-    let metadata = fs::metadata(binary_path)
-        .expect("Client binary not found. Run 'cargo build' first.");
+    let metadata =
+        fs::metadata(binary_path).expect("Client binary not found. Run 'cargo build' first.");
 
     #[cfg(unix)]
     {
@@ -191,8 +190,8 @@ fn test_missing_config_file_error() {
     // Should have error message
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Configuration error") ||
-        stderr.contains("not found") ||
-        stderr.contains("No such file")
+        stderr.contains("Configuration error")
+            || stderr.contains("not found")
+            || stderr.contains("No such file")
     );
 }

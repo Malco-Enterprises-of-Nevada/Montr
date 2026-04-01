@@ -8,10 +8,7 @@ pub enum MontrError {
     // Configuration errors
     /// Failed to read config file
     #[error("Failed to read config file at {path}: {source}")]
-    ConfigFileRead {
-        path: PathBuf,
-        source: io::Error,
-    },
+    ConfigFileRead { path: PathBuf, source: io::Error },
 
     /// Failed to parse TOML config file
     #[error("Failed to parse config file: {0}")]
@@ -41,24 +38,15 @@ pub enum MontrError {
     // File system errors
     /// Failed to create directory
     #[error("Failed to create directory {path}: {source}")]
-    DirectoryCreation {
-        path: PathBuf,
-        source: io::Error,
-    },
+    DirectoryCreation { path: PathBuf, source: io::Error },
 
     /// Failed to access file or directory
     #[error("Failed to access path {path}: {source}")]
-    FileAccess {
-        path: PathBuf,
-        source: io::Error,
-    },
+    FileAccess { path: PathBuf, source: io::Error },
 
     /// Failed to save config file
     #[error("Failed to save config file to {path}: {source}")]
-    ConfigSave {
-        path: PathBuf,
-        source: io::Error,
-    },
+    ConfigSave { path: PathBuf, source: io::Error },
 
     // Logging errors
     /// Failed to initialize logging system
@@ -67,10 +55,7 @@ pub enum MontrError {
 
     /// Failed to set up log file
     #[error("Failed to set up log file at {path}: {source}")]
-    LogFileSetup {
-        path: PathBuf,
-        source: io::Error,
-    },
+    LogFileSetup { path: PathBuf, source: io::Error },
 
     // Network errors
     /// WebSocket connection failed
@@ -177,17 +162,11 @@ pub enum MontrError {
 
     /// Failed to write to cache
     #[error("Failed to write to cache at {path}: {source}")]
-    CacheWrite {
-        path: PathBuf,
-        source: io::Error,
-    },
+    CacheWrite { path: PathBuf, source: io::Error },
 
     /// Failed to read from cache
     #[error("Failed to read from cache at {path}: {source}")]
-    CacheRead {
-        path: PathBuf,
-        source: io::Error,
-    },
+    CacheRead { path: PathBuf, source: io::Error },
 
     /// File corruption detected
     #[error("File corruption detected at {0}")]
@@ -195,10 +174,7 @@ pub enum MontrError {
 
     /// Insufficient disk space
     #[error("Insufficient disk space: required {required_mb} MB, available {available_mb} MB")]
-    InsufficientDiskSpace {
-        required_mb: u64,
-        available_mb: u64,
-    },
+    InsufficientDiskSpace { required_mb: u64, available_mb: u64 },
 
     // Generic errors
     /// Generic IO error wrapper

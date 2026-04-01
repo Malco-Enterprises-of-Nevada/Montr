@@ -319,8 +319,11 @@ mod tests {
         // Create max number of log files
         fs::write(&log_path, "current").unwrap();
         for i in 1..=5 {
-            fs::write(log_path.with_extension(format!("log.{}", i)), format!("old{}", i))
-                .unwrap();
+            fs::write(
+                log_path.with_extension(format!("log.{}", i)),
+                format!("old{}", i),
+            )
+            .unwrap();
         }
 
         // Perform rotation (max_files = 5)

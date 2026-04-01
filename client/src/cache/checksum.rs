@@ -156,7 +156,9 @@ mod tests {
         assert!(result.is_err());
 
         match result {
-            Err(MontrError::ChecksumMismatch { expected, actual, .. }) => {
+            Err(MontrError::ChecksumMismatch {
+                expected, actual, ..
+            }) => {
                 assert_eq!(expected, wrong_checksum);
                 assert_ne!(actual, wrong_checksum);
             }

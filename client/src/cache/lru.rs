@@ -75,12 +75,13 @@ impl LruCacheManager {
         let mut current_size = self.current_size.lock().await;
 
         // Scan cache directory
-        let mut entries = fs::read_dir(&self.cache_dir)
-            .await
-            .map_err(|e| MontrError::FileAccess {
-                path: self.cache_dir.clone(),
-                source: e,
-            })?;
+        let mut entries =
+            fs::read_dir(&self.cache_dir)
+                .await
+                .map_err(|e| MontrError::FileAccess {
+                    path: self.cache_dir.clone(),
+                    source: e,
+                })?;
 
         let mut files = Vec::new();
 
@@ -103,12 +104,15 @@ impl LruCacheManager {
                                     .unwrap_or_default()
                                     .as_secs();
 
-                                files.push((media_id, CacheEntry {
-                                    path,
-                                    size,
-                                    last_access,
+                                files.push((
                                     media_id,
-                                }));
+                                    CacheEntry {
+                                        path,
+                                        size,
+                                        last_access,
+                                        media_id,
+                                    },
+                                ));
                             }
                         }
                     }
@@ -196,11 +200,7 @@ impl LruCacheManager {
         cache.put(media_id, entry);
         *current_size += size;
 
-        tracing::debug!(
-            "Added media {} to LRU cache ({} bytes)",
-            media_id,
-            size
-        );
+        tracing::debug!("Added media {} to LRU cache ({} bytes)", media_id, size);
 
         // Drop locks before evicting
         drop(cache);

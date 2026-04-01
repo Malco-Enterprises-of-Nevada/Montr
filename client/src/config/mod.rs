@@ -26,12 +26,11 @@ impl ConfigLoader {
         let config_path = self.resolve_config_path()?;
 
         // Read and parse TOML
-        let config_str = fs::read_to_string(&config_path).map_err(|e| {
-            MontrError::ConfigFileRead {
+        let config_str =
+            fs::read_to_string(&config_path).map_err(|e| MontrError::ConfigFileRead {
                 path: config_path.clone(),
                 source: e,
-            }
-        })?;
+            })?;
 
         let mut config: Config = toml::from_str(&config_str)?;
 
@@ -92,10 +91,8 @@ impl ConfigLoader {
 
         // Try platform-specific locations
         let candidates = self.get_config_search_paths();
-        let searched_locations: Vec<String> = candidates
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect();
+        let searched_locations: Vec<String> =
+            candidates.iter().map(|p| p.display().to_string()).collect();
 
         for path in candidates {
             if path.exists() {
@@ -196,9 +193,8 @@ impl ConfigLoader {
             tracing::info!("Generated new client ID: {}", config.client.id);
         } else {
             // Validate existing UUID
-            Uuid::parse_str(&config.client.id).map_err(|_| {
-                MontrError::InvalidClientId(config.client.id.clone())
-            })?;
+            Uuid::parse_str(&config.client.id)
+                .map_err(|_| MontrError::InvalidClientId(config.client.id.clone()))?;
         }
 
         Ok(())
@@ -207,8 +203,8 @@ impl ConfigLoader {
     /// Save config back to file (for UUID persistence)
     fn save_config(&self, config: &Config) -> Result<()> {
         if let Some(ref config_path) = config.config_path {
-            let toml_str = toml::to_string_pretty(config)
-                .map_err(|e| MontrError::Other(e.into()))?;
+            let toml_str =
+                toml::to_string_pretty(config).map_err(|e| MontrError::Other(e.into()))?;
 
             fs::write(config_path, toml_str).map_err(|e| MontrError::ConfigSave {
                 path: config_path.clone(),
@@ -389,7 +385,7 @@ log_file = "./client.log"
         let cli_args = CliArgs::parse_from(&[
             "montr-client",
             "--server-url",
-            "ftp://invalid",  // Invalid protocol
+            "ftp://invalid", // Invalid protocol
         ]);
 
         let result = loader.apply_overrides(&mut config, &cli_args);

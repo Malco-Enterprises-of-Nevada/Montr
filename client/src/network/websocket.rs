@@ -5,7 +5,9 @@
 
 use crate::config::Config;
 use crate::error::{MontrError, Result};
-use crate::network::{ClientMessage, ConnectionState, ErrorReason, ReconnectStrategy, ServerMessage, State};
+use crate::network::{
+    ClientMessage, ConnectionState, ErrorReason, ReconnectStrategy, ServerMessage, State,
+};
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use std::time::Duration;
@@ -420,9 +422,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_receives_text_message() {
+        use futures_util::{SinkExt, StreamExt};
         use tokio::net::TcpListener;
         use tokio_tungstenite::accept_async;
-        use futures_util::{SinkExt, StreamExt};
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -489,7 +491,10 @@ mod tests {
 
         // The task should exit cleanly within a reasonable time
         let result = tokio::time::timeout(Duration::from_secs(5), handle).await;
-        assert!(result.is_ok(), "connection_task should exit after cancellation");
+        assert!(
+            result.is_ok(),
+            "connection_task should exit after cancellation"
+        );
         assert!(result.unwrap().is_ok(), "connection_task should not panic");
     }
 }

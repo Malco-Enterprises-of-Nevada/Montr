@@ -62,11 +62,7 @@ impl ReconnectStrategy {
     /// - Multiplier: 1.5x
     /// - Max backoff: 300 seconds (5 minutes)
     pub fn default_strategy() -> Self {
-        Self::new(
-            Duration::from_secs(5),
-            1.5,
-            Duration::from_secs(300),
-        )
+        Self::new(Duration::from_secs(5), 1.5, Duration::from_secs(300))
     }
 
     /// Get the next delay duration for reconnection
@@ -79,8 +75,8 @@ impl ReconnectStrategy {
             self.base_delay
         } else {
             // Calculate exponential backoff
-            let backoff_secs = self.base_delay.as_secs_f64()
-                * self.multiplier.powi(self.attempt as i32);
+            let backoff_secs =
+                self.base_delay.as_secs_f64() * self.multiplier.powi(self.attempt as i32);
             let backoff = Duration::from_secs_f64(backoff_secs.min(self.max_backoff.as_secs_f64()));
             backoff
         };
@@ -148,11 +144,8 @@ mod tests {
 
     #[test]
     fn test_custom_strategy_creation() {
-        let strategy = ReconnectStrategy::new(
-            Duration::from_secs(10),
-            2.0,
-            Duration::from_secs(120),
-        );
+        let strategy =
+            ReconnectStrategy::new(Duration::from_secs(10), 2.0, Duration::from_secs(120));
 
         assert_eq!(strategy.base_delay, Duration::from_secs(10));
         assert_eq!(strategy.multiplier, 2.0);
@@ -161,11 +154,8 @@ mod tests {
 
     #[test]
     fn test_exponential_backoff_no_jitter() {
-        let mut strategy = ReconnectStrategy::new(
-            Duration::from_secs(2),
-            2.0,
-            Duration::from_secs(100),
-        );
+        let mut strategy =
+            ReconnectStrategy::new(Duration::from_secs(2), 2.0, Duration::from_secs(100));
         strategy.set_jitter(false);
 
         // Attempt 0: base delay (2s)
@@ -191,18 +181,15 @@ mod tests {
 
     #[test]
     fn test_backoff_respects_max_cap() {
-        let mut strategy = ReconnectStrategy::new(
-            Duration::from_secs(10),
-            2.0,
-            Duration::from_secs(50),
-        );
+        let mut strategy =
+            ReconnectStrategy::new(Duration::from_secs(10), 2.0, Duration::from_secs(50));
         strategy.set_jitter(false);
 
         // Keep calling next_delay until we exceed the cap
         let _d1 = strategy.next_delay(); // 10s
         let _d2 = strategy.next_delay(); // 20s
         let _d3 = strategy.next_delay(); // 40s
-        let d4 = strategy.next_delay();  // Would be 80s, but capped at 50s
+        let d4 = strategy.next_delay(); // Would be 80s, but capped at 50s
 
         assert_eq!(d4, Duration::from_secs(50));
 
@@ -233,11 +220,8 @@ mod tests {
 
     #[test]
     fn test_jitter_adds_randomness() {
-        let mut strategy = ReconnectStrategy::new(
-            Duration::from_secs(10),
-            2.0,
-            Duration::from_secs(100),
-        );
+        let mut strategy =
+            ReconnectStrategy::new(Duration::from_secs(10), 2.0, Duration::from_secs(100));
         strategy.set_jitter(true);
 
         // Get multiple delays and check they're different (due to jitter)
@@ -260,11 +244,8 @@ mod tests {
 
     #[test]
     fn test_jitter_can_be_disabled() {
-        let mut strategy = ReconnectStrategy::new(
-            Duration::from_secs(5),
-            2.0,
-            Duration::from_secs(100),
-        );
+        let mut strategy =
+            ReconnectStrategy::new(Duration::from_secs(5), 2.0, Duration::from_secs(100));
 
         // Disable jitter
         strategy.set_jitter(false);
@@ -283,11 +264,8 @@ mod tests {
 
     #[test]
     fn test_multiplier_of_1_5() {
-        let mut strategy = ReconnectStrategy::new(
-            Duration::from_secs(4),
-            1.5,
-            Duration::from_secs(100),
-        );
+        let mut strategy =
+            ReconnectStrategy::new(Duration::from_secs(4), 1.5, Duration::from_secs(100));
         strategy.set_jitter(false);
 
         let d1 = strategy.next_delay();

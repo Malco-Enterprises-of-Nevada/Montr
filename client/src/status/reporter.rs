@@ -128,9 +128,9 @@ impl StatusReporter {
 
         let message = ClientMessage::heartbeat(client_id);
 
-        self.ws_tx
-            .send(message)
-            .map_err(|e| crate::error::MontrError::WebSocketSend(format!("Heartbeat send failed: {}", e)))?;
+        self.ws_tx.send(message).map_err(|e| {
+            crate::error::MontrError::WebSocketSend(format!("Heartbeat send failed: {}", e))
+        })?;
 
         tracing::trace!("Heartbeat sent");
 
@@ -171,22 +171,26 @@ impl StatusReporter {
             snapshot.is_playing,
         );
 
-        self.ws_tx
-            .send(message)
-            .map_err(|e| crate::error::MontrError::WebSocketSend(format!("Status send failed: {}", e)))?;
+        self.ws_tx.send(message).map_err(|e| {
+            crate::error::MontrError::WebSocketSend(format!("Status send failed: {}", e))
+        })?;
 
         Ok(())
     }
 
     /// Send an error report
-    pub async fn send_error(&self, error: String, context: Option<std::collections::HashMap<String, serde_json::Value>>) -> Result<()> {
+    pub async fn send_error(
+        &self,
+        error: String,
+        context: Option<std::collections::HashMap<String, serde_json::Value>>,
+    ) -> Result<()> {
         let client_id = self.state.client_id().await;
 
         let message = ClientMessage::error(client_id, error, context);
 
-        self.ws_tx
-            .send(message)
-            .map_err(|e| crate::error::MontrError::WebSocketSend(format!("Error report send failed: {}", e)))?;
+        self.ws_tx.send(message).map_err(|e| {
+            crate::error::MontrError::WebSocketSend(format!("Error report send failed: {}", e))
+        })?;
 
         tracing::debug!("Error report sent");
 
@@ -201,7 +205,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_reporter_creation() {
-        let state = Arc::new(AppState::new("test-id".to_string(), "Test Client".to_string()));
+        let state = Arc::new(AppState::new(
+            "test-id".to_string(),
+            "Test Client".to_string(),
+        ));
         let (ws_tx, _ws_rx) = mpsc::unbounded_channel();
         let cancel_token = CancellationToken::new();
 
@@ -213,7 +220,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_heartbeat() {
-        let state = Arc::new(AppState::new("test-id".to_string(), "Test Client".to_string()));
+        let state = Arc::new(AppState::new(
+            "test-id".to_string(),
+            "Test Client".to_string(),
+        ));
         let (ws_tx, mut ws_rx) = mpsc::unbounded_channel();
         let cancel_token = CancellationToken::new();
 
@@ -233,7 +243,10 @@ mod tests {
     async fn test_send_status_update() {
         use crate::network::protocol::PlaylistItem;
 
-        let state = Arc::new(AppState::new("test-id".to_string(), "Test Client".to_string()));
+        let state = Arc::new(AppState::new(
+            "test-id".to_string(),
+            "Test Client".to_string(),
+        ));
         let (ws_tx, mut ws_rx) = mpsc::unbounded_channel();
         let cancel_token = CancellationToken::new();
 
@@ -276,7 +289,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_error() {
-        let state = Arc::new(AppState::new("test-id".to_string(), "Test Client".to_string()));
+        let state = Arc::new(AppState::new(
+            "test-id".to_string(),
+            "Test Client".to_string(),
+        ));
         let (ws_tx, mut ws_rx) = mpsc::unbounded_channel();
         let cancel_token = CancellationToken::new();
 
@@ -285,10 +301,7 @@ mod tests {
         let mut ctx = std::collections::HashMap::new();
         ctx.insert("detail".to_string(), serde_json::json!("Test context"));
         reporter
-            .send_error(
-                "Test error".to_string(),
-                Some(ctx.clone()),
-            )
+            .send_error("Test error".to_string(), Some(ctx.clone()))
             .await
             .unwrap();
 
@@ -306,14 +319,17 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_heartbeat_task() {
-        let state = Arc::new(AppState::new("test-id".to_string(), "Test Client".to_string()));
+        let state = Arc::new(AppState::new(
+            "test-id".to_string(),
+            "Test Client".to_string(),
+        ));
         let (ws_tx, mut ws_rx) = mpsc::unbounded_channel();
         let cancel_token = CancellationToken::new();
 
         let reporter = Arc::new(StatusReporter::new(
             state,
             ws_tx,
-            1,  // 1 second for faster testing
+            1, // 1 second for faster testing
             10,
             cancel_token.clone(),
         ));
@@ -337,7 +353,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_status_task() {
-        let state = Arc::new(AppState::new("test-id".to_string(), "Test Client".to_string()));
+        let state = Arc::new(AppState::new(
+            "test-id".to_string(),
+            "Test Client".to_string(),
+        ));
         let (ws_tx, mut ws_rx) = mpsc::unbounded_channel();
         let cancel_token = CancellationToken::new();
 
@@ -345,7 +364,7 @@ mod tests {
             state,
             ws_tx,
             10,
-            1,  // 1 second for faster testing
+            1, // 1 second for faster testing
             cancel_token.clone(),
         ));
 
@@ -368,7 +387,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_reporter_shutdown() {
-        let state = Arc::new(AppState::new("test-id".to_string(), "Test Client".to_string()));
+        let state = Arc::new(AppState::new(
+            "test-id".to_string(),
+            "Test Client".to_string(),
+        ));
         let (ws_tx, _ws_rx) = mpsc::unbounded_channel();
         let cancel_token = CancellationToken::new();
 
