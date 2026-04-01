@@ -16,8 +16,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: server/package-lock.json
       - run: npm ci
         working-directory: server
       - run: npm run lint
@@ -32,7 +30,6 @@ jobs:
       # Client validation
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: '1.75'
           components: rustfmt, clippy
       - run: sudo apt-get update && sudo apt-get install -y libmpv-dev
       - run: cargo fmt --check
@@ -54,8 +51,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: server/package-lock.json
       - run: npm ci && npm run build
       - run: tar -czf montr-server-${{ github.ref_name }}.tar.gz -C server dist package.json package-lock.json
         working-directory: .
