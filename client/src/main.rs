@@ -253,6 +253,68 @@ async fn run_client(config: config::Config) -> Result<()> {
     let (heartbeat_handle, status_handle) = status_reporter.start();
 
     // ========================================================================
+    // Preview Screenshot Task
+    // ========================================================================
+    let preview_engine = playback_engine.clone();
+    let preview_cancel = cancel_token.clone();
+    let preview_server_url = config.server.url.clone();
+    let preview_client_id = config.client.id.clone();
+    let preview_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+        let screenshot_path = format!("/tmp/montr-preview-{}.jpg", std::process::id());
+        let client = reqwest::Client::new();
+
+        tracing::info!("Preview capture task started (interval: 10s)");
+
+        loop {
+            tokio::select! {
+                _ = preview_cancel.cancelled() => {
+                    tracing::info!("Preview capture task shutting down");
+                    let _ = std::fs::remove_file(&screenshot_path);
+                    break;
+                }
+                _ = interval.tick() => {
+                    // Take screenshot via mpv IPC
+                    if let Err(e) = preview_engine.screenshot(&screenshot_path).await {
+                        tracing::trace!("Screenshot capture skipped: {}", e);
+                        continue;
+                    }
+
+                    // Wait briefly for file to be written
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+                    // Read and upload
+                    match tokio::fs::read(&screenshot_path).await {
+                        Ok(data) => {
+                            let part = reqwest::multipart::Part::bytes(data)
+                                .file_name("preview.jpg")
+                                .mime_str("image/jpeg")
+                                .unwrap();
+                            let form = reqwest::multipart::Form::new().part("preview", part);
+
+                            let url = format!("{}/api/clients/{}/preview", preview_server_url, preview_client_id);
+                            match client.post(&url).multipart(form).send().await {
+                                Ok(resp) if resp.status().is_success() => {
+                                    tracing::trace!("Preview uploaded");
+                                }
+                                Ok(resp) => {
+                                    tracing::trace!("Preview upload rejected: {}", resp.status());
+                                }
+                                Err(e) => {
+                                    tracing::trace!("Preview upload failed: {}", e);
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            // Screenshot file not ready yet, skip
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // ========================================================================
     // Main Loop - Wait for shutdown
     // ========================================================================
     tracing::info!("Montr client fully initialized and running");
@@ -278,6 +340,7 @@ async fn run_client(config: config::Config) -> Result<()> {
                 coordinator_handle,
                 ws_msg_handle,
                 playback_event_handle,
+                preview_handle,
             );
         } => {
             tracing::info!("All tasks completed");

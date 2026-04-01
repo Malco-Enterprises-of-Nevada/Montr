@@ -148,6 +148,8 @@ impl PlaybackEngine {
             "--hwdec=auto".to_string(),
             "--osd-level=0".to_string(),
             "--border=no".to_string(),
+            "--autofit=1280x720".to_string(),
+            "--geometry=50%:50%".to_string(),
             format!("--fs-screen={}", screen_index),
         ];
 
@@ -473,6 +475,16 @@ impl PlaybackEngine {
     /// Check if currently playing
     pub async fn is_playing(&self) -> bool {
         self.state.read().await.is_playing
+    }
+
+    /// Capture a screenshot to the given file path
+    pub async fn screenshot(&self, output_path: &str) -> Result<()> {
+        self.send_command(&[
+            serde_json::json!("screenshot-to-file"),
+            serde_json::json!(output_path),
+            serde_json::json!("video"),
+        ]).await?;
+        Ok(())
     }
 }
 
