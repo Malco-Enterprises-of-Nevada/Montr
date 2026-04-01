@@ -196,6 +196,39 @@ async fn run_client(config: config::Config) -> Result<()> {
         }
     });
 
+    // Bridge playback events to coordinator
+    {
+        let coordinator_tx = coordinator_tx.clone();
+        let engine = playback_engine.clone();
+        let cancel = cancel_token.clone();
+        tokio::spawn(async move {
+            use montr_client::state::coordinator::{CoordinatorMessage, PlaybackEventMessage};
+            let mut event_rx = engine.subscribe_events().await;
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    Some(event) = event_rx.recv() => {
+                        let msg = match event {
+                            montr_client::playback::PlaybackEvent::EndFile => {
+                                Some(PlaybackEventMessage::MediaFinished { media_id: 0 })
+                            }
+                            montr_client::playback::PlaybackEvent::PositionChanged { position } => {
+                                Some(PlaybackEventMessage::PositionUpdate { position })
+                            }
+                            montr_client::playback::PlaybackEvent::Error { message } => {
+                                Some(PlaybackEventMessage::Error { media_id: 0, error: message })
+                            }
+                            _ => None,
+                        };
+                        if let Some(m) = msg {
+                            let _ = coordinator_tx.send(CoordinatorMessage::PlaybackEvent(m));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     // Start WebSocket message receiver task
     let ws_msg_handle = {
         let ws_client = ws_client.clone();
