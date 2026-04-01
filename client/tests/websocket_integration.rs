@@ -10,7 +10,6 @@
  * 2. Integration tests that spin up a local WebSocket server to verify
  *    actual message exchange over the wire
  */
-
 mod common;
 
 use futures_util::{SinkExt, StreamExt};
@@ -138,7 +137,9 @@ fn test_status_update_message_format() {
     assert_eq!(parsed["currentMedia"]["filename"], "presentation.mp4");
 
     // Verify timestamp is a positive integer (milliseconds since epoch)
-    let timestamp = parsed["timestamp"].as_u64().expect("timestamp should be u64");
+    let timestamp = parsed["timestamp"]
+        .as_u64()
+        .expect("timestamp should be u64");
     assert!(timestamp > 0, "timestamp should be positive");
 }
 
@@ -163,7 +164,9 @@ fn test_heartbeat_message_format() {
     assert_eq!(parsed["clientId"], "ws-test-client-003");
 
     // Verify timestamp presence and validity
-    let timestamp = parsed["timestamp"].as_u64().expect("timestamp should be u64");
+    let timestamp = parsed["timestamp"]
+        .as_u64()
+        .expect("timestamp should be u64");
     assert!(timestamp > 0, "timestamp should be positive");
 
     // Heartbeat should be minimal: only type, clientId, and timestamp
@@ -326,12 +329,8 @@ fn test_protocol_message_serialization_roundtrip() {
     }
 
     // StatusUpdate roundtrip (idle, no media)
-    let idle_status = ClientMessage::status_update(
-        "roundtrip-client".to_string(),
-        None,
-        None,
-        false,
-    );
+    let idle_status =
+        ClientMessage::status_update("roundtrip-client".to_string(), None, None, false);
 
     let json = idle_status.to_json().unwrap();
     let deserialized: ClientMessage = serde_json::from_str(&json).unwrap();
@@ -422,7 +421,10 @@ async fn test_websocket_echo_client_messages() {
 
     match echoed {
         Message::Text(text) => {
-            assert_eq!(text, register_json, "Echoed message should match sent message");
+            assert_eq!(
+                text, register_json,
+                "Echoed message should match sent message"
+            );
 
             // Parse the echoed JSON back into a ClientMessage to confirm integrity
             let parsed: ClientMessage = serde_json::from_str(&text)
@@ -455,8 +457,8 @@ async fn test_websocket_echo_client_messages() {
 
     match echoed {
         Message::Text(text) => {
-            let parsed: ClientMessage = serde_json::from_str(&text)
-                .expect("Echoed heartbeat should be valid JSON");
+            let parsed: ClientMessage =
+                serde_json::from_str(&text).expect("Echoed heartbeat should be valid JSON");
             match parsed {
                 ClientMessage::Heartbeat(msg) => {
                     assert_eq!(msg.client_id, "echo-test-client");
@@ -491,8 +493,8 @@ async fn test_websocket_echo_client_messages() {
 
     match echoed {
         Message::Text(text) => {
-            let parsed: ClientMessage = serde_json::from_str(&text)
-                .expect("Echoed status should be valid JSON");
+            let parsed: ClientMessage =
+                serde_json::from_str(&text).expect("Echoed status should be valid JSON");
             match parsed {
                 ClientMessage::StatusUpdate(msg) => {
                     assert_eq!(msg.client_id, "echo-test-client");
@@ -640,7 +642,8 @@ async fn test_websocket_command_message_reception() {
 
     match response {
         Message::Text(text) => {
-            let server_msg = ServerMessage::from_json(&text).expect("Should parse as ServerMessage");
+            let server_msg =
+                ServerMessage::from_json(&text).expect("Should parse as ServerMessage");
             match server_msg {
                 ServerMessage::Command(cmd) => {
                     assert_eq!(cmd.command, "reload_playlist");

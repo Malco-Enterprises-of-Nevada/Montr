@@ -21,12 +21,7 @@ pub struct CliArgs {
     /// - Linux: ~/.config/montr-client/config.toml, /etc/montr-client/config.toml
     /// - Windows: %APPDATA%\Montr\config.toml, C:\ProgramData\Montr\config.toml
     /// - Current directory: ./config.toml
-    #[arg(
-        short,
-        long,
-        value_name = "FILE",
-        help = "Path to configuration file"
-    )]
+    #[arg(short, long, value_name = "FILE", help = "Path to configuration file")]
     pub config: Option<PathBuf>,
 
     /// Server URL (overrides config file)
@@ -160,11 +155,8 @@ mod tests {
 
     #[test]
     fn test_cli_parse_server_url() {
-        let args = CliArgs::parse_from(&[
-            "montr-client",
-            "--server-url",
-            "http://192.168.1.100:3000",
-        ]);
+        let args =
+            CliArgs::parse_from(&["montr-client", "--server-url", "http://192.168.1.100:3000"]);
 
         assert_eq!(
             args.server_url,

@@ -10,8 +10,8 @@ pub mod status;
 pub mod update;
 
 // Re-export commonly used types at crate root for convenience
-pub use error::{MontrError, Result};
 pub use config::Config;
+pub use error::{MontrError, Result};
 
 /// Application version from Cargo.toml
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -40,16 +40,11 @@ fullscreen = false
 }
 
 /// Create a configuration file in a temporary directory
-pub fn write_test_config(
-    server_url: &str,
-    client_id: &str,
-    temp_dir: &TempDir,
-) -> PathBuf {
+pub fn write_test_config(server_url: &str, client_id: &str, temp_dir: &TempDir) -> PathBuf {
     let config_content = create_test_config(server_url, client_id, temp_dir);
     let config_path = temp_dir.path().join("config.toml");
 
-    fs::write(&config_path, config_content)
-        .expect("Failed to write test config");
+    fs::write(&config_path, config_content).expect("Failed to write test config");
 
     config_path
 }
@@ -159,8 +154,7 @@ fullscreen = false
         let config_content = self.build(temp_dir);
         let config_path = temp_dir.path().join("config.toml");
 
-        fs::write(&config_path, config_content)
-            .expect("Failed to write test config");
+        fs::write(&config_path, config_content).expect("Failed to write test config");
 
         config_path
     }

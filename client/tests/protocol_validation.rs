@@ -32,8 +32,8 @@ mod protocol_validation_tests {
         let json = read_fixture("register.json");
 
         // Parse as ClientMessage
-        let parsed: ClientMessage = serde_json::from_str(&json)
-            .expect("Failed to parse register message");
+        let parsed: ClientMessage =
+            serde_json::from_str(&json).expect("Failed to parse register message");
 
         match parsed {
             ClientMessage::Register(msg) => {
@@ -50,8 +50,8 @@ mod protocol_validation_tests {
     fn test_status_update_message_serialization() {
         let json = read_fixture("status_update.json");
 
-        let parsed: ClientMessage = serde_json::from_str(&json)
-            .expect("Failed to parse status_update message");
+        let parsed: ClientMessage =
+            serde_json::from_str(&json).expect("Failed to parse status_update message");
 
         match parsed {
             ClientMessage::StatusUpdate(msg) => {
@@ -75,8 +75,8 @@ mod protocol_validation_tests {
     fn test_heartbeat_message_serialization() {
         let json = read_fixture("heartbeat.json");
 
-        let parsed: ClientMessage = serde_json::from_str(&json)
-            .expect("Failed to parse heartbeat message");
+        let parsed: ClientMessage =
+            serde_json::from_str(&json).expect("Failed to parse heartbeat message");
 
         match parsed {
             ClientMessage::Heartbeat(msg) => {
@@ -91,8 +91,8 @@ mod protocol_validation_tests {
     fn test_playlist_assigned_message_deserialization() {
         let json = read_fixture("playlist_assigned.json");
 
-        let parsed: ServerMessage = serde_json::from_str(&json)
-            .expect("Failed to parse playlist_assigned message");
+        let parsed: ServerMessage =
+            serde_json::from_str(&json).expect("Failed to parse playlist_assigned message");
 
         match parsed {
             ServerMessage::PlaylistAssigned(msg) => {
@@ -134,12 +134,10 @@ mod protocol_validation_tests {
         );
 
         // Serialize to JSON
-        let json = serde_json::to_string(&original)
-            .expect("Failed to serialize");
+        let json = serde_json::to_string(&original).expect("Failed to serialize");
 
         // Deserialize back
-        let parsed: ClientMessage = serde_json::from_str(&json)
-            .expect("Failed to deserialize");
+        let parsed: ClientMessage = serde_json::from_str(&json).expect("Failed to deserialize");
 
         // Verify match
         match (original, parsed) {
@@ -165,18 +163,18 @@ mod protocol_validation_tests {
             true,
         );
 
-        let json = serde_json::to_string(&original)
-            .expect("Failed to serialize");
+        let json = serde_json::to_string(&original).expect("Failed to serialize");
 
-        let parsed: ClientMessage = serde_json::from_str(&json)
-            .expect("Failed to deserialize");
+        let parsed: ClientMessage = serde_json::from_str(&json).expect("Failed to deserialize");
 
         match (original, parsed) {
             (ClientMessage::StatusUpdate(orig), ClientMessage::StatusUpdate(parsed)) => {
                 assert_eq!(orig.client_id, parsed.client_id);
                 assert_eq!(orig.is_playing, parsed.is_playing);
 
-                if let (Some(orig_media), Some(parsed_media)) = (orig.current_media, parsed.current_media) {
+                if let (Some(orig_media), Some(parsed_media)) =
+                    (orig.current_media, parsed.current_media)
+                {
                     assert_eq!(orig_media.id, parsed_media.id);
                     assert_eq!(orig_media.filename, parsed_media.filename);
                 }
@@ -236,11 +234,7 @@ mod protocol_validation_tests {
         // This test ensures all fixtures can be parsed
         // If this fails, it means the protocol has drifted
 
-        let fixtures = vec![
-            "register.json",
-            "status_update.json",
-            "heartbeat.json",
-        ];
+        let fixtures = vec!["register.json", "status_update.json", "heartbeat.json"];
 
         for fixture in fixtures {
             let json = read_fixture(fixture);

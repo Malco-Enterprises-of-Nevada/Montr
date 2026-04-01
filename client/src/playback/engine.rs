@@ -136,7 +136,11 @@ impl PlaybackEngineOps for PlaybackEngine {
 
 impl PlaybackEngine {
     /// Create a new playback engine by spawning an mpv subprocess
-    pub fn new(cancel_token: CancellationToken, fullscreen: bool, screen_index: u32) -> Result<Self> {
+    pub fn new(
+        cancel_token: CancellationToken,
+        fullscreen: bool,
+        screen_index: u32,
+    ) -> Result<Self> {
         let ipc_path = format!("/tmp/montr-mpv-{}.sock", std::process::id());
 
         // Clean up stale socket
@@ -227,13 +231,18 @@ impl PlaybackEngine {
     /// Wait for the IPC socket to become available
     async fn wait_for_ipc(&self) -> Result<()> {
         for i in 0..50 {
-            if tokio::net::UnixStream::connect(&self.ipc_path).await.is_ok() {
+            if tokio::net::UnixStream::connect(&self.ipc_path)
+                .await
+                .is_ok()
+            {
                 tracing::info!("mpv IPC connected after {}ms", i * 100);
                 return Ok(());
             }
             sleep(Duration::from_millis(100)).await;
         }
-        Err(MontrError::MpvInit("Timed out waiting for mpv IPC socket".to_string()))
+        Err(MontrError::MpvInit(
+            "Timed out waiting for mpv IPC socket".to_string(),
+        ))
     }
 
     /// Run the playback engine command loop
@@ -244,7 +253,9 @@ impl PlaybackEngine {
         // Take the command receiver
         let mut command_rx = {
             let mut rx_lock = self.command_rx.write().await;
-            rx_lock.take().ok_or_else(|| MontrError::Playback("Command receiver already taken".to_string()))?
+            rx_lock
+                .take()
+                .ok_or_else(|| MontrError::Playback("Command receiver already taken".to_string()))?
         };
 
         tracing::info!("Playback engine started (IPC mode)");
@@ -295,23 +306,32 @@ impl PlaybackEngine {
 
             // Poll position if playing a video
             if state.is_playing && !state.is_image {
-                if let Ok(response) = self.send_command(&[
-                    serde_json::json!("get_property"),
-                    serde_json::json!("playback-time"),
-                ]).await {
+                if let Ok(response) = self
+                    .send_command(&[
+                        serde_json::json!("get_property"),
+                        serde_json::json!("playback-time"),
+                    ])
+                    .await
+                {
                     if let Some(pos) = response.get("data").and_then(|d| d.as_f64()) {
                         let mut s = self.state.write().await;
                         s.position = Some(pos);
-                        let _ = self.event_tx.send(PlaybackEvent::PositionChanged { position: pos }).await;
+                        let _ = self
+                            .event_tx
+                            .send(PlaybackEvent::PositionChanged { position: pos })
+                            .await;
                     }
                 }
 
                 // Check for end of file (only once per file)
                 if eof_sent_for_file.is_none() {
-                    if let Ok(response) = self.send_command(&[
-                        serde_json::json!("get_property"),
-                        serde_json::json!("eof-reached"),
-                    ]).await {
+                    if let Ok(response) = self
+                        .send_command(&[
+                            serde_json::json!("get_property"),
+                            serde_json::json!("eof-reached"),
+                        ])
+                        .await
+                    {
                         if response.get("data").and_then(|d| d.as_bool()) == Some(true) {
                             tracing::info!("End of file reached");
                             eof_sent_for_file = state.current_file.clone();
@@ -330,8 +350,14 @@ impl PlaybackEngine {
     /// Handle a playback command
     async fn handle_command(&self, command: PlaybackCommand) -> Result<()> {
         match command {
-            PlaybackCommand::Play { path, is_video, image_duration } => {
-                let duration = image_duration.map(|d| d as u64).unwrap_or(self.default_image_duration);
+            PlaybackCommand::Play {
+                path,
+                is_video,
+                image_duration,
+            } => {
+                let duration = image_duration
+                    .map(|d| d as u64)
+                    .unwrap_or(self.default_image_duration);
                 self.play(&path, !is_video, duration).await
             }
             PlaybackCommand::Pause => self.pause().await,
@@ -342,12 +368,20 @@ impl PlaybackEngine {
 
     /// Subscribe to playback events (can only be called once)
     pub async fn subscribe_events(&self) -> mpsc::Receiver<PlaybackEvent> {
-        self.event_rx.write().await.take()
+        self.event_rx
+            .write()
+            .await
+            .take()
             .expect("subscribe_events can only be called once")
     }
 
     /// Play a media file
-    pub async fn play(&self, file_path: &Path, is_image: bool, image_duration_secs: u64) -> Result<()> {
+    pub async fn play(
+        &self,
+        file_path: &Path,
+        is_image: bool,
+        image_duration_secs: u64,
+    ) -> Result<()> {
         let path_str = file_path
             .to_str()
             .ok_or_else(|| MontrError::Playback("Invalid file path".to_string()))?;
@@ -359,14 +393,17 @@ impl PlaybackEngine {
             serde_json::json!("loadfile"),
             serde_json::json!(path_str),
             serde_json::json!("replace"),
-        ]).await?;
+        ])
+        .await?;
 
         // Unpause in case mpv was paused at end of previous file
-        let _ = self.send_command(&[
-            serde_json::json!("set_property"),
-            serde_json::json!("pause"),
-            serde_json::json!(false),
-        ]).await;
+        let _ = self
+            .send_command(&[
+                serde_json::json!("set_property"),
+                serde_json::json!("pause"),
+                serde_json::json!(false),
+            ])
+            .await;
 
         // Update state
         {
@@ -391,9 +428,12 @@ impl PlaybackEngine {
             });
         }
 
-        let _ = self.event_tx.send(PlaybackEvent::Started {
-            file: path_str.to_string(),
-        }).await;
+        let _ = self
+            .event_tx
+            .send(PlaybackEvent::Started {
+                file: path_str.to_string(),
+            })
+            .await;
 
         Ok(())
     }
@@ -404,7 +444,8 @@ impl PlaybackEngine {
             serde_json::json!("set_property"),
             serde_json::json!("pause"),
             serde_json::json!(true),
-        ]).await?;
+        ])
+        .await?;
 
         let mut state = self.state.write().await;
         state.is_playing = false;
@@ -418,7 +459,8 @@ impl PlaybackEngine {
             serde_json::json!("set_property"),
             serde_json::json!("pause"),
             serde_json::json!(false),
-        ]).await?;
+        ])
+        .await?;
 
         let mut state = self.state.write().await;
         state.is_playing = true;
@@ -445,7 +487,8 @@ impl PlaybackEngine {
             serde_json::json!("seek"),
             serde_json::json!(position),
             serde_json::json!("absolute"),
-        ]).await?;
+        ])
+        .await?;
 
         let mut state = self.state.write().await;
         state.position = Some(position);
@@ -459,10 +502,13 @@ impl PlaybackEngine {
 
     /// Get current position
     pub async fn get_position(&self) -> Option<f64> {
-        if let Ok(response) = self.send_command(&[
-            serde_json::json!("get_property"),
-            serde_json::json!("time-pos"),
-        ]).await {
+        if let Ok(response) = self
+            .send_command(&[
+                serde_json::json!("get_property"),
+                serde_json::json!("time-pos"),
+            ])
+            .await
+        {
             if let Some(pos) = response.get("data").and_then(|d| d.as_f64()) {
                 let mut state = self.state.write().await;
                 state.position = Some(pos);
@@ -474,10 +520,13 @@ impl PlaybackEngine {
 
     /// Get duration
     pub async fn get_duration(&self) -> Option<f64> {
-        if let Ok(response) = self.send_command(&[
-            serde_json::json!("get_property"),
-            serde_json::json!("duration"),
-        ]).await {
+        if let Ok(response) = self
+            .send_command(&[
+                serde_json::json!("get_property"),
+                serde_json::json!("duration"),
+            ])
+            .await
+        {
             if let Some(dur) = response.get("data").and_then(|d| d.as_f64()) {
                 let mut state = self.state.write().await;
                 state.duration = Some(dur);
@@ -498,7 +547,8 @@ impl PlaybackEngine {
             serde_json::json!("screenshot-to-file"),
             serde_json::json!(output_path),
             serde_json::json!("video"),
-        ]).await?;
+        ])
+        .await?;
         Ok(())
     }
 }

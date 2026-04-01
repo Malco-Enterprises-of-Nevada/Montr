@@ -49,7 +49,10 @@ pub async fn check_and_update(auto_update: bool) -> Result<bool> {
         return Ok(false);
     }
 
-    tracing::info!("Checking for updates (current build: {})", &BUILD_SHA[..8.min(BUILD_SHA.len())]);
+    tracing::info!(
+        "Checking for updates (current build: {})",
+        &BUILD_SHA[..8.min(BUILD_SHA.len())]
+    );
 
     let client = reqwest::Client::builder()
         .user_agent(format!("montr-client/{}", crate::VERSION))
@@ -82,7 +85,10 @@ pub async fn check_and_update(auto_update: bool) -> Result<bool> {
         .and_then(|body| {
             body.lines()
                 .find(|line| line.starts_with("Automated build from commit "))
-                .map(|line| line.trim_start_matches("Automated build from commit ").trim())
+                .map(|line| {
+                    line.trim_start_matches("Automated build from commit ")
+                        .trim()
+                })
         })
         .unwrap_or("");
 
@@ -104,7 +110,10 @@ pub async fn check_and_update(auto_update: bool) -> Result<bool> {
 
     // Find binary and checksum assets
     let binary_asset = release.assets.iter().find(|a| a.name == BINARY_ASSET_NAME);
-    let checksum_asset = release.assets.iter().find(|a| a.name == CHECKSUM_ASSET_NAME);
+    let checksum_asset = release
+        .assets
+        .iter()
+        .find(|a| a.name == CHECKSUM_ASSET_NAME);
 
     let binary_asset = match binary_asset {
         Some(a) => a,
@@ -115,8 +124,8 @@ pub async fn check_and_update(auto_update: bool) -> Result<bool> {
     };
 
     // Download binary to temp file
-    let current_exe = std::env::current_exe()
-        .map_err(|e| crate::error::MontrError::FileAccess {
+    let current_exe =
+        std::env::current_exe().map_err(|e| crate::error::MontrError::FileAccess {
             path: std::path::PathBuf::from("current_exe"),
             source: e,
         })?;
@@ -137,10 +146,7 @@ pub async fn check_and_update(auto_update: bool) -> Result<bool> {
             .map_err(|e| crate::error::MontrError::HttpRequest(e.to_string()))?;
 
         // sha256sum format: "<hash>  <filename>" or "<hash> <filename>"
-        let expected_hash = checksum_text
-            .split_whitespace()
-            .next()
-            .unwrap_or("");
+        let expected_hash = checksum_text.split_whitespace().next().unwrap_or("");
 
         let actual_hash = file_sha256(&temp_path).await?;
 

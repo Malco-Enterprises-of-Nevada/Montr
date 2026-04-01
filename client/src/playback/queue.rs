@@ -220,7 +220,6 @@ impl Default for PlaylistQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     fn create_test_item(id: u32, media_id: u32, order_index: u32) -> PlaylistItem {
         PlaylistItem {
@@ -378,10 +377,7 @@ mod tests {
 
     #[test]
     fn test_reset() {
-        let items = vec![
-            create_test_item(1, 1, 0),
-            create_test_item(2, 2, 1),
-        ];
+        let items = vec![create_test_item(1, 1, 0), create_test_item(2, 2, 1)];
 
         let mut queue = PlaylistQueue::from_items(items, false, 1);
 
@@ -405,10 +401,7 @@ mod tests {
 
     #[test]
     fn test_is_at_end() {
-        let items = vec![
-            create_test_item(1, 1, 0),
-            create_test_item(2, 2, 1),
-        ];
+        let items = vec![create_test_item(1, 1, 0), create_test_item(2, 2, 1)];
 
         let mut queue = PlaylistQueue::from_items(items.clone(), false, 1);
         assert!(!queue.is_at_end());
@@ -449,10 +442,7 @@ mod tests {
         let initial_items = vec![create_test_item(1, 1, 0)];
         let mut queue = PlaylistQueue::from_items(initial_items, false, 1);
 
-        let new_items = vec![
-            create_test_item(2, 2, 0),
-            create_test_item(3, 3, 1),
-        ];
+        let new_items = vec![create_test_item(2, 2, 0), create_test_item(3, 3, 1)];
 
         queue.update_items(new_items, 2);
 

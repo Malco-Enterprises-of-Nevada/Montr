@@ -205,7 +205,7 @@ impl AppState {
             state.current_media_id = Some(item.media_id);
             state.current_position = Some(0.0);
             tracing::debug!("Advanced to next item: media {}", item.media_id);
-        } else{
+        } else {
             state.current_media_id = None;
             state.current_position = None;
             tracing::debug!("No next item available");
@@ -266,7 +266,10 @@ impl AppState {
         let mut state = self.inner.write().await;
         state.is_playing = is_playing;
 
-        tracing::debug!("Playback state: {}", if is_playing { "playing" } else { "paused" });
+        tracing::debug!(
+            "Playback state: {}",
+            if is_playing { "playing" } else { "paused" }
+        );
     }
 
     /// Set current media
@@ -379,10 +382,7 @@ mod tests {
     async fn test_next_item() {
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
 
-        let items = vec![
-            create_test_item(1, 10),
-            create_test_item(2, 20),
-        ];
+        let items = vec![create_test_item(1, 10), create_test_item(2, 20)];
 
         state.update_playlist(1, items, false).await.unwrap();
 
@@ -490,10 +490,7 @@ mod tests {
     async fn test_reset_queue() {
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
 
-        let items = vec![
-            create_test_item(1, 10),
-            create_test_item(2, 20),
-        ];
+        let items = vec![create_test_item(1, 10), create_test_item(2, 20)];
 
         state.update_playlist(1, items, false).await.unwrap();
         state.next_item().await; // Move to index 0

@@ -24,18 +24,13 @@ pub enum MpvEvent {
     SeekComplete,
 
     /// Property changed (e.g., time-pos, duration)
-    PropertyChange {
-        property: String,
-        value: String,
-    },
+    PropertyChange { property: String, value: String },
 
     /// MPV shutdown
     Shutdown,
 
     /// Error occurred
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 /// MPV event handler
