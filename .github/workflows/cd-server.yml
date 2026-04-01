@@ -23,11 +23,12 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 20m
           script: |
             cd /opt/montr
             git fetch origin main
             git reset --hard origin/main
-            docker compose build --no-cache server
+            docker compose build server
             docker compose up -d
             sleep 10
             curl -sf http://localhost:3000/api/health || (echo "Health check failed!" && docker logs montr-server-1 --tail 20 && exit 1)
