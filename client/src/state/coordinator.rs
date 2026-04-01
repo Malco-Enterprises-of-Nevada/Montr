@@ -386,14 +386,17 @@ impl StateCoordinator {
         if !cache_path.exists() {
             tracing::info!("Media {} not cached, waiting for download", media_id);
 
-            let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(60);
+            let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(30);
             loop {
                 if cache_path.exists() {
                     break;
                 }
                 let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                 if remaining.is_zero() {
-                    return Err(MontrError::MediaNotFound(cache_path.clone()));
+                    tracing::warn!("Media {} not available after timeout, skipping to next", media_id);
+                    // Signal end-of-file so the coordinator loop advances
+                    let _ = self.playback_tx.send(PlaybackCommand::Stop);
+                    return Ok(());
                 }
                 tokio::select! {
                     _ = self.download_notify.notified() => {}
