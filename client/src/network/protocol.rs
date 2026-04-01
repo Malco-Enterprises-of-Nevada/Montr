@@ -135,6 +135,26 @@ pub enum ServerMessage {
 
     /// Command from server (e.g., reload, pause)
     Command(CommandMessage),
+
+    /// Success acknowledgement (e.g., registration confirmed)
+    Success(SuccessMessage),
+
+    /// Error response from server
+    ErrorResponse(ErrorResponseMessage),
+}
+
+/// Success acknowledgement from server
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SuccessMessage {
+    pub message: String,
+}
+
+/// Error response from server
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ErrorResponseMessage {
+    pub error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
 }
 
 /// Playlist assignment message

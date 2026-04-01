@@ -219,6 +219,14 @@ impl StateCoordinator {
 
                 Ok(())
             }
+            ServerMessage::Success(msg) => {
+                tracing::info!("Server: {}", msg.message);
+                Ok(())
+            }
+            ServerMessage::ErrorResponse(msg) => {
+                tracing::error!("Server error: {}", msg.error);
+                Ok(())
+            }
         }
     }
 
