@@ -147,12 +147,14 @@ impl StateCoordinator {
                     .update_playlist(msg.playlist_id, msg.items.clone(), msg.loop_playlist)
                     .await?;
 
-                // Trigger downloads for all media
-                self.download_playlist_media(msg.items).await?;
-
-                // Start playback once downloads are ready
-                self.start_playback().await?;
-                self.preload_upcoming();
+                // Download all media first, then start playback
+                let ready = self.download_playlist_media(msg.items).await?;
+                if ready > 0 {
+                    tracing::info!("{} media files cached, starting playback", ready);
+                    self.start_playback().await?;
+                } else {
+                    tracing::warn!("No media files available, playback not started");
+                }
 
                 Ok(())
             }
@@ -170,11 +172,10 @@ impl StateCoordinator {
                     .update_playlist(msg.playlist_id, msg.items.clone(), msg.loop_playlist)
                     .await?;
 
-                // Download new media
-                self.download_playlist_media(msg.items).await?;
+                // Download all media, then restart if needed
+                let ready = self.download_playlist_media(msg.items).await?;
 
-                // If current media is no longer in playlist, restart from beginning
-                if !new_items_have_current {
+                if !new_items_have_current && ready > 0 {
                     tracing::info!("Current media not in updated playlist, restarting");
                     self.start_playback().await?;
                 }
@@ -289,41 +290,37 @@ impl StateCoordinator {
         Ok(())
     }
 
-    /// Download media for playlist items
-    async fn download_playlist_media(&self, items: Vec<PlaylistItem>) -> Result<()> {
-        tracing::info!("Starting download of {} media files", items.len());
+    /// Download all media for playlist items and wait for completion
+    async fn download_playlist_media(&self, items: Vec<PlaylistItem>) -> Result<usize> {
+        let total = items.len();
+        tracing::info!("Downloading {} media files before playback...", total);
 
-        let cache_manager = self.cache_manager.clone();
+        let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+
+        // Relay task: notify waiters after each individual download completes
         let notify = self.download_notify.clone();
-
-        tokio::spawn(async move {
-            let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
-
-            // Relay task: notify waiters after each individual download completes
-            let notify_clone = notify.clone();
-            let relay_handle = tokio::spawn(async move {
-                while (progress_rx.recv().await).is_some() {
-                    notify_clone.notify_waiters();
-                }
-            });
-
-            let results = cache_manager.download_batch(items, Some(progress_tx)).await;
-
-            let success_count = results.iter().filter(|(_, r)| r.is_ok()).count();
-            let failure_count = results.len() - success_count;
-
-            tracing::info!(
-                "Batch download complete: {} succeeded, {} failed",
-                success_count,
-                failure_count
-            );
-
-            // Final notify in case play_media is still waiting
-            notify.notify_waiters();
-            let _ = relay_handle.await;
+        let relay_handle = tokio::spawn(async move {
+            while (progress_rx.recv().await).is_some() {
+                notify.notify_waiters();
+            }
         });
 
-        Ok(())
+        let results = self.cache_manager.download_batch(items, Some(progress_tx)).await;
+
+        let success_count = results.iter().filter(|(_, r)| r.is_ok()).count();
+        let failure_count = total - success_count;
+
+        tracing::info!(
+            "All downloads complete: {}/{} ready, {} failed",
+            success_count,
+            total,
+            failure_count
+        );
+
+        self.download_notify.notify_waiters();
+        let _ = relay_handle.await;
+
+        Ok(success_count)
     }
 
     /// Pre-download upcoming items in the background
