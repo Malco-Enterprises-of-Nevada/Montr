@@ -3,10 +3,13 @@
  */
 
 import { Router, Request, Response } from 'express';
+import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import { mediaService } from '../../services/media.service';
 import { config } from '../../config/config';
+import { storageService } from '../../services/storage.service';
+import { chunkedUploadService } from '../../services/chunked-upload.service';
 import { asyncHandler, successResponse, AppError, ErrorCode } from '../middleware/error-handler';
 import {
   validateParams,
@@ -17,6 +20,20 @@ import {
 
 const router = Router();
 
+const ALLOWED_MIME_TYPES = [
+  'video/mp4',
+  'video/mpeg',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/x-matroska',
+  'video/webm',
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+];
+
 // Configure multer for file uploads
 const upload = multer({
   dest: path.join(config.storage.path, 'temp'),
@@ -24,22 +41,7 @@ const upload = multer({
     fileSize: config.storage.maxUploadSizeMB * 1024 * 1024,
   },
   fileFilter: (_req, file, cb) => {
-    // Accept only video and image files
-    const allowedMimeTypes = [
-      'video/mp4',
-      'video/mpeg',
-      'video/quicktime',
-      'video/x-msvideo',
-      'video/x-matroska',
-      'video/webm',
-      'image/jpeg',
-      'image/png',
-      'image/gif',
-      'image/webp',
-      'image/bmp',
-    ];
-
-    if (allowedMimeTypes.includes(file.mimetype)) {
+    if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
       cb(null, true);
     } else {
       cb(
@@ -90,6 +92,111 @@ router.post(
         count: uploadedMedia.length,
       })
     );
+  })
+);
+
+/**
+ * POST /api/media/upload/init
+ * Initialize a chunked upload session
+ */
+router.post(
+  '/upload/init',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { filename, mimeType, totalSize } = req.body as {
+      filename: string;
+      mimeType: string;
+      totalSize: number;
+    };
+
+    if (!filename || !mimeType || !totalSize) {
+      throw new AppError(
+        ErrorCode.BAD_REQUEST,
+        'filename, mimeType, and totalSize are required',
+        400
+      );
+    }
+
+    if (!ALLOWED_MIME_TYPES.includes(mimeType)) {
+      throw new AppError(ErrorCode.INVALID_MEDIA_TYPE, `Unsupported file type: ${mimeType}`, 400);
+    }
+
+    const maxBytes = config.storage.maxUploadSizeMB * 1024 * 1024;
+    if (totalSize > maxBytes) {
+      throw new AppError(
+        ErrorCode.BAD_REQUEST,
+        `File too large. Maximum: ${config.storage.maxUploadSizeMB}MB`,
+        400
+      );
+    }
+
+    const session = await chunkedUploadService.initUpload(filename, mimeType, totalSize);
+    res.json(successResponse(session));
+  })
+);
+
+/**
+ * POST /api/media/upload/:uploadId/chunk/:chunkIndex
+ * Upload a single chunk
+ */
+router.post(
+  '/upload/:uploadId/chunk/:chunkIndex',
+  express.raw({ type: 'application/octet-stream', limit: `${config.storage.chunkSizeMB + 5}mb` }),
+  asyncHandler(async (req: Request, res: Response) => {
+    const uploadId = req.params.uploadId as string;
+    const chunkIndex = req.params.chunkIndex as string;
+    const buffer = req.body as Buffer;
+
+    if (!buffer || buffer.length === 0) {
+      throw new AppError(ErrorCode.BAD_REQUEST, 'Empty chunk', 400);
+    }
+
+    const result = await chunkedUploadService.uploadChunk(
+      uploadId,
+      parseInt(chunkIndex, 10),
+      buffer
+    );
+
+    res.json(successResponse(result));
+  })
+);
+
+/**
+ * POST /api/media/upload/:uploadId/complete
+ * Complete a chunked upload and create media entry
+ */
+router.post(
+  '/upload/:uploadId/complete',
+  asyncHandler(async (req: Request, res: Response) => {
+    const uploadId = req.params.uploadId as string;
+
+    const { storageInfo, originalFilename, mimeType } =
+      await chunkedUploadService.completeUpload(uploadId);
+
+    const media = await mediaService.createMediaFromStorageInfo(
+      storageInfo,
+      originalFilename,
+      mimeType
+    );
+
+    res.status(201).json(
+      successResponse({
+        uploaded: [media],
+        count: 1,
+      })
+    );
+  })
+);
+
+/**
+ * DELETE /api/media/upload/:uploadId
+ * Abort a chunked upload
+ */
+router.delete(
+  '/upload/:uploadId',
+  asyncHandler(async (req: Request, res: Response) => {
+    const uploadId = req.params.uploadId as string;
+    await chunkedUploadService.abortUpload(uploadId);
+    res.json(successResponse({ message: 'Upload aborted' }));
   })
 );
 
@@ -176,9 +283,14 @@ router.get(
     const params = req.params as unknown as { id: number };
     const { id } = params;
     const media = await mediaService.getMediaById(id);
-    const filePath = await mediaService.getMediaFilePath(id);
 
-    res.download(filePath, media.original_filename);
+    if (config.storage.backend === 'spaces') {
+      const url = storageService.getDownloadUrl(media.filepath);
+      res.redirect(302, url);
+    } else {
+      const filePath = await mediaService.getMediaFilePath(id);
+      res.download(filePath, media.original_filename);
+    }
   })
 );
 
