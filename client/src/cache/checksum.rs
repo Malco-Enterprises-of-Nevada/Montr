@@ -46,6 +46,12 @@ pub async fn calculate_checksum(file_path: &Path) -> Result<String> {
 ///
 /// Returns Ok(()) if checksums match, or ChecksumMismatch error if they don't.
 pub async fn verify_checksum(file_path: &Path, expected_checksum: &str) -> Result<()> {
+    // Skip verification if server didn't provide a checksum
+    if expected_checksum.is_empty() {
+        tracing::debug!("Skipping checksum verification (no checksum provided by server)");
+        return Ok(());
+    }
+
     let actual_checksum = calculate_checksum(file_path).await?;
 
     if actual_checksum.to_lowercase() == expected_checksum.to_lowercase() {
