@@ -255,10 +255,7 @@ impl WebSocketClient {
                                     }
                                 }
                                 Err(e) => {
-                                    tracing::error!("Failed to parse server message: {}", e);
-                                    let mut s = state.write().await;
-                                    s.transition_to_error(ErrorReason::ProtocolError);
-                                    break;
+                                    tracing::warn!("Ignoring unrecognized server message: {}", e);
                                 }
                             }
                         }
