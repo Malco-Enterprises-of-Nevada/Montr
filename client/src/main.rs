@@ -114,11 +114,14 @@ async fn run_client(config: config::Config) -> Result<()> {
     // Initialize Cache Manager
     // ========================================================================
     tracing::info!("Initializing cache manager");
-    let cache_manager = Arc::new(CacheManager::new(
-        http_client.clone(),
-        config.playback.media_cache_dir.clone(),
-        cancel_token.clone(),
-    )?);
+    let cache_manager = Arc::new(
+        CacheManager::new(
+            http_client.clone(),
+            config.playback.media_cache_dir.clone(),
+            cancel_token.clone(),
+        )?
+        .with_api_key(config.server.api_key.clone()),
+    );
     cache_manager.init().await?;
 
     // ========================================================================
@@ -302,6 +305,7 @@ async fn run_client(config: config::Config) -> Result<()> {
     let preview_cancel = cancel_token.clone();
     let preview_server_url = config.server.url.clone();
     let preview_client_id = config.client.id.clone();
+    let preview_api_key = config.server.api_key.clone();
     let preview_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
         let screenshot_path = format!("/tmp/montr-preview-{}.jpg", std::process::id());
@@ -336,7 +340,11 @@ async fn run_client(config: config::Config) -> Result<()> {
                             let form = reqwest::multipart::Form::new().part("preview", part);
 
                             let url = format!("{}/api/clients/{}/preview", preview_server_url, preview_client_id);
-                            match client.post(&url).multipart(form).send().await {
+                            let mut req = client.post(&url).multipart(form);
+                            if let Some(ref key) = preview_api_key {
+                                req = req.header("X-API-Key", key);
+                            }
+                            match req.send().await {
                                 Ok(resp) if resp.status().is_success() => {
                                     tracing::trace!("Preview uploaded");
                                 }

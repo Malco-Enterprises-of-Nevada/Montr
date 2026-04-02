@@ -7,6 +7,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { getDatabase } from '../../database/connection';
+import { config } from '../../config/config';
 import { UserRole } from '../../database/types';
 import { errorResponse, ErrorCode } from './error-handler';
 
@@ -46,6 +47,13 @@ export function requireAuth() {
       const db = await getDatabase();
       const userCount = await db.getUserCount();
       if (userCount === 0) {
+        next();
+        return;
+      }
+
+      // Check for API key (machine-to-machine auth for clients)
+      const apiKey = req.header('X-API-Key');
+      if (apiKey && config.security.apiKey && apiKey === config.security.apiKey) {
         next();
         return;
       }
