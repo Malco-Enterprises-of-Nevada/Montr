@@ -336,9 +336,11 @@ router.get(
     const { id } = params;
 
     if (config.storage.backend === 'spaces') {
+      // Proxy thumbnail content to avoid CORS issues with CDN redirects
       const thumbnailKey = await mediaService.getMediaThumbnail(id);
-      const url = storageService.getDownloadUrl(thumbnailKey);
-      res.redirect(302, url);
+      const tempPath = await storageService.downloadToTemp(thumbnailKey);
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.sendFile(tempPath);
     } else {
       const thumbnailPath = await mediaService.getMediaThumbnail(id);
       res.sendFile(thumbnailPath);
