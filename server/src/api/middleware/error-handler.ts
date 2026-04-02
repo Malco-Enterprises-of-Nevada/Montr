@@ -221,11 +221,7 @@ export function notFoundHandler(req: Request, res: Response): void {
  * Creates a "resource not found" error
  */
 export function createNotFoundError(resource: string, id: string | number): AppError {
-  return new AppError(
-    ErrorCode.RESOURCE_NOT_FOUND,
-    `${resource} with ID ${id} not found`,
-    404
-  );
+  return new AppError(ErrorCode.RESOURCE_NOT_FOUND, `${resource} with ID ${id} not found`, 404);
 }
 
 /**

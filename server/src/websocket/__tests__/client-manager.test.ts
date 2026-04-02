@@ -19,7 +19,11 @@ jest.mock('../../utils/logger', () => ({
 // Helper function to create mock WebSocket
 function createMockWebSocket(readyState: number = WebSocket.OPEN): ExtendedWebSocket {
   const ws = new WebSocket('ws://localhost') as ExtendedWebSocket;
-  Object.defineProperty(ws, 'readyState', { value: readyState, writable: true, configurable: true });
+  Object.defineProperty(ws, 'readyState', {
+    value: readyState,
+    writable: true,
+    configurable: true,
+  });
   ws.send = jest.fn();
   ws.close = jest.fn();
   ws.ping = jest.fn();

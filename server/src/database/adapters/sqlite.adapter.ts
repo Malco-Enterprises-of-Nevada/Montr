@@ -79,7 +79,10 @@ export class SQLiteAdapter extends SqlBaseAdapter {
     return db.prepare(sql).all() as T[];
   }
 
-  async rawQueryOne<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T | null> {
+  async rawQueryOne<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[]
+  ): Promise<T | null> {
     const db = this.getDb();
     let result: T | undefined;
     if (params && params.length > 0) {
@@ -139,9 +142,9 @@ export class SQLiteAdapter extends SqlBaseAdapter {
       },
       async tableExists(name: string): Promise<boolean> {
         const db = self.getDb();
-        const row = db.prepare(
-          "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
-        ).get(name);
+        const row = db
+          .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?")
+          .get(name);
         return !!row;
       },
     };

@@ -8,17 +8,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { getLogger } from '../utils/logger';
 import { config } from '../config/config';
 import { clientConnectionManager } from './client-manager';
-import {
-  ExtendedWebSocket,
-  parseClientMessage,
-  ClientMessage,
-} from './types';
-import {
-  handleRegister,
-  handleStatusUpdate,
-  handleHeartbeat,
-  handleError,
-} from './handlers';
+import { ExtendedWebSocket, parseClientMessage, ClientMessage } from './types';
+import { handleRegister, handleStatusUpdate, handleHeartbeat, handleError } from './handlers';
 
 const logger = getLogger();
 
@@ -178,7 +169,9 @@ export class MontrWebSocketServer {
    */
   private handleDisconnection(ws: ExtendedWebSocket, code: number, reason: string): void {
     if (ws.clientId) {
-      logger.info(`Client ${ws.clientId} disconnected (code: ${code}, reason: ${reason || 'none'})`);
+      logger.info(
+        `Client ${ws.clientId} disconnected (code: ${code}, reason: ${reason || 'none'})`
+      );
       clientConnectionManager.removeConnection(ws.clientId);
 
       // Update client status in database asynchronously

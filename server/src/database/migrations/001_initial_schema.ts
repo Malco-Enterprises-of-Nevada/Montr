@@ -555,7 +555,15 @@ async function setupMongoDB(ctx: MigrationContext): Promise<void> {
   const collections = await db.listCollections().toArray();
   const existing = new Set(collections.map((c) => c.name));
 
-  for (const name of ['media_files', 'playlists', 'playlist_items', 'clients', 'client_status', 'system_state', 'counters']) {
+  for (const name of [
+    'media_files',
+    'playlists',
+    'playlist_items',
+    'clients',
+    'client_status',
+    'system_state',
+    'counters',
+  ]) {
     if (!existing.has(name)) {
       await db.createCollection(name);
     }
@@ -566,10 +574,9 @@ async function setupMongoDB(ctx: MigrationContext): Promise<void> {
   await db.collection('media_files').createIndex({ type: 1 });
   await db.collection('media_files').createIndex({ created_at: -1 });
 
-  await db.collection('playlist_items').createIndex(
-    { playlist_id: 1, order_index: 1 },
-    { unique: true },
-  );
+  await db
+    .collection('playlist_items')
+    .createIndex({ playlist_id: 1, order_index: 1 }, { unique: true });
   await db.collection('playlist_items').createIndex({ playlist_id: 1 });
   await db.collection('playlist_items').createIndex({ media_id: 1 });
 
@@ -582,30 +589,56 @@ async function setupMongoDB(ctx: MigrationContext): Promise<void> {
 
   // Initialize auto-increment counters (using string _id, not ObjectId)
   for (const name of ['media_files', 'playlists', 'playlist_items', 'client_status']) {
-    await db.collection('counters').updateOne(
-      { _id: name as unknown as import('mongodb').ObjectId },
-      { $setOnInsert: { seq: 0 } },
-      { upsert: true },
-    );
+    await db
+      .collection('counters')
+      .updateOne(
+        { _id: name as unknown as import('mongodb').ObjectId },
+        { $setOnInsert: { seq: 0 } },
+        { upsert: true }
+      );
   }
 
   // Initialize system state
   await db.collection('system_state').updateOne(
     { key: 'schema_version' },
-    { $setOnInsert: { key: 'schema_version', value: '1.0.0', updated_at: new Date().toISOString() } },
-    { upsert: true },
+    {
+      $setOnInsert: {
+        key: 'schema_version',
+        value: '1.0.0',
+        updated_at: new Date().toISOString(),
+      },
+    },
+    { upsert: true }
   );
   await db.collection('system_state').updateOne(
     { key: 'initialized_at' },
-    { $setOnInsert: { key: 'initialized_at', value: new Date().toISOString(), updated_at: new Date().toISOString() } },
-    { upsert: true },
+    {
+      $setOnInsert: {
+        key: 'initialized_at',
+        value: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    },
+    { upsert: true }
   );
 }
 
 async function teardownMongoDB(ctx: MigrationContext): Promise<void> {
   const db = ctx.getMongoDb!();
-  for (const name of ['client_status', 'clients', 'playlist_items', 'playlists', 'media_files', 'system_state', 'counters', 'schema_migrations']) {
-    await db.collection(name).drop().catch(() => {});
+  for (const name of [
+    'client_status',
+    'clients',
+    'playlist_items',
+    'playlists',
+    'media_files',
+    'system_state',
+    'counters',
+    'schema_migrations',
+  ]) {
+    await db
+      .collection(name)
+      .drop()
+      .catch(() => {});
   }
 }
 

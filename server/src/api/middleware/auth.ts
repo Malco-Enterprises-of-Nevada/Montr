@@ -22,16 +22,16 @@ export function apiKeyAuth() {
     const apiKey = req.header('X-API-Key');
 
     if (!apiKey) {
-      res.status(401).json(
-        errorResponse(ErrorCode.UNAUTHORIZED, 'API key is required. Provide X-API-Key header.')
-      );
+      res
+        .status(401)
+        .json(
+          errorResponse(ErrorCode.UNAUTHORIZED, 'API key is required. Provide X-API-Key header.')
+        );
       return;
     }
 
     if (apiKey !== config.security.apiKey) {
-      res.status(401).json(
-        errorResponse(ErrorCode.UNAUTHORIZED, 'Invalid API key')
-      );
+      res.status(401).json(errorResponse(ErrorCode.UNAUTHORIZED, 'Invalid API key'));
       return;
     }
 
