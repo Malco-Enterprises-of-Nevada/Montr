@@ -6,7 +6,7 @@
     <meta http-equiv="X-UA-Compatible" content="ie=edge">
     <title>Montr - Media Playlist Management</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/styles.css?v=4">
+    <link rel="stylesheet" href="/css/styles.css?v=5">
 </head>
 <body>
     <!-- Login Screen -->
@@ -850,6 +850,26 @@
     </div>
 
     <!-- Toast Notification -->
+    <!-- Media Preview Modal -->
+    <div id="mediaPreviewModal" class="modal modal-large">
+        <div class="modal-content media-preview-content">
+            <div class="modal-header">
+                <h3 id="mediaPreviewTitle">Preview</h3>
+                <button class="modal-close" id="closeMediaPreview">&times;</button>
+            </div>
+            <div class="modal-body media-preview-body">
+                <video id="mediaPreviewVideo" controls style="display:none"></video>
+                <img id="mediaPreviewImage" style="display:none">
+            </div>
+            <div class="modal-footer">
+                <span id="mediaPreviewMeta" class="text-muted" style="flex:1"></span>
+                <button class="btn btn-secondary" id="mediaPreviewDownload">Download</button>
+                <button class="btn btn-secondary" id="closeMediaPreviewBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
     <div id="toast" class="toast"></div>
 
     <!-- Loading Spinner -->
@@ -857,6 +877,6 @@
         <div class="spinner"></div>
     </div>
 
-    <script src="/js/app.js?v=10"></script>
+    <script src="/js/app.js?v=11"></script>
 </body>
 </html>

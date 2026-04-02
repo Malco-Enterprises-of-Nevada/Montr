@@ -578,23 +578,20 @@ function renderMediaGrid(media) {
 
     emptyEl.style.display = 'none';
 
-    gridEl.innerHTML = media.map(item => `
+    const videoIcon = `<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+    const imageIcon = `<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`;
+
+    gridEl.innerHTML = media.map(item => {
+        const displayName = item.original_filename || item.filename;
+        return `
         <div class="media-item" data-id="${item.id}">
-            <div class="media-thumbnail">
-                ${item.type === 'video' ? `
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polygon points="5 3 19 12 5 21 5 3"/>
-                    </svg>
-                ` : `
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="3" y="3" width="18" height="18" rx="2"/>
-                        <circle cx="8.5" cy="8.5" r="1.5"/>
-                        <path d="M21 15l-5-5L5 21"/>
-                    </svg>
-                `}
+            <div class="media-thumbnail" data-id="${item.id}">
+                <img class="thumb-img" data-thumb-id="${item.id}" alt="" style="display:none">
+                <div class="thumb-fallback">${item.type === 'video' ? videoIcon : imageIcon}</div>
+                ${item.type === 'video' ? '<div class="thumb-play-badge">&#9654;</div>' : ''}
             </div>
             <div class="media-info">
-                <div class="media-name" title="${item.filename}">${item.filename}</div>
+                <div class="media-name" title="${displayName}">${displayName}</div>
                 <div class="media-meta">
                     <span class="badge badge-info">${item.type}</span>
                     <span>${item.file_size ? formatFileSize(item.file_size) : 'N/A'}${item.duration ? ' / ' + formatDuration(item.duration) : ''}</span>
@@ -608,9 +605,13 @@ function renderMediaGrid(media) {
                     Delete
                 </button>` : ''}
             </div>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
 
+    // Click media item to open preview
+    gridEl.querySelectorAll('.media-item').forEach(el => {
+        el.addEventListener('click', () => openMediaPreview(parseInt(el.dataset.id)));
+    });
     gridEl.querySelectorAll('.media-download-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -623,6 +624,28 @@ function renderMediaGrid(media) {
             handleMediaDelete(btn.dataset.id);
         });
     });
+
+    // Load thumbnails asynchronously
+    loadThumbnails(media);
+}
+
+async function loadThumbnails(media) {
+    for (const item of media) {
+        const img = document.querySelector(`img[data-thumb-id="${item.id}"]`);
+        if (!img) continue;
+        try {
+            const headers = {};
+            if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
+            const response = await fetch(API_BASE + `/media/${item.id}/thumbnail`, { headers });
+            if (!response.ok) continue;
+            const blob = await response.blob();
+            img.src = URL.createObjectURL(blob);
+            img.style.display = '';
+            img.parentElement.querySelector('.thumb-fallback').style.display = 'none';
+        } catch {
+            // Keep fallback icon
+        }
+    }
 }
 
 function initMediaSearch() {
@@ -740,6 +763,81 @@ async function handleMediaDelete(id) {
 
 function handleMediaDownload(id) {
     mediaAPI.download(id);
+}
+
+// ===== Media Preview =====
+
+let _previewBlobUrl = null;
+
+async function openMediaPreview(id) {
+    try {
+        const media = await apiCall(`/media/${id}`);
+        const displayName = media.original_filename || media.filename;
+
+        document.getElementById('mediaPreviewTitle').textContent = displayName;
+
+        const video = document.getElementById('mediaPreviewVideo');
+        const img = document.getElementById('mediaPreviewImage');
+
+        // Clean up previous
+        video.style.display = 'none';
+        video.pause();
+        video.removeAttribute('src');
+        img.style.display = 'none';
+        img.removeAttribute('src');
+        if (_previewBlobUrl) {
+            URL.revokeObjectURL(_previewBlobUrl);
+            _previewBlobUrl = null;
+        }
+
+        // Build metadata string
+        const parts = [media.type];
+        if (media.file_size) parts.push(formatFileSize(media.file_size));
+        if (media.duration) parts.push(formatDuration(media.duration));
+        if (media.width && media.height) parts.push(`${media.width}x${media.height}`);
+        document.getElementById('mediaPreviewMeta').textContent = parts.join(' · ');
+
+        // Load media via fetch with auth
+        const headers = {};
+        if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
+        const response = await fetch(API_BASE + `/media/${id}/stream`, { headers });
+        if (!response.ok) throw new Error('Failed to load media');
+        const blob = await response.blob();
+        _previewBlobUrl = URL.createObjectURL(blob);
+
+        if (media.type === 'video') {
+            video.src = _previewBlobUrl;
+            video.style.display = '';
+        } else {
+            img.src = _previewBlobUrl;
+            img.style.display = '';
+        }
+
+        // Wire download button
+        document.getElementById('mediaPreviewDownload').onclick = () => mediaAPI.download(id);
+
+        openModal('mediaPreviewModal');
+    } catch (error) {
+        console.error('Failed to open preview:', error);
+        showToast('Failed to load media preview', 'error');
+    }
+}
+
+function initMediaPreviewModal() {
+    document.getElementById('closeMediaPreview').addEventListener('click', closeMediaPreview);
+    document.getElementById('closeMediaPreviewBtn').addEventListener('click', closeMediaPreview);
+}
+
+function closeMediaPreview() {
+    const video = document.getElementById('mediaPreviewVideo');
+    video.pause();
+    video.removeAttribute('src');
+    document.getElementById('mediaPreviewImage').removeAttribute('src');
+    if (_previewBlobUrl) {
+        URL.revokeObjectURL(_previewBlobUrl);
+        _previewBlobUrl = null;
+    }
+    closeModal('mediaPreviewModal');
 }
 
 // ===== Playlists View =====
@@ -2413,6 +2511,7 @@ function initApp() {
     // Initialize media functionality
     initMediaSearch();
     initMediaUpload();
+    initMediaPreviewModal();
 
     // Initialize playlist functionality
     initCreatePlaylist();

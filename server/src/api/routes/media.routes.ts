@@ -302,6 +302,29 @@ router.get(
 );
 
 /**
+ * GET /api/media/:id/stream
+ * Stream a media file for in-browser playback (no Content-Disposition: attachment)
+ */
+router.get(
+  '/:id/stream',
+  validateParams(idParamSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const params = req.params as unknown as { id: number };
+    const { id } = params;
+    const media = await mediaService.getMediaById(id);
+
+    if (config.storage.backend === 'spaces') {
+      const url = storageService.getDownloadUrl(media.filepath);
+      res.redirect(302, url);
+    } else {
+      const filePath = await mediaService.getMediaFilePath(id);
+      res.setHeader('Content-Type', media.mime_type || 'application/octet-stream');
+      res.sendFile(filePath);
+    }
+  })
+);
+
+/**
  * GET /api/media/:id/thumbnail
  * Get thumbnail for a media file
  */
