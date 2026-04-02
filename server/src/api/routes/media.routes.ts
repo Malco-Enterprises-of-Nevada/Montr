@@ -334,9 +334,15 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const params = req.params as unknown as { id: number };
     const { id } = params;
-    const thumbnailPath = await mediaService.getMediaThumbnail(id);
 
-    res.sendFile(thumbnailPath);
+    if (config.storage.backend === 'spaces') {
+      const thumbnailKey = await mediaService.getMediaThumbnail(id);
+      const url = storageService.getDownloadUrl(thumbnailKey);
+      res.redirect(302, url);
+    } else {
+      const thumbnailPath = await mediaService.getMediaThumbnail(id);
+      res.sendFile(thumbnailPath);
+    }
   })
 );
 
