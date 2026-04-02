@@ -1200,7 +1200,7 @@ function renderClientsGrid(clients) {
 
     gridEl.innerHTML = clients.map(client => {
         const statusClass = client.status || 'offline';
-        const assignedPlaylist = state.playlists.find(p => p.id === client.assignedPlaylistId);
+        const assignedPlaylist = state.playlists.find(p => p.id === client.assigned_playlist_id);
 
         return `
             <div class="client-card">
@@ -1222,7 +1222,7 @@ function renderClientsGrid(clients) {
                     </div>
                     <div class="info-row">
                         <span class="info-label">Last Seen:</span>
-                        <span>${client.lastSeen ? formatRelativeTime(client.lastSeen) : 'Never'}</span>
+                        <span>${client.last_seen ? formatRelativeTime(client.last_seen) : 'Never'}</span>
                     </div>
                 </div>
                 <div class="client-actions">
@@ -1797,10 +1797,24 @@ async function loadPreviews(clients) {
 
     grid.innerHTML = clients.map(client => `
         <div class="preview-card" data-client-id="${client.id}" data-client-name="${escapeHtml(client.name || client.id)}">
-            <img class="preview-img" src="/api/clients/${client.id}/preview?t=${Date.now()}" alt="${escapeHtml(client.name || client.id)}">
+            <img class="preview-img" data-preview-client="${client.id}" alt="${escapeHtml(client.name || client.id)}">
             <div class="preview-label">${escapeHtml(client.name || client.id.substring(0, 8))}</div>
         </div>
     `).join('');
+
+    // Load preview images with auth
+    for (const client of clients) {
+        const img = grid.querySelector(`img[data-preview-client="${client.id}"]`);
+        if (!img) continue;
+        try {
+            const headers = {};
+            if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
+            const resp = await fetch(API_BASE + `/clients/${client.id}/preview?t=${Date.now()}`, { headers });
+            if (!resp.ok) continue;
+            const blob = await resp.blob();
+            img.src = URL.createObjectURL(blob);
+        } catch { /* keep empty */ }
+    }
 
     grid.querySelectorAll('.preview-card').forEach(card => {
         card.addEventListener('click', () => enlargePreview(card.dataset.clientId, card.dataset.clientName));
@@ -1812,10 +1826,18 @@ async function loadPreviews(clients) {
     });
 }
 
-function enlargePreview(clientId, clientName) {
+async function enlargePreview(clientId, clientName) {
     const modal = document.getElementById('previewEnlargeModal');
     document.getElementById('previewEnlargeTitle').textContent = clientName;
-    document.getElementById('previewEnlargeImg').src = `/api/clients/${clientId}/preview?t=${Date.now()}`;
+    try {
+        const headers = {};
+        if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
+        const resp = await fetch(API_BASE + `/clients/${clientId}/preview?t=${Date.now()}`, { headers });
+        if (resp.ok) {
+            const blob = await resp.blob();
+            document.getElementById('previewEnlargeImg').src = URL.createObjectURL(blob);
+        }
+    } catch { /* ignore */ }
     modal.style.display = 'flex';
 }
 
