@@ -49,7 +49,7 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm ci --legacy-peer-deps
-      - run: npx jest --coverage --forceExit tests/unit src/websocket/__tests__
+      - run: npx jest --coverage --forceExit tests/unit
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
