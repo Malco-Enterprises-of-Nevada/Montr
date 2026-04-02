@@ -173,7 +173,7 @@ async fn run_client(config: config::Config) -> Result<()> {
     tracing::info!("Initializing WebSocket client");
     let ws_client = Arc::new(WebSocketClient::new(&config).await?);
 
-    // Send registration message
+    // Send registration message (and set it to auto-resend on reconnect)
     let capabilities = ClientCapabilities {
         video: true,
         image: true,
@@ -185,6 +185,7 @@ async fn run_client(config: config::Config) -> Result<()> {
         capabilities,
     );
 
+    ws_client.set_on_connect(register_msg.clone()).await;
     ws_client.send(register_msg).await?;
     tracing::info!("Registered with server");
 
