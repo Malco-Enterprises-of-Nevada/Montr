@@ -39,6 +39,8 @@ pub struct CacheManager {
     download_semaphore: Arc<Semaphore>,
     /// Cancellation token for shutdown
     cancel_token: CancellationToken,
+    /// Optional API key for server authentication
+    api_key: Option<String>,
 }
 
 impl CacheManager {
@@ -53,7 +55,14 @@ impl CacheManager {
             cache_dir,
             download_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS)),
             cancel_token,
+            api_key: None,
         })
+    }
+
+    /// Set the API key for authenticated downloads
+    pub fn with_api_key(mut self, api_key: Option<String>) -> Self {
+        self.api_key = api_key;
+        self
     }
 
     /// Initialize cache directory
@@ -139,7 +148,7 @@ impl CacheManager {
             resume: true,
             timeout_secs: 300,
             max_retries: 3,
-            api_key: None,
+            api_key: self.api_key.clone(),
         };
 
         self.http_client
@@ -358,6 +367,7 @@ impl Clone for CacheManager {
             cache_dir: self.cache_dir.clone(),
             download_semaphore: self.download_semaphore.clone(),
             cancel_token: self.cancel_token.clone(),
+            api_key: self.api_key.clone(),
         }
     }
 }
