@@ -73,9 +73,29 @@ jobs:
           name: montr-client-linux-amd64
           path: build/client/montr-client
 
+  build-client-windows:
+    name: Build Client (Windows)
+    needs: validate
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release
+        working-directory: client
+      - run: |
+          $hash = (Get-FileHash client\target\release\montr-client.exe -Algorithm SHA256).Hash
+          "$hash  montr-client.exe" | Out-File -FilePath client\target\release\montr-client.exe.sha256 -Encoding ascii
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: montr-client-windows-amd64
+          path: |
+            client/target/release/montr-client.exe
+            client/target/release/montr-client.exe.sha256
+
   create-release:
     name: Create Release
-    needs: [build-server, build-client-linux]
+    needs: [build-server, build-client-linux, build-client-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -116,3 +136,5 @@ jobs:
           files: |
             artifacts/montr-server-${{ github.ref_name }}/*.tar.gz
             artifacts/montr-client-linux-amd64/montr-client
+            artifacts/montr-client-windows-amd64/montr-client.exe
+            artifacts/montr-client-windows-amd64/montr-client.exe.sha256

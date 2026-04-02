@@ -5,6 +5,8 @@ pub mod error;
 pub mod logging;
 pub mod network;
 pub mod playback;
+#[cfg(windows)]
+pub mod service;
 pub mod state;
 pub mod status;
 pub mod update;

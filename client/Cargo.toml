@@ -60,9 +60,7 @@ sysinfo = "0.30"
 rand = "0.8"
 
 [target.'cfg(windows)'.dependencies]
-# Windows-specific dependencies for service support
-# TODO: windows-service dependency is listed but never used in the codebase.
-# Implement Windows Service integration (register/start/stop) or remove this dependency.
+# Windows Service support — used by client/src/service/windows.rs
 windows-service = "0.6"
 
 [target.'cfg(unix)'.dependencies]
