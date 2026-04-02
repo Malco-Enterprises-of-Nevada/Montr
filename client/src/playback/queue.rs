@@ -86,6 +86,7 @@ impl PlaylistQueue {
     ///
     /// Returns the next item, or None if at end (and not looping).
     /// If looping is enabled, wraps around to the beginning.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<&PlaylistItem> {
         if self.items.is_empty() {
             return None;

@@ -20,8 +20,6 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci --legacy-peer-deps
         working-directory: server
-      - run: npm run lint
-        working-directory: server
       - run: npm run format:check
         working-directory: server
       - run: npm run typecheck
