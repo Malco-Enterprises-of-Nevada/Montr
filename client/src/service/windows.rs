@@ -14,8 +14,7 @@ use windows_service::{define_windows_service, service_dispatcher};
 
 const SERVICE_NAME: &str = "MontrClient";
 const SERVICE_DISPLAY_NAME: &str = "Montr Media Client";
-const SERVICE_DESCRIPTION: &str =
-    "Montr distributed media playlist client for automated playback";
+const SERVICE_DESCRIPTION: &str = "Montr distributed media playlist client for automated playback";
 
 define_windows_service!(ffi_service_main, montr_service_main);
 
@@ -85,7 +84,10 @@ fn run_service(arguments: Vec<OsString>) -> Result<()> {
 
         // If --config was passed via service args, find it
         let config_path = config_path.or_else(|| {
-            let args: Vec<String> = arguments.iter().map(|a| a.to_string_lossy().to_string()).collect();
+            let args: Vec<String> = arguments
+                .iter()
+                .map(|a| a.to_string_lossy().to_string())
+                .collect();
             args.windows(2)
                 .find(|pair| pair[0] == "--config" || pair[0] == "-c")
                 .map(|pair| PathBuf::from(&pair[1]))
@@ -389,8 +391,8 @@ pub fn install_service() -> Result<()> {
         ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)
             .map_err(|e| anyhow!("Failed to open Service Control Manager: {}", e))?;
 
-    let executable_path = std::env::current_exe()
-        .map_err(|e| anyhow!("Failed to get executable path: {}", e))?;
+    let executable_path =
+        std::env::current_exe().map_err(|e| anyhow!("Failed to get executable path: {}", e))?;
 
     // Determine config path — use ProgramData default
     let config_path = r"C:\ProgramData\Montr\config.toml";
@@ -413,7 +415,10 @@ pub fn install_service() -> Result<()> {
     };
 
     let service = manager
-        .create_service(&service_info, ServiceAccess::CHANGE_CONFIG | ServiceAccess::START)
+        .create_service(
+            &service_info,
+            ServiceAccess::CHANGE_CONFIG | ServiceAccess::START,
+        )
         .map_err(|e| anyhow!("Failed to create service: {}", e))?;
 
     // Set the service description
@@ -430,9 +435,8 @@ pub fn install_service() -> Result<()> {
 
 /// Uninstall the Montr client Windows Service.
 pub fn uninstall_service() -> Result<()> {
-    let manager =
-        ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
-            .map_err(|e| anyhow!("Failed to open Service Control Manager: {}", e))?;
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+        .map_err(|e| anyhow!("Failed to open Service Control Manager: {}", e))?;
 
     let service = manager
         .open_service(
@@ -453,9 +457,9 @@ pub fn uninstall_service() -> Result<()> {
         // Wait up to 10 seconds for the service to stop
         for _ in 0..20 {
             std::thread::sleep(Duration::from_millis(500));
-            let status = service.query_status().map_err(|e| {
-                anyhow!("Failed to query service status: {}", e)
-            })?;
+            let status = service
+                .query_status()
+                .map_err(|e| anyhow!("Failed to query service status: {}", e))?;
             if status.current_state == ServiceState::Stopped {
                 break;
             }
@@ -466,7 +470,10 @@ pub fn uninstall_service() -> Result<()> {
         .delete()
         .map_err(|e| anyhow!("Failed to delete service: {}", e))?;
 
-    println!("Service '{}' uninstalled successfully.", SERVICE_DISPLAY_NAME);
+    println!(
+        "Service '{}' uninstalled successfully.",
+        SERVICE_DISPLAY_NAME
+    );
 
     Ok(())
 }

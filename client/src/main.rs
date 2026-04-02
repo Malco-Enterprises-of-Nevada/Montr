@@ -20,8 +20,12 @@ fn main() -> Result<()> {
     }
 
     // Console mode: build runtime and run
-    let runtime = tokio::runtime::Runtime::new()
-        .map_err(|e| montr_client::error::MontrError::Other(anyhow::anyhow!("Failed to create tokio runtime: {}", e)))?;
+    let runtime = tokio::runtime::Runtime::new().map_err(|e| {
+        montr_client::error::MontrError::Other(anyhow::anyhow!(
+            "Failed to create tokio runtime: {}",
+            e
+        ))
+    })?;
 
     runtime.block_on(run_console_mode(args))
 }
