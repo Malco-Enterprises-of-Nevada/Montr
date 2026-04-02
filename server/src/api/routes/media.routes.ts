@@ -292,8 +292,9 @@ router.get(
     const media = await mediaService.getMediaById(id);
 
     if (config.storage.backend === 'spaces') {
-      const url = storageService.getDownloadUrl(media.filepath);
-      res.redirect(302, url);
+      // Proxy through server to avoid CSP blocking CDN redirects
+      const tempPath = await storageService.downloadToTemp(media.filepath);
+      res.download(tempPath, media.original_filename);
     } else {
       const filePath = await mediaService.getMediaFilePath(id);
       res.download(filePath, media.original_filename);
@@ -314,8 +315,10 @@ router.get(
     const media = await mediaService.getMediaById(id);
 
     if (config.storage.backend === 'spaces') {
-      const url = storageService.getDownloadUrl(media.filepath);
-      res.redirect(302, url);
+      // Proxy through server to avoid CSP blocking CDN redirects
+      const tempPath = await storageService.downloadToTemp(media.filepath);
+      res.setHeader('Content-Type', media.mime_type || 'application/octet-stream');
+      res.sendFile(tempPath);
     } else {
       const filePath = await mediaService.getMediaFilePath(id);
       res.setHeader('Content-Type', media.mime_type || 'application/octet-stream');
