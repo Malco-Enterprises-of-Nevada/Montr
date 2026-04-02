@@ -119,6 +119,41 @@ describe('WebSocket Handlers', () => {
       );
     });
 
+    it('should register new client with provided name', async () => {
+      const mockClient = {
+        id: 'test-client-123',
+        name: 'Mac-Display-1',
+        status: 'online' as const,
+        assigned_playlist_id: null,
+        interrupted_from_playlist_id: null,
+        version: '1.0.0',
+        capabilities: '{"video":true,"image":true}',
+        created_at: '2025-01-01T00:00:00.000Z',
+        updated_at: '2025-01-01T00:00:00.000Z',
+        last_seen: '2025-01-01T00:00:00.000Z',
+      };
+
+      mockClientService.getClientById.mockRejectedValue(
+        new AppError(ErrorCode.CLIENT_NOT_FOUND, 'Client not found', 404)
+      );
+      mockClientService.registerClient.mockResolvedValue(mockClient);
+      mockClientService.updateClient.mockResolvedValue(mockClient);
+
+      const messageWithName: RegisterMessage = {
+        ...validMessage,
+        name: 'Mac-Display-1',
+      };
+
+      await handleRegister(mockWs, messageWithName);
+
+      expect(mockClientService.registerClient).toHaveBeenCalledWith({
+        id: 'test-client-123',
+        name: 'Mac-Display-1',
+        version: '1.0.0',
+        capabilities: expect.any(String),
+      });
+    });
+
     it('should update existing client on reconnection', async () => {
       const mockClient = {
         id: 'test-client-123',
@@ -150,6 +185,43 @@ describe('WebSocket Handlers', () => {
         last_seen: expect.any(String),
       });
       expect(mockClientService.registerClient).not.toHaveBeenCalled();
+    });
+
+    it('should update name on existing client reconnection', async () => {
+      const mockClient = {
+        id: 'test-client-123',
+        name: 'Old Name',
+        status: 'online' as const,
+        assigned_playlist_id: null,
+        interrupted_from_playlist_id: null,
+        version: '1.0.0',
+        capabilities: '{"video":true}',
+        created_at: '2025-01-01T00:00:00.000Z',
+        updated_at: '2025-01-01T00:00:00.000Z',
+        last_seen: '2025-01-01T00:00:00.000Z',
+      };
+
+      mockClientService.getClientById.mockResolvedValue(mockClient);
+      mockClientService.updateClient.mockResolvedValue({
+        ...mockClient,
+        name: 'New-Display-Name',
+        status: 'online',
+      });
+
+      const messageWithName: RegisterMessage = {
+        ...validMessage,
+        name: 'New-Display-Name',
+      };
+
+      await handleRegister(mockWs, messageWithName);
+
+      expect(mockClientService.updateClient).toHaveBeenCalledWith('test-client-123', {
+        version: '1.0.0',
+        capabilities: expect.any(String),
+        status: 'online',
+        last_seen: expect.any(String),
+        name: 'New-Display-Name',
+      });
     });
 
     it('should send playlist if client has assigned playlist', async () => {

@@ -175,7 +175,7 @@ export function errorHandler(error: Error, req: Request, res: Response, _next: N
   logger.error(`Error handling request ${req.method} ${req.path}:`, {
     error: error.message,
     stack: error.stack,
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
     body: req.body,
     params: req.params,
     query: req.query,

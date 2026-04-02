@@ -1,4 +1,3 @@
-/* eslint-disable max-classes-per-file */
 /**
  * Storage Service
  * Handles file system operations for media files with pluggable storage backends.

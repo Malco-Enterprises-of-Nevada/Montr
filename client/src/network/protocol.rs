@@ -40,6 +40,10 @@ pub struct RegisterMessage {
 
     /// Client capabilities
     pub capabilities: ClientCapabilities,
+
+    /// Optional human-readable client name from config
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// Client capabilities advertised during registration
@@ -283,11 +287,17 @@ pub struct CommandMessage {
 
 impl ClientMessage {
     /// Create a registration message
-    pub fn register(client_id: String, version: String, capabilities: ClientCapabilities) -> Self {
+    pub fn register(
+        client_id: String,
+        version: String,
+        capabilities: ClientCapabilities,
+        name: Option<String>,
+    ) -> Self {
         Self::Register(RegisterMessage {
             client_id,
             version,
             capabilities,
+            name,
         })
     }
 
@@ -370,12 +380,28 @@ mod tests {
             "550e8400-e29b-41d4-a716-446655440000".to_string(),
             "1.0.0".to_string(),
             ClientCapabilities::default(),
+            Some("Mac-Display-1".to_string()),
         );
 
         let json = msg.to_json().unwrap();
         assert!(json.contains(r#""type":"register"#));
         assert!(json.contains(r#""clientId":"550e8400-e29b-41d4-a716-446655440000"#));
         assert!(json.contains(r#""version":"1.0.0"#));
+        assert!(json.contains(r#""name":"Mac-Display-1"#));
+    }
+
+    #[test]
+    fn test_register_message_without_name() {
+        let msg = ClientMessage::register(
+            "550e8400-e29b-41d4-a716-446655440000".to_string(),
+            "1.0.0".to_string(),
+            ClientCapabilities::default(),
+            None,
+        );
+
+        let json = msg.to_json().unwrap();
+        assert!(json.contains(r#""type":"register"#));
+        assert!(!json.contains(r#""name""#));
     }
 
     #[test]

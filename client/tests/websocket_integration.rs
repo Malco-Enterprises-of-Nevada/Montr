@@ -79,6 +79,7 @@ fn test_register_message_format() {
             video: true,
             image: true,
         },
+        Some("Test-Client-1".to_string()),
     );
 
     let json = msg.to_json().expect("Failed to serialize Register message");
@@ -287,6 +288,7 @@ fn test_protocol_message_serialization_roundtrip() {
             video: true,
             image: false,
         },
+        None,
     );
 
     let json = register.to_json().unwrap();
@@ -405,6 +407,7 @@ async fn test_websocket_echo_client_messages() {
         "echo-test-client".to_string(),
         "1.0.0".to_string(),
         ClientCapabilities::default(),
+        None,
     );
     let register_json = register.to_json().unwrap();
     write

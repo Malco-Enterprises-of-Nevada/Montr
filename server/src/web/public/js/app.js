@@ -16,6 +16,9 @@ const auth = {
     user: null, // { id, username, email, role }
 };
 
+// Auto-refresh state
+let autoRefreshIntervalId = null;
+
 // State management
 const state = {
     currentView: 'dashboard',
@@ -437,6 +440,39 @@ function initNavigation() {
     });
 }
 
+// ===== Auto-Refresh =====
+
+function isModalOpen() {
+    return document.querySelector('.modal.active') !== null;
+}
+
+function startAutoRefresh() {
+    stopAutoRefresh();
+    const interval = state.currentView === 'clients'
+        ? 10000  // 10s for clients (real-time status)
+        : UI_CONFIG.dashboardRefreshInterval;  // 30s for everything else
+
+    autoRefreshIntervalId = setInterval(() => {
+        if (isModalOpen()) return;
+        switch (state.currentView) {
+            case 'dashboard': loadDashboard(); break;
+            case 'media': loadMedia(); break;
+            case 'playlists': loadPlaylists(); break;
+            case 'clients': loadClients(); break;
+            case 'groups': loadGroups(); break;
+            case 'schedules': loadSchedules(); break;
+            case 'analytics': loadAnalytics(); break;
+        }
+    }, interval);
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshIntervalId) {
+        clearInterval(autoRefreshIntervalId);
+        autoRefreshIntervalId = null;
+    }
+}
+
 function navigateTo(view) {
     // Update nav links
     document.querySelectorAll('.nav-link').forEach(link => {
@@ -449,6 +485,9 @@ function navigateTo(view) {
     });
 
     state.currentView = view;
+
+    // Restart auto-refresh for the new view
+    startAutoRefresh();
 
     // Load data for the view
     switch(view) {
@@ -2578,12 +2617,17 @@ function initApp() {
     // Load initial view
     loadDashboard();
 
-    // Auto-refresh dashboard
-    setInterval(() => {
-        if (state.currentView === 'dashboard') {
-            checkHealth();
+    // Start auto-refresh for the current view
+    startAutoRefresh();
+
+    // Pause refresh when tab is hidden, resume when visible
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            stopAutoRefresh();
+        } else {
+            startAutoRefresh();
         }
-    }, UI_CONFIG.dashboardRefreshInterval);
+    });
 
     console.log('Montr Web UI initialized successfully');
 }

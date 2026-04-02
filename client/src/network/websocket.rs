@@ -505,6 +505,7 @@ mod tests {
 
         // Spawn connection_task with an invalid URL that will fail to connect
         let token_clone = cancel_token.clone();
+        let on_connect_msg: Arc<RwLock<Option<ClientMessage>>> = Arc::new(RwLock::new(None));
         let handle = tokio::spawn(WebSocketClient::connection_task(
             "ws://127.0.0.1:1/invalid".to_string(),
             state,
@@ -512,6 +513,7 @@ mod tests {
             msg_rx,
             srv_tx,
             token_clone,
+            on_connect_msg,
         ));
 
         // Give the task a moment to start, then cancel
