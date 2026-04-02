@@ -183,6 +183,7 @@ async fn run_client(config: config::Config) -> Result<()> {
         config.client.id.clone(),
         montr_client::VERSION.to_string(),
         capabilities,
+        Some(config.client.name.clone()),
     );
 
     ws_client.set_on_connect(register_msg.clone()).await;

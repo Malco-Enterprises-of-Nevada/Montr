@@ -75,6 +75,53 @@ describe('WebSocket Message Types', () => {
       const result = registerMessageSchema.safeParse(message);
       expect(result.success).toBe(false);
     });
+
+    it('should validate a register message with name', () => {
+      const message = {
+        type: 'register',
+        clientId: '550e8400-e29b-41d4-a716-446655440000',
+        version: '1.0.0',
+        capabilities: {
+          video: true,
+          image: true,
+        },
+        name: 'Mac-Display-1',
+      };
+
+      const result = registerMessageSchema.safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it('should validate a register message without name', () => {
+      const message = {
+        type: 'register',
+        clientId: '550e8400-e29b-41d4-a716-446655440000',
+        version: '1.0.0',
+        capabilities: {
+          video: true,
+          image: true,
+        },
+      };
+
+      const result = registerMessageSchema.safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it('should reject empty name string', () => {
+      const message = {
+        type: 'register',
+        clientId: '550e8400-e29b-41d4-a716-446655440000',
+        version: '1.0.0',
+        capabilities: {
+          video: true,
+          image: true,
+        },
+        name: '',
+      };
+
+      const result = registerMessageSchema.safeParse(message);
+      expect(result.success).toBe(false);
+    });
   });
 
   describe('statusUpdateMessageSchema', () => {

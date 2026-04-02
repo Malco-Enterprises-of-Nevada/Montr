@@ -35,7 +35,7 @@ export async function handleRegister(
   ws: ExtendedWebSocket,
   message: RegisterMessage
 ): Promise<void> {
-  const { clientId, version, capabilities } = message;
+  const { clientId, version, capabilities, name } = message;
 
   try {
     logger.info(`Client registration request: ${clientId} (version: ${version})`);
@@ -48,12 +48,13 @@ export async function handleRegister(
     try {
       client = await clientService.getClientById(clientId);
 
-      // Client exists - update it
+      // Client exists - update it (include name if provided)
       client = await clientService.updateClient(clientId, {
         version,
         capabilities: capabilitiesJson,
         status: 'online',
         last_seen: new Date().toISOString(),
+        ...(name && { name }),
       });
 
       logger.info(`Existing client reconnected: ${clientId} - ${client.name}`);
@@ -62,7 +63,7 @@ export async function handleRegister(
         // Client doesn't exist - register new client
         client = await clientService.registerClient({
           id: clientId,
-          name: `Client-${clientId.substring(0, 8)}`,
+          name: name || `Client-${clientId.substring(0, 8)}`,
           version,
           capabilities: capabilitiesJson,
         });

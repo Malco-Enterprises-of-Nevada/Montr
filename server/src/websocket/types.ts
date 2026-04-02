@@ -49,6 +49,7 @@ export interface RegisterMessage {
   clientId: string;
   version: string;
   capabilities: ClientCapabilities;
+  name?: string;
 }
 
 /**
@@ -214,6 +215,7 @@ export const registerMessageSchema = z.object({
   clientId: z.string().uuid('Client ID must be a valid UUID'),
   version: z.string().min(1, 'Version is required'),
   capabilities: clientCapabilitiesSchema,
+  name: z.string().min(1).optional(),
 });
 
 /**

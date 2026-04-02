@@ -131,6 +131,7 @@ mod protocol_validation_tests {
                 video: true,
                 image: true,
             },
+            Some("Test-Client".to_string()),
         );
 
         // Serialize to JSON
