@@ -2,12 +2,111 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'client/**'
+      - 'docker/**'
+      - 'deploy/**'
+      - 'scripts/**'
+  workflow_dispatch:
+    inputs:
+      force_version:
+        description: 'Force a specific version (e.g. 1.2.0). Leave empty for auto-bump.'
+        required: false
+        type: string
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
+  # ── Auto-tag from conventional commits ──────────────────────
+  tag:
+    name: Auto-Tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      skipped: ${{ steps.version.outputs.skipped }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next version
+        id: version
+        run: |
+          # Get the latest tag, or start at v0.0.0
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Latest tag: $LATEST_TAG"
+
+          # Force version override
+          if [ -n "${{ inputs.force_version }}" ]; then
+            NEW_VERSION="${{ inputs.force_version }}"
+            echo "Forced version: $NEW_VERSION"
+            echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+            echo "tag=v$NEW_VERSION" >> "$GITHUB_OUTPUT"
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Parse current version
+          CURRENT="${LATEST_TAG#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          # Analyze commits since last tag
+          if [ "$LATEST_TAG" = "v0.0.0" ]; then
+            COMMITS=$(git log --oneline --pretty=format:"%s")
+          else
+            COMMITS=$(git log "${LATEST_TAG}..HEAD" --oneline --pretty=format:"%s")
+          fi
+
+          if [ -z "$COMMITS" ]; then
+            echo "No new commits since $LATEST_TAG — skipping release"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Determine bump type from conventional commits
+          BUMP="patch"
+          if echo "$COMMITS" | grep -qiE "^(feat|feature)(\(.+\))?!:|BREAKING CHANGE"; then
+            BUMP="major"
+          elif echo "$COMMITS" | grep -qiE "^(feat|feature)(\(.+\))?:"; then
+            BUMP="minor"
+          elif echo "$COMMITS" | grep -qiE "^(fix|perf|refactor)(\(.+\))?:"; then
+            BUMP="patch"
+          fi
+
+          # Apply bump
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "Bump: $BUMP → v$NEW_VERSION"
+
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag
+        if: steps.version.outputs.skipped != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+  # ── Validate ────────────────────────────────────────────────
   validate:
     name: Validate
+    needs: tag
+    if: needs.tag.outputs.skipped != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,14 +123,13 @@ jobs:
         working-directory: server
       - run: npm run typecheck
         working-directory: server
-      - run: npm run test:coverage
+      - run: npm test
         working-directory: server
 
       # Client validation
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - run: sudo apt-get update && sudo apt-get install -y libmpv-dev
       - run: cargo fmt --check
         working-directory: client
       - run: cargo clippy -- -D warnings
@@ -39,13 +137,11 @@ jobs:
       - run: cargo test
         working-directory: client
 
+  # ── Build Server ────────────────────────────────────────────
   build-server:
     name: Build Server
-    needs: validate
+    needs: [tag, validate]
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: server
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -54,35 +150,93 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm ci --legacy-peer-deps && npm run build
-      - run: tar -czf montr-server-${{ github.ref_name }}.tar.gz -C server dist package.json package-lock.json
-        working-directory: .
+        working-directory: server
+      - name: Create server tarball
+        run: tar -czf montr-server-${{ needs.tag.outputs.tag }}.tar.gz -C server dist package.json package-lock.json
       - uses: actions/upload-artifact@v4
         with:
-          name: montr-server-${{ github.ref_name }}
-          path: montr-server-${{ github.ref_name }}.tar.gz
+          name: montr-server-${{ needs.tag.outputs.tag }}
+          path: montr-server-${{ needs.tag.outputs.tag }}.tar.gz
 
-  build-client-linux:
-    name: Build Client (Linux)
-    needs: validate
+  # ── Build Server .deb ───────────────────────────────────────
+  build-deb-server:
+    name: Build Server (.deb)
+    needs: [tag, validate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: DOCKER_BUILDKIT=1 docker build -f docker/client.Dockerfile --target binary-export --output type=local,dest=build/client .
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --legacy-peer-deps && npm run build
+        working-directory: server
+      - run: npm ci --omit=dev --legacy-peer-deps
+        working-directory: server
+      - name: Build .deb package
+        run: scripts/packaging/build-deb.sh server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: montr-server-deb
+          path: build/montr-server_*.deb
+
+  # ── Build Client (Linux) ───────────────────────────────────
+  build-client-linux:
+    name: Build Client (Linux)
+    needs: [tag, validate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build via Docker
+        run: >
+          DOCKER_BUILDKIT=1 docker build
+          -f docker/client.Dockerfile
+          --build-arg BUILD_SHA=${{ github.sha }}
+          --target binary-export
+          --output type=local,dest=build/client .
+      - name: Generate checksum
+        run: |
+          cd build/client
+          sha256sum montr-client > montr-client.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: montr-client-linux-amd64
-          path: build/client/montr-client
+          path: |
+            build/client/montr-client
+            build/client/montr-client.sha256
 
+  # ── Build Client .deb ───────────────────────────────────────
+  build-deb-client:
+    name: Build Client (.deb)
+    needs: [tag, build-client-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: montr-client-linux-amd64
+          path: build/client
+      - run: chmod +x build/client/montr-client
+      - name: Build .deb package
+        run: scripts/packaging/build-deb.sh client
+      - uses: actions/upload-artifact@v4
+        with:
+          name: montr-client-deb
+          path: build/montr-client_*.deb
+
+  # ── Build Client (Windows) ─────────────────────────────────
   build-client-windows:
     name: Build Client (Windows)
-    needs: validate
+    needs: [tag, validate]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release
         working-directory: client
-      - run: |
+      - name: Generate checksum
+        run: |
           $hash = (Get-FileHash client\target\release\montr-client.exe -Algorithm SHA256).Hash
           "$hash  montr-client.exe" | Out-File -FilePath client\target\release\montr-client.exe.sha256 -Encoding ascii
         shell: pwsh
@@ -93,9 +247,16 @@ jobs:
             client/target/release/montr-client.exe
             client/target/release/montr-client.exe.sha256
 
+  # ── Create GitHub Release ───────────────────────────────────
   create-release:
     name: Create Release
-    needs: [build-server, build-client-linux, build-client-windows]
+    needs:
+      - tag
+      - build-server
+      - build-deb-server
+      - build-client-linux
+      - build-deb-client
+      - build-client-windows
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -103,38 +264,66 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f | sort
+
       - name: Generate release notes
         id: notes
         run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          TAG="${{ needs.tag.outputs.tag }}"
+          PREV_TAG=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || echo "")
+
           if [ -n "$PREV_TAG" ]; then
-            RANGE="$PREV_TAG..HEAD"
+            RANGE="${PREV_TAG}..${TAG}"
           else
-            RANGE="HEAD"
+            RANGE="${TAG}"
           fi
+
           {
             echo "NOTES<<EOF"
-            echo "## Changes"
+            echo "## What's Changed"
             echo ""
-            git log "$RANGE" --oneline --pretty=format:"- %s" | grep -E "^- (feat|fix|refactor|perf):" || true
+            echo "### Features"
+            git log "$RANGE" --oneline --pretty=format:"- %s" | grep -E "^- feat(\(.+\))?:" || echo "- _(none)_"
             echo ""
             echo ""
-            echo "## Other"
+            echo "### Bug Fixes"
+            git log "$RANGE" --oneline --pretty=format:"- %s" | grep -E "^- fix(\(.+\))?:" || echo "- _(none)_"
             echo ""
-            git log "$RANGE" --oneline --pretty=format:"- %s" | grep -vE "^- (feat|fix|refactor|perf):" || true
+            echo ""
+            echo "### Other"
+            git log "$RANGE" --oneline --pretty=format:"- %s" | grep -vE "^- (feat|fix)(\(.+\))?:" || echo "- _(none)_"
+            echo ""
+            echo ""
+            echo "## Downloads"
+            echo ""
+            echo "| Platform | File |"
+            echo "|----------|------|"
+            echo "| Linux (binary) | \`montr-client\` |"
+            echo "| Linux (Debian) | \`montr-server_*.deb\`, \`montr-client_*.deb\` |"
+            echo "| Windows | \`montr-client.exe\` |"
+            echo "| Server (all platforms) | \`montr-server-${TAG}.tar.gz\` |"
             echo ""
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-      - uses: softprops/action-gh-release@v2
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: Montr ${{ github.ref_name }}
+          tag_name: ${{ needs.tag.outputs.tag }}
+          name: Montr ${{ needs.tag.outputs.tag }}
           body: ${{ steps.notes.outputs.NOTES }}
-          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
+          prerelease: false
           files: |
-            artifacts/montr-server-${{ github.ref_name }}/*.tar.gz
+            artifacts/montr-server-${{ needs.tag.outputs.tag }}/*.tar.gz
             artifacts/montr-client-linux-amd64/montr-client
+            artifacts/montr-client-linux-amd64/montr-client.sha256
             artifacts/montr-client-windows-amd64/montr-client.exe
             artifacts/montr-client-windows-amd64/montr-client.exe.sha256
+            artifacts/montr-server-deb/*.deb
+            artifacts/montr-client-deb/*.deb
