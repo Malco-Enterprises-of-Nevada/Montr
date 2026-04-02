@@ -94,21 +94,6 @@ pub struct CliArgs {
         conflicts_with_all = ["log_level", "verbose"]
     )]
     pub trace: bool,
-
-    /// Install as a Windows Service
-    #[cfg(windows)]
-    #[arg(long, help = "Install as a Windows Service")]
-    pub install_service: bool,
-
-    /// Uninstall the Windows Service
-    #[cfg(windows)]
-    #[arg(long, help = "Uninstall the Windows Service")]
-    pub uninstall_service: bool,
-
-    /// Run as a Windows Service (called by the Service Control Manager)
-    #[cfg(windows)]
-    #[arg(long, hide = true)]
-    pub run_service: bool,
 }
 
 impl CliArgs {

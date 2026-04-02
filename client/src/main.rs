@@ -1,38 +1,11 @@
 use montr_client::{config, error::Result, logging};
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     // Step 1: Parse CLI arguments (must be first, synchronous)
     let args = config::CliArgs::parse_args();
 
-    // Handle Windows Service management commands
-    #[cfg(windows)]
-    {
-        if args.install_service {
-            return montr_client::service::install_service();
-        }
-        if args.uninstall_service {
-            return montr_client::service::uninstall_service();
-        }
-        if args.run_service {
-            // Dispatch to the SCM. This call blocks until the service is stopped.
-            return montr_client::service::run_service_dispatcher();
-        }
-    }
-
-    // Console mode: build runtime and run
-    let runtime = tokio::runtime::Runtime::new().map_err(|e| {
-        montr_client::error::MontrError::Other(anyhow::anyhow!(
-            "Failed to create tokio runtime: {}",
-            e
-        ))
-    })?;
-
-    runtime.block_on(run_console_mode(args))
-}
-
-/// Console mode entry point — sets up signal handler, loads config, runs the client.
-async fn run_console_mode(args: config::CliArgs) -> Result<()> {
-    // Step 2: Load configuration from file
+    // Step 2: Load configuration from file (synchronous, before logging)
     let loader = config::ConfigLoader::new(args.config.clone());
     let mut cfg = match loader.load() {
         Ok(config) => config,
@@ -48,7 +21,7 @@ async fn run_console_mode(args: config::CliArgs) -> Result<()> {
         std::process::exit(1);
     }
 
-    // Step 4: Initialize logging
+    // Step 4: Initialize logging (synchronous, must happen before async operations)
     if let Err(e) = logging::init_logging(&cfg) {
         eprintln!("Failed to initialize logging: {}", e);
         std::process::exit(1);
@@ -67,10 +40,42 @@ async fn run_console_mode(args: config::CliArgs) -> Result<()> {
         Err(e) => tracing::warn!("Update check failed (continuing): {}", e),
     }
 
-    // Step 6: Create cancellation token and signal handler
-    let cancel_token = tokio_util::sync::CancellationToken::new();
+    // Step 6: Run the async client application
+    if let Err(e) = run_client(cfg).await {
+        tracing::error!("Client error: {:?}", e);
+        std::process::exit(1);
+    }
+
+    tracing::info!("Client terminated successfully");
+    Ok(())
+}
+
+/// Main client loop
+///
+/// Initializes all subsystems and runs until shutdown signal.
+async fn run_client(config: config::Config) -> Result<()> {
+    use montr_client::{
+        cache::{CacheManager, LruCacheManager},
+        network::{
+            protocol::{ClientCapabilities, ClientMessage},
+            websocket::WebSocketClient,
+            HttpClient,
+        },
+        playback::engine::PlaybackEngine,
+        state::{app_state::AppState, coordinator::StateCoordinator},
+        status::StatusReporter,
+    };
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+    use tokio_util::sync::CancellationToken;
+
+    tracing::info!("Initializing Montr client...");
+
+    // Create cancellation token for graceful shutdown
+    let cancel_token = CancellationToken::new();
     let cancel_token_signal = cancel_token.clone();
 
+    // Spawn signal handler (SIGINT + SIGTERM on Unix, SIGINT only on other platforms)
     tokio::spawn(async move {
         #[cfg(unix)]
         {
@@ -98,39 +103,6 @@ async fn run_console_mode(args: config::CliArgs) -> Result<()> {
         }
         cancel_token_signal.cancel();
     });
-
-    // Step 7: Run the client
-    if let Err(e) = run_client_inner(cfg, cancel_token).await {
-        tracing::error!("Client error: {:?}", e);
-        std::process::exit(1);
-    }
-
-    tracing::info!("Client terminated successfully");
-    Ok(())
-}
-
-/// Core client loop — platform-agnostic, shared between console and service mode.
-///
-/// Initializes all subsystems and runs until the `cancel_token` is cancelled.
-pub async fn run_client_inner(
-    config: config::Config,
-    cancel_token: tokio_util::sync::CancellationToken,
-) -> Result<()> {
-    use montr_client::{
-        cache::{CacheManager, LruCacheManager},
-        network::{
-            protocol::{ClientCapabilities, ClientMessage},
-            websocket::WebSocketClient,
-            HttpClient,
-        },
-        playback::engine::PlaybackEngine,
-        state::{app_state::AppState, coordinator::StateCoordinator},
-        status::StatusReporter,
-    };
-    use std::sync::Arc;
-    use tokio::sync::mpsc;
-
-    tracing::info!("Initializing Montr client...");
 
     // ========================================================================
     // Initialize HTTP Client

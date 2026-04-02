@@ -226,28 +226,6 @@ jobs:
           name: montr-client-deb
           path: build/montr-client_*.deb
 
-  # ── Build Client (Windows) ─────────────────────────────────
-  build-client-windows:
-    name: Build Client (Windows)
-    needs: [tag, validate]
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
-        working-directory: client
-      - name: Generate checksum
-        run: |
-          $hash = (Get-FileHash client\target\release\montr-client.exe -Algorithm SHA256).Hash
-          "$hash  montr-client.exe" | Out-File -FilePath client\target\release\montr-client.exe.sha256 -Encoding ascii
-        shell: pwsh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: montr-client-windows-amd64
-          path: |
-            client/target/release/montr-client.exe
-            client/target/release/montr-client.exe.sha256
-
   # ── Create GitHub Release ───────────────────────────────────
   create-release:
     name: Create Release
@@ -257,7 +235,6 @@ jobs:
       - build-deb-server
       - build-client-linux
       - build-deb-client
-      - build-client-windows
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -307,7 +284,6 @@ jobs:
             echo "|----------|------|"
             echo "| Linux (binary) | \`montr-client\` |"
             echo "| Linux (Debian) | \`montr-server_*.deb\`, \`montr-client_*.deb\` |"
-            echo "| Windows | \`montr-client.exe\` |"
             echo "| Server (all platforms) | \`montr-server-${TAG}.tar.gz\` |"
             echo ""
             echo "EOF"
@@ -324,7 +300,5 @@ jobs:
             artifacts/montr-server-${{ needs.tag.outputs.tag }}/*.tar.gz
             artifacts/montr-client-linux-amd64/montr-client
             artifacts/montr-client-linux-amd64/montr-client.sha256
-            artifacts/montr-client-windows-amd64/montr-client.exe
-            artifacts/montr-client-windows-amd64/montr-client.exe.sha256
             artifacts/montr-server-deb/*.deb
             artifacts/montr-client-deb/*.deb
