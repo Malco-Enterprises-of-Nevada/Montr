@@ -12,11 +12,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-linux:
-    name: Build (Linux amd64)
+  build-and-release:
+    name: Build & Release (Linux amd64)
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+
       - name: Build client binary via Docker
         run: >
           DOCKER_BUILDKIT=1 docker build
@@ -24,55 +27,12 @@ jobs:
           --build-arg BUILD_SHA=${{ github.sha }}
           --target binary-export
           --output type=local,dest=build/client .
+
       - name: Generate SHA-256 checksum
         run: |
           cd build/client
           sha256sum montr-client > montr-client.sha256
-      - uses: actions/upload-artifact@v4
-        with:
-          name: linux-binary
-          path: |
-            build/client/montr-client
-            build/client/montr-client.sha256
-
-  build-windows:
-    name: Build (Windows amd64)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
-        working-directory: client
-      - name: Generate SHA-256 checksum
-        run: |
-          $hash = (Get-FileHash client\target\release\montr-client.exe -Algorithm SHA256).Hash
-          "$hash  montr-client.exe" | Out-File -FilePath client\target\release\montr-client.exe.sha256 -Encoding ascii
-        shell: pwsh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-binary
-          path: |
-            client/target/release/montr-client.exe
-            client/target/release/montr-client.exe.sha256
-
-  release:
-    name: Update Latest Release
-    needs: [build-linux, build-windows]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Rename for clarity
-        run: |
-          mv artifacts/linux-binary/montr-client artifacts/linux-binary/montr-client-linux-amd64
-          mv artifacts/linux-binary/montr-client.sha256 artifacts/linux-binary/montr-client-linux-amd64.sha256
-          mv artifacts/windows-binary/montr-client.exe artifacts/windows-binary/montr-client-windows-amd64.exe
-          mv artifacts/windows-binary/montr-client.exe.sha256 artifacts/windows-binary/montr-client-windows-amd64.exe.sha256
+          cat montr-client.sha256
 
       - name: Delete existing latest release
         run: gh release delete latest --yes --cleanup-tag 2>/dev/null || true
@@ -88,14 +48,7 @@ jobs:
             Automated build from commit ${{ github.sha }}
             Branch: main
             Date: ${{ github.event.head_commit.timestamp }}
-
-            | Platform | File |
-            |----------|------|
-            | Linux amd64 | `montr-client-linux-amd64` |
-            | Windows amd64 | `montr-client-windows-amd64.exe` |
           prerelease: true
           files: |
-            artifacts/linux-binary/montr-client-linux-amd64
-            artifacts/linux-binary/montr-client-linux-amd64.sha256
-            artifacts/windows-binary/montr-client-windows-amd64.exe
-            artifacts/windows-binary/montr-client-windows-amd64.exe.sha256
+            build/client/montr-client
+            build/client/montr-client.sha256

@@ -59,10 +59,6 @@ sysinfo = "0.30"
 # Random number generation (for jitter)
 rand = "0.8"
 
-[target.'cfg(windows)'.dependencies]
-# Windows Service support — used by client/src/service/windows.rs
-windows-service = "0.6"
-
 [target.'cfg(unix)'.dependencies]
 # Unix-specific dependencies (if needed)
 

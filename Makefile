@@ -2,7 +2,6 @@
        lint lint-server lint-client docker docker-server docker-client \
        package package-server package-client \
        package-arch package-arch-server package-arch-client \
-       package-windows package-windows-server package-windows-client \
        clean help
 
 VERSION ?= 1.0.0
@@ -63,15 +62,6 @@ package-arch-server: build-server
 package-arch-client:
 	cd scripts/packaging/arch && makepkg -p PKGBUILD-client
 
-# ── Packaging (Windows) ────────────────────────────────────
-package-windows: package-windows-server package-windows-client
-
-package-windows-server: build-server
-	makensis scripts/packaging/windows/server-installer.nsi
-
-package-windows-client:
-	makensis scripts/packaging/windows/client-installer.nsi
-
 # ── Clean ───────────────────────────────────────────────────
 clean:
 	rm -rf server/dist
@@ -89,5 +79,4 @@ help:
 	@echo "  make docker           Build Docker images"
 	@echo "  make package          Build .deb packages"
 	@echo "  make package-arch     Build Arch Linux packages"
-	@echo "  make package-windows  Build Windows NSIS installers"
 	@echo "  make clean            Remove build artifacts"
