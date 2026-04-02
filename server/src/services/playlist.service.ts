@@ -104,7 +104,11 @@ export class PlaylistService {
     // Verify media exists
     const media = await db.getMediaById(input.media_id);
     if (!media) {
-      throw new AppError(ErrorCode.MEDIA_NOT_FOUND, `Media with ID ${input.media_id} not found`, 404);
+      throw new AppError(
+        ErrorCode.MEDIA_NOT_FOUND,
+        `Media with ID ${input.media_id} not found`,
+        404
+      );
     }
 
     // If order_index not provided, add to end
@@ -203,9 +207,7 @@ export class PlaylistService {
 
     // Reorder remaining items
     const remainingItems = await db.getPlaylistItems(item.playlist_id);
-    const itemIds = remainingItems
-      .sort((a, b) => a.order_index - b.order_index)
-      .map((i) => i.id);
+    const itemIds = remainingItems.sort((a, b) => a.order_index - b.order_index).map((i) => i.id);
 
     if (itemIds.length > 0) {
       await db.reorderPlaylistItems(item.playlist_id, itemIds);

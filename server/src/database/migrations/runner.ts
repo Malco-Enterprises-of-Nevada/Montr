@@ -3,7 +3,13 @@
  * Manages schema versioning and migration execution across all adapter types
  */
 
-import { Migration, MigrationContext, MigrationRecord, MigrationStatus, AdapterType } from './types';
+import {
+  Migration,
+  MigrationContext,
+  MigrationRecord,
+  MigrationStatus,
+  AdapterType,
+} from './types';
 import { migrations } from './index';
 import { getLogger } from '../../utils/logger';
 
@@ -138,9 +144,7 @@ export class MigrationRunner {
       const db = this.executor.getMongoDb!();
       await db.createCollection('schema_migrations');
     } else {
-      await this.executor.executeSql!(
-        this.getMigrationsTableDDL(this.executor.adapterType),
-      );
+      await this.executor.executeSql!(this.getMigrationsTableDDL(this.executor.adapterType));
     }
   }
 
@@ -191,7 +195,7 @@ export class MigrationRunner {
       if (!hasSystemState) return;
 
       const rows = await this.executor.querySql!<{ value: string }>(
-        "SELECT value FROM system_state WHERE key = 'schema_version'",
+        "SELECT value FROM system_state WHERE key = 'schema_version'"
       );
       if (rows.length > 0 && rows[0].value) {
         await this.baselineTo(rows[0].value);
@@ -205,9 +209,7 @@ export class MigrationRunner {
   private async baselineTo(version: string): Promise<void> {
     logger.info(`Baseline detected: schema version ${version}. Marking migrations as applied.`);
 
-    const toBaseline = migrations.filter(
-      (m) => this.compareVersions(m.version, version) <= 0,
-    );
+    const toBaseline = migrations.filter((m) => this.compareVersions(m.version, version) <= 0);
 
     for (const migration of toBaseline) {
       await this.recordMigration(migration);
@@ -231,7 +233,7 @@ export class MigrationRunner {
     }
 
     return this.executor.querySql!<MigrationRecord>(
-      'SELECT version, description, applied_at FROM schema_migrations ORDER BY version',
+      'SELECT version, description, applied_at FROM schema_migrations ORDER BY version'
     );
   }
 
@@ -246,12 +248,12 @@ export class MigrationRunner {
     } else if (this.executor.adapterType === 'mssql') {
       await this.executor.executeSql!(
         'INSERT INTO schema_migrations (version, description) VALUES (@p1, @p2)',
-        [migration.version, migration.description],
+        [migration.version, migration.description]
       );
     } else {
       await this.executor.executeSql!(
         'INSERT INTO schema_migrations (version, description) VALUES (?, ?)',
-        [migration.version, migration.description],
+        [migration.version, migration.description]
       );
     }
   }
@@ -261,35 +263,33 @@ export class MigrationRunner {
       const db = this.executor.getMongoDb!();
       await db.collection('schema_migrations').deleteOne({ version });
     } else if (this.executor.adapterType === 'mssql') {
-      await this.executor.executeSql!(
-        'DELETE FROM schema_migrations WHERE version = @p1',
-        [version],
-      );
+      await this.executor.executeSql!('DELETE FROM schema_migrations WHERE version = @p1', [
+        version,
+      ]);
     } else {
-      await this.executor.executeSql!(
-        'DELETE FROM schema_migrations WHERE version = ?',
-        [version],
-      );
+      await this.executor.executeSql!('DELETE FROM schema_migrations WHERE version = ?', [version]);
     }
   }
 
   private async updateSchemaVersion(version: string): Promise<void> {
     if (this.executor.adapterType === 'mongodb') {
       const db = this.executor.getMongoDb!();
-      await db.collection('system_state').updateOne(
-        { key: 'schema_version' },
-        { $set: { value: version, updated_at: new Date().toISOString() } },
-        { upsert: true },
-      );
+      await db
+        .collection('system_state')
+        .updateOne(
+          { key: 'schema_version' },
+          { $set: { value: version, updated_at: new Date().toISOString() } },
+          { upsert: true }
+        );
     } else if (this.executor.adapterType === 'mssql') {
       await this.executor.executeSql!(
         `UPDATE system_state SET value = @p1, updated_at = GETUTCDATE() WHERE [key] = 'schema_version'`,
-        [version],
+        [version]
       );
     } else {
       await this.executor.executeSql!(
         `UPDATE system_state SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'schema_version'`,
-        [version],
+        [version]
       );
     }
   }

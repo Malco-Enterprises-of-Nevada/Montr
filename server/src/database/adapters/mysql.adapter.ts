@@ -51,7 +51,9 @@ export class MySQLAdapter extends SqlBaseAdapter {
       const runner = new MigrationRunner(this.getMigrationExecutor());
       await runner.run();
 
-      logger.info(`MySQL database connected: ${this.config.host}:${this.config.port}/${this.config.database}`);
+      logger.info(
+        `MySQL database connected: ${this.config.host}:${this.config.port}/${this.config.database}`
+      );
     } catch (error) {
       logger.error('Failed to connect to MySQL database:', error);
       throw error;
@@ -85,18 +87,27 @@ export class MySQLAdapter extends SqlBaseAdapter {
 
   async rawQuery<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
     const pool = this.getPool();
-    const [rows] = await pool.execute<RowDataPacket[]>(sql, params as (string | number | null)[] || []);
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      sql,
+      (params as (string | number | null)[]) || []
+    );
     return rows as T[];
   }
 
-  async rawQueryOne<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T | null> {
+  async rawQueryOne<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[]
+  ): Promise<T | null> {
     const rows = await this.rawQuery<T>(sql, params);
     return rows[0] || null;
   }
 
   async rawExecute(sql: string, params?: unknown[]): Promise<ExecuteResult> {
     const pool = this.getPool();
-    const [result] = await pool.execute<ResultSetHeader>(sql, params as (string | number | null)[] || []);
+    const [result] = await pool.execute<ResultSetHeader>(
+      sql,
+      (params as (string | number | null)[]) || []
+    );
     return {
       lastInsertId: result.insertId,
       affectedRows: result.affectedRows,
@@ -124,11 +135,14 @@ export class MySQLAdapter extends SqlBaseAdapter {
       adapterType: 'mysql' as AdapterType,
       async executeSql(sql: string, params?: unknown[]): Promise<void> {
         const pool = self.getPool();
-        await pool.execute(sql, params as (string | number | null)[] || []);
+        await pool.execute(sql, (params as (string | number | null)[]) || []);
       },
       async querySql<T>(sql: string, params?: unknown[]): Promise<T[]> {
         const pool = self.getPool();
-        const [rows] = await pool.execute<RowDataPacket[]>(sql, params as (string | number | null)[] || []);
+        const [rows] = await pool.execute<RowDataPacket[]>(
+          sql,
+          (params as (string | number | null)[]) || []
+        );
         return rows as T[];
       },
       async tableExists(name: string): Promise<boolean> {
@@ -136,7 +150,7 @@ export class MySQLAdapter extends SqlBaseAdapter {
         const [rows] = await pool.execute<RowDataPacket[]>(
           `SELECT 1 FROM information_schema.tables
            WHERE table_schema = ? AND table_name = ?`,
-          [self.config.database, name],
+          [self.config.database, name]
         );
         return rows.length > 0;
       },
