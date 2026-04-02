@@ -42,6 +42,9 @@ pub struct WebSocketClient {
     /// Heartbeat interval in seconds (for future heartbeat implementation)
     #[allow(dead_code)]
     heartbeat_interval: u64,
+
+    /// Message to auto-send on every successful (re)connect
+    on_connect_msg: Arc<RwLock<Option<ClientMessage>>>,
 }
 
 impl WebSocketClient {
@@ -69,6 +72,9 @@ impl WebSocketClient {
         // Create cancellation token
         let cancel_token = CancellationToken::new();
 
+        // Shared on-connect message (set later via set_on_connect)
+        let on_connect_msg: Arc<RwLock<Option<ClientMessage>>> = Arc::new(RwLock::new(None));
+
         // Spawn connection task
         tokio::spawn(Self::connection_task(
             ws_url.clone(),
@@ -77,6 +83,7 @@ impl WebSocketClient {
             msg_rx,
             srv_tx,
             cancel_token.clone(),
+            on_connect_msg.clone(),
         ));
 
         Ok(Self {
@@ -87,6 +94,7 @@ impl WebSocketClient {
             rx: Arc::new(RwLock::new(srv_rx)),
             cancel_token,
             heartbeat_interval: config.server.heartbeat_interval,
+            on_connect_msg,
         })
     }
 
@@ -103,6 +111,12 @@ impl WebSocketClient {
         };
 
         Ok(url)
+    }
+
+    /// Set a message to auto-send on every successful (re)connect.
+    /// Used for registration — ensures the client re-registers after server restarts.
+    pub async fn set_on_connect(&self, message: ClientMessage) {
+        *self.on_connect_msg.write().await = Some(message);
     }
 
     /// Send a message to the server
@@ -151,6 +165,7 @@ impl WebSocketClient {
         mut msg_rx: mpsc::Receiver<ClientMessage>,
         srv_tx: mpsc::Sender<ServerMessage>,
         cancel_token: CancellationToken,
+        on_connect_msg: Arc<RwLock<Option<ClientMessage>>>,
     ) {
         loop {
             // Check for shutdown
@@ -177,6 +192,20 @@ impl WebSocketClient {
                     }
 
                     tracing::info!("WebSocket connected to {}", ws_url);
+
+                    // Auto-send on-connect message (e.g., re-registration)
+                    let ws_stream = if let Some(ref msg) = *on_connect_msg.read().await {
+                        if let Ok(json) = msg.to_json() {
+                            tracing::info!("Re-sending registration after reconnect");
+                            let (mut write, read) = ws_stream.split();
+                            let _ = write.send(Message::Text(json)).await;
+                            write.reunite(read).expect("reunite after on-connect send")
+                        } else {
+                            ws_stream
+                        }
+                    } else {
+                        ws_stream
+                    };
 
                     // Handle connection
                     Self::handle_connection(
