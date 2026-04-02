@@ -61,6 +61,7 @@ class MontrServer {
             scriptSrc: ["'self'", "'unsafe-inline'", 'https://static.cloudflareinsights.com'],
             styleSrc: ["'self'", "'unsafe-inline'"],
             imgSrc: ["'self'", 'data:', 'blob:'],
+            mediaSrc: ["'self'", 'blob:'],
             connectSrc: ["'self'", 'https://cloudflareinsights.com'],
           },
         },
