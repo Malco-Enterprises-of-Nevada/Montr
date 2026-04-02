@@ -99,9 +99,9 @@ export class MediaService {
     filePath: string,
     mediaFilename: string
   ): Promise<string | null> {
+    const tempDir = path.resolve(config.storage.path, 'temp');
+    const tempOutput = path.join(tempDir, `thumb_${Date.now()}.jpg`);
     try {
-      const tempOutput = path.join(storageService.getFullPath('temp'), `thumb_${Date.now()}.jpg`);
-
       // Extract frame at 1 second (or 10% of duration)
       await execFile('ffmpeg', [
         '-i',
@@ -120,13 +120,14 @@ export class MediaService {
       const buffer = await sharp_instance.jpeg({ quality: 80 }).toBuffer();
       const thumbnailPath = await storageService.saveThumbnail(buffer, mediaFilename);
 
-      // Clean up temp file
-      await storageService.deleteFile(path.relative(storageService.getFullPath(''), tempOutput));
-
       return thumbnailPath;
     } catch (error) {
       logger.error('Failed to generate video thumbnail:', error);
       return null;
+    } finally {
+      // Clean up temp ffmpeg output
+      const fs = await import('fs/promises');
+      await fs.unlink(tempOutput).catch(() => {});
     }
   }
 
@@ -301,6 +302,8 @@ export class MediaService {
     type: 'video' | 'image'
   ): void {
     (async () => {
+      let sourcePath = filePath;
+      let needsCleanup = false;
       try {
         // Mark as generating
         const db = await getDatabase();
@@ -308,11 +311,19 @@ export class MediaService {
           thumbnail_status: 'generating',
         } as Partial<CreateMediaInput>);
 
+        // For Spaces, download source file from S3 (filePath may not exist locally)
+        if (config.storage.backend === 'spaces') {
+          const media = await db.getMediaById(mediaId);
+          if (!media) throw new Error(`Media ${mediaId} not found`);
+          sourcePath = await storageService.downloadToTemp(media.filepath);
+          needsCleanup = true;
+        }
+
         let thumbnailPath: string | null = null;
         if (type === 'video') {
-          thumbnailPath = await this.generateVideoThumbnail(filePath, filename);
+          thumbnailPath = await this.generateVideoThumbnail(sourcePath, filename);
         } else if (type === 'image') {
-          thumbnailPath = await this.generateImageThumbnail(filePath, filename);
+          thumbnailPath = await this.generateImageThumbnail(sourcePath, filename);
         }
 
         if (thumbnailPath) {
@@ -337,6 +348,11 @@ export class MediaService {
             `Failed to update thumbnail_status to failed for media ${mediaId}:`,
             updateError
           );
+        }
+      } finally {
+        if (needsCleanup) {
+          const fs = await import('fs/promises');
+          await fs.unlink(sourcePath).catch(() => {});
         }
       }
     })();
@@ -442,12 +458,20 @@ export class MediaService {
     let thumbnailPath = await storageService.getThumbnailPath(media.filename);
 
     if (!thumbnailPath) {
-      // Generate thumbnail on-demand
-      const fullPath = storageService.getFullPath(media.filepath);
-      if (media.type === 'video') {
-        thumbnailPath = await this.generateVideoThumbnail(fullPath, media.filename);
-      } else if (media.type === 'image') {
-        thumbnailPath = await this.generateImageThumbnail(fullPath, media.filename);
+      // Generate thumbnail on-demand — download source for Spaces (local returns existing path)
+      const sourcePath = await storageService.downloadToTemp(media.filepath);
+      try {
+        if (media.type === 'video') {
+          thumbnailPath = await this.generateVideoThumbnail(sourcePath, media.filename);
+        } else if (media.type === 'image') {
+          thumbnailPath = await this.generateImageThumbnail(sourcePath, media.filename);
+        }
+      } finally {
+        // Clean up downloaded temp file for Spaces
+        if (config.storage.backend === 'spaces') {
+          const fs = await import('fs/promises');
+          await fs.unlink(sourcePath).catch(() => {});
+        }
       }
 
       if (!thumbnailPath) {
@@ -455,6 +479,10 @@ export class MediaService {
       }
     }
 
+    // For Spaces, return S3 key (caller will redirect to CDN); for local, return absolute path
+    if (config.storage.backend === 'spaces') {
+      return thumbnailPath;
+    }
     return storageService.getFullPath(thumbnailPath);
   }
 
