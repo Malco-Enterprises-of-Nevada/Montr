@@ -1,0 +1,42 @@
+# Maintainer: Montr Contributors
+pkgname=montr-client
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Playback client for the Montr distributed media playlist system"
+arch=('x86_64')
+url="https://github.com/Malco-Enterprises-of-Nevada/Montr"
+license=('MIT')
+depends=('mpv')
+makedepends=('rust' 'cargo' 'git')
+backup=('etc/montr-client/config.toml')
+install=montr-client.install
+source=("git+${url}.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+
+build() {
+    cd "${srcdir}/Montr/client"
+
+    # Build outside source tree (Arch packaging best practice)
+    export CARGO_TARGET_DIR="${srcdir}/target"
+    export CARGO_HOME="${srcdir}/cargo-home"
+
+    cargo build --release
+}
+
+package() {
+    # Binary
+    install -Dm755 "${srcdir}/target/release/montr-client" \
+        "${pkgdir}/usr/bin/montr-client"
+
+    # Configuration
+    install -Dm644 "${srcdir}/Montr/client/config.example.toml" \
+        "${pkgdir}/etc/montr-client/config.toml"
+
+    # Systemd service
+    install -Dm644 "${srcdir}/Montr/deploy/systemd/montr-client.service" \
+        "${pkgdir}/usr/lib/systemd/system/montr-client.service"
+
+    # Runtime directories
+    install -dm755 "${pkgdir}/var/cache/montr-client"
+    install -dm755 "${pkgdir}/var/log/montr-client"
+}

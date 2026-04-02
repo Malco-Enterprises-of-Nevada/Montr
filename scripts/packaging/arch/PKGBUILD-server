@@ -1,0 +1,59 @@
+# Maintainer: Montr Contributors
+pkgname=montr-server
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Web management server for the Montr distributed media playlist system"
+arch=('x86_64')
+url="https://github.com/Malco-Enterprises-of-Nevada/Montr"
+license=('MIT')
+depends=('nodejs')
+makedepends=('npm' 'python' 'make' 'gcc')
+optdepends=('ffmpeg: media thumbnail generation')
+backup=('etc/montr-server/montr-server.env')
+install=montr-server.install
+source=("git+${url}.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+
+build() {
+    cd "${srcdir}/Montr/server"
+
+    # Avoid fakeroot permission issues with npm cache
+    export npm_config_cache="${srcdir}/npm-cache"
+
+    # Install all dependencies (including dev deps for TypeScript compiler)
+    npm ci
+
+    # Compile TypeScript
+    npx tsc
+
+    # Copy assets that the build script normally handles
+    mkdir -p dist/database
+    cp src/database/schema.sql dist/database/
+    cp -r src/web dist/web
+
+    # Prune to production dependencies only
+    npm ci --omit=dev
+}
+
+package() {
+    cd "${srcdir}/Montr/server"
+
+    # Application files
+    install -dm755 "${pkgdir}/opt/montr-server"
+    cp -r dist "${pkgdir}/opt/montr-server/"
+    cp -r node_modules "${pkgdir}/opt/montr-server/"
+    install -Dm644 package.json "${pkgdir}/opt/montr-server/package.json"
+
+    # Configuration (not world-readable — may contain secrets)
+    install -Dm640 "${srcdir}/Montr/server/.env.example" \
+        "${pkgdir}/etc/montr-server/montr-server.env"
+
+    # Systemd service
+    install -Dm644 "${srcdir}/Montr/deploy/systemd/montr-server.service" \
+        "${pkgdir}/usr/lib/systemd/system/montr-server.service"
+
+    # Runtime directories
+    install -dm755 "${pkgdir}/opt/montr-server/data"
+    install -dm755 "${pkgdir}/opt/montr-server/storage"
+    install -dm755 "${pkgdir}/opt/montr-server/logs"
+}

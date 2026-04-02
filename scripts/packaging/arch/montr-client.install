@@ -1,0 +1,42 @@
+post_install() {
+    # Create system user if it doesn't exist
+    if ! id -u montr >/dev/null 2>&1; then
+        useradd --system --create-home --shell /usr/sbin/nologin montr
+    fi
+
+    # Set ownership
+    chown -R montr:montr /var/cache/montr-client
+    chown -R montr:montr /var/log/montr-client
+    chown -R montr:montr /etc/montr-client
+
+    # Enable service
+    systemctl daemon-reload
+    systemctl enable montr-client.service
+
+    echo "==> Configure the client: /etc/montr-client/config.toml"
+    echo "==> Then start: systemctl start montr-client"
+}
+
+post_upgrade() {
+    systemctl daemon-reload
+    # Restart if already running
+    if systemctl is-active --quiet montr-client.service; then
+        systemctl try-restart montr-client.service
+    fi
+}
+
+pre_remove() {
+    # Stop service if running
+    if systemctl is-active --quiet montr-client.service; then
+        systemctl stop montr-client.service
+    fi
+}
+
+post_remove() {
+    systemctl disable montr-client.service 2>/dev/null || true
+    systemctl daemon-reload
+
+    echo "==> Cache and logs preserved: /var/cache/montr-client, /var/log/montr-client"
+    echo "==> To fully remove: rm -rf /var/cache/montr-client /var/log/montr-client /etc/montr-client"
+    echo "==> To remove the montr user: userdel montr"
+}
