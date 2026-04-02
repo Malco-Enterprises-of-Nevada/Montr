@@ -40,8 +40,9 @@ jobs:
       - name: Determine next version
         id: version
         run: |
-          # Get the latest tag, or start at v0.0.0
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          # Get the latest semver tag (ignore non-semver tags like 'latest')
+          LATEST_TAG=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -1)
+          LATEST_TAG="${LATEST_TAG:-v0.0.0}"
           echo "Latest tag: $LATEST_TAG"
 
           # Force version override
