@@ -85,7 +85,7 @@ impl LruCacheManager {
 
         let mut files = Vec::new();
 
-        while let Some(entry) = entries.next_entry().await.map_err(|e| MontrError::Io(e))? {
+        while let Some(entry) = entries.next_entry().await.map_err(MontrError::Io)? {
             if let Ok(metadata) = entry.metadata().await {
                 if metadata.is_file() {
                     // Parse media_id from filename

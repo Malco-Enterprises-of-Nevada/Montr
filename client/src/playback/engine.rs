@@ -73,7 +73,7 @@ pub struct PlaybackEngine {
 }
 
 /// Current playback state
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct PlaybackState {
     /// Currently loaded file path
     pub current_file: Option<String>,
@@ -114,18 +114,6 @@ pub enum PlaybackEvent {
 
     /// Position update (for videos)
     PositionChanged { position: f64 },
-}
-
-impl Default for PlaybackState {
-    fn default() -> Self {
-        Self {
-            current_file: None,
-            is_playing: false,
-            position: None,
-            duration: None,
-            is_image: false,
-        }
-    }
 }
 
 impl PlaybackEngineOps for PlaybackEngine {

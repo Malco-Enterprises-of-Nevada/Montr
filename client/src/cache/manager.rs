@@ -281,7 +281,7 @@ impl CacheManager {
                     source: e,
                 })?;
 
-        while let Some(entry) = entries.next_entry().await.map_err(|e| MontrError::Io(e))? {
+        while let Some(entry) = entries.next_entry().await.map_err(MontrError::Io)? {
             if let Ok(metadata) = entry.metadata().await {
                 if metadata.is_file() {
                     total_size += metadata.len();
@@ -304,7 +304,7 @@ impl CacheManager {
                     source: e,
                 })?;
 
-        while let Some(entry) = entries.next_entry().await.map_err(|e| MontrError::Io(e))? {
+        while let Some(entry) = entries.next_entry().await.map_err(MontrError::Io)? {
             if let Ok(metadata) = entry.metadata().await {
                 if metadata.is_file() {
                     // Parse filename format: {media_id}_{original_filename}
@@ -333,7 +333,7 @@ impl CacheManager {
                 })?;
 
         let mut removed = 0;
-        while let Some(entry) = entries.next_entry().await.map_err(|e| MontrError::Io(e))? {
+        while let Some(entry) = entries.next_entry().await.map_err(MontrError::Io)? {
             if let Ok(metadata) = entry.metadata().await {
                 if metadata.is_file() {
                     if let Err(e) = fs::remove_file(entry.path()).await {
