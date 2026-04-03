@@ -676,7 +676,7 @@ mod tests {
     async fn test_coordinator_creation() {
         let temp_dir = TempDir::new().unwrap();
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
-        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
@@ -706,7 +706,7 @@ mod tests {
     async fn test_playlist_assigned_message() {
         let temp_dir = TempDir::new().unwrap();
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
-        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
@@ -756,7 +756,7 @@ mod tests {
     async fn test_playback_event_media_finished() {
         let temp_dir = TempDir::new().unwrap();
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
-        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
@@ -822,7 +822,7 @@ mod tests {
     async fn test_coordinator_message_sender() {
         let temp_dir = TempDir::new().unwrap();
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
-        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
@@ -859,7 +859,7 @@ mod tests {
     async fn test_command_pause() {
         let temp_dir = TempDir::new().unwrap();
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
-        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
@@ -896,7 +896,7 @@ mod tests {
     async fn test_command_resume() {
         let temp_dir = TempDir::new().unwrap();
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
-        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
@@ -933,7 +933,7 @@ mod tests {
     async fn test_command_reload_playlist() {
         let temp_dir = TempDir::new().unwrap();
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
-        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
@@ -981,7 +981,7 @@ mod tests {
     async fn test_command_skip() {
         let temp_dir = TempDir::new().unwrap();
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
-        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
@@ -1029,7 +1029,7 @@ mod tests {
     async fn test_command_unknown() {
         let temp_dir = TempDir::new().unwrap();
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
-        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
@@ -1064,7 +1064,7 @@ mod tests {
     async fn test_playback_error_sets_error_state() {
         let temp_dir = TempDir::new().unwrap();
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
-        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
@@ -1105,7 +1105,7 @@ mod tests {
     async fn test_position_update() {
         let temp_dir = TempDir::new().unwrap();
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
-        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
@@ -1137,7 +1137,7 @@ mod tests {
     async fn test_media_started_updates_state() {
         let temp_dir = TempDir::new().unwrap();
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
-        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
@@ -1175,7 +1175,7 @@ mod tests {
     async fn test_download_complete_success() {
         let temp_dir = TempDir::new().unwrap();
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
-        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
@@ -1213,7 +1213,7 @@ mod tests {
     async fn test_run_exits_on_cancel() {
         let temp_dir = TempDir::new().unwrap();
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
-        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap());
+        let http_client = Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(

@@ -14,7 +14,10 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::sleep;
-use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{
+    connect_async_tls_with_config, tungstenite::Message, Connector, MaybeTlsStream,
+    WebSocketStream,
+};
 use tokio_util::sync::CancellationToken;
 
 /// WebSocket client with auto-reconnect capabilities
@@ -45,6 +48,10 @@ pub struct WebSocketClient {
 
     /// Message to auto-send on every successful (re)connect
     on_connect_msg: Arc<RwLock<Option<ClientMessage>>>,
+
+    /// TLS connector for WSS connections (None for plain WS)
+    #[allow(dead_code)]
+    tls_connector: Option<Connector>,
 }
 
 impl WebSocketClient {
@@ -56,6 +63,9 @@ impl WebSocketClient {
     pub async fn new(config: &Config) -> Result<Self> {
         // Build WebSocket URL
         let ws_url = Self::build_ws_url(&config.server.url)?;
+
+        // Build TLS connector if needed
+        let tls_connector = Self::build_tls_connector(config)?;
 
         // Create state and reconnect strategy
         let state = Arc::new(RwLock::new(ConnectionState::new()));
@@ -84,6 +94,7 @@ impl WebSocketClient {
             srv_tx,
             cancel_token.clone(),
             on_connect_msg.clone(),
+            tls_connector.clone(),
         ));
 
         Ok(Self {
@@ -95,7 +106,39 @@ impl WebSocketClient {
             cancel_token,
             heartbeat_interval: config.server.heartbeat_interval,
             on_connect_msg,
+            tls_connector,
         })
+    }
+
+    /// Build a TLS connector from config settings
+    fn build_tls_connector(config: &Config) -> Result<Option<Connector>> {
+        if !config.server.url.starts_with("https://") {
+            return Ok(None);
+        }
+
+        let mut builder = native_tls::TlsConnector::builder();
+
+        if config.server.tls_skip_verify {
+            tracing::warn!(
+                "TLS certificate verification is DISABLED for WebSocket — do not use in production"
+            );
+            builder.danger_accept_invalid_certs(true);
+        } else if let Some(ref ca_path) = config.server.ca_cert_path {
+            let cert_pem = std::fs::read(ca_path).map_err(|e| MontrError::FileAccess {
+                path: ca_path.clone(),
+                source: e,
+            })?;
+            let cert = native_tls::Certificate::from_pem(&cert_pem).map_err(|e| {
+                MontrError::WebSocketConnection(format!("Invalid CA certificate: {}", e))
+            })?;
+            builder.add_root_certificate(cert);
+        }
+
+        let connector = builder.build().map_err(|e| {
+            MontrError::WebSocketConnection(format!("TLS connector build failed: {}", e))
+        })?;
+
+        Ok(Some(Connector::NativeTls(connector)))
     }
 
     /// Build WebSocket URL from HTTP URL
@@ -158,6 +201,7 @@ impl WebSocketClient {
     /// Connection management task
     ///
     /// Maintains the WebSocket connection with automatic reconnection.
+    #[allow(clippy::too_many_arguments)]
     async fn connection_task(
         ws_url: String,
         state: Arc<RwLock<ConnectionState>>,
@@ -166,6 +210,7 @@ impl WebSocketClient {
         srv_tx: mpsc::Sender<ServerMessage>,
         cancel_token: CancellationToken,
         on_connect_msg: Arc<RwLock<Option<ClientMessage>>>,
+        tls_connector: Option<Connector>,
     ) {
         loop {
             // Check for shutdown
@@ -182,7 +227,7 @@ impl WebSocketClient {
                 }
             }
 
-            match Self::connect(&ws_url).await {
+            match Self::connect(&ws_url, tls_connector.clone()).await {
                 Ok(ws_stream) => {
                     // Connection established
                     {
@@ -251,8 +296,11 @@ impl WebSocketClient {
     }
 
     /// Attempt WebSocket connection
-    async fn connect(url: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>> {
-        let (ws_stream, _) = connect_async(url)
+    async fn connect(
+        url: &str,
+        tls_connector: Option<Connector>,
+    ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>> {
+        let (ws_stream, _) = connect_async_tls_with_config(url, None, false, tls_connector)
             .await
             .map_err(|e| MontrError::WebSocketConnection(e.to_string()))?;
 
@@ -443,7 +491,7 @@ mod tests {
 
         // Attempt to connect using the private connect method
         let ws_url = format!("ws://127.0.0.1:{}", addr.port());
-        let result = WebSocketClient::connect(&ws_url).await;
+        let result = WebSocketClient::connect(&ws_url, None).await;
         assert!(result.is_ok());
 
         server_handle.abort();
@@ -472,7 +520,7 @@ mod tests {
 
         // Connect to the local server
         let ws_url = format!("ws://127.0.0.1:{}", addr.port());
-        let ws_stream = WebSocketClient::connect(&ws_url).await.unwrap();
+        let ws_stream = WebSocketClient::connect(&ws_url, None).await.unwrap();
         let (mut write, _read) = ws_stream.split();
 
         // Send a heartbeat message as JSON
@@ -514,6 +562,7 @@ mod tests {
             srv_tx,
             token_clone,
             on_connect_msg,
+            None,
         ));
 
         // Give the task a moment to start, then cancel

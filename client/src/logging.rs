@@ -183,6 +183,8 @@ mod tests {
                 api_key: None,
                 reconnect_interval: 5,
                 heartbeat_interval: 30,
+                ca_cert_path: None,
+                tls_skip_verify: false,
             },
             client: crate::config::ClientConfig {
                 id: "550e8400-e29b-41d4-a716-446655440000".to_string(),

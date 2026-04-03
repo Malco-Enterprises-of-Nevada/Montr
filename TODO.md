@@ -260,7 +260,7 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Server**: TLS configuration — reads cert/key from `TLS_CERT_PATH` and `TLS_KEY_PATH`
 - [x] **Server**: Auto-redirect HTTP to HTTPS on `TLS_HTTP_PORT` (default 80)
 - [x] **Server**: WebSocket over WSS (automatic when TLS enabled — same HTTPS server)
-- [ ] **Client**: TLS certificate validation, optional CA bundle config (deferred — server-side ready)
+- [x] **Client**: TLS certificate validation, optional CA bundle config — `ca_cert_path` and `tls_skip_verify` in `[server]` config
 - [x] **Config**: `TLS_ENABLED`, `TLS_CERT_PATH`, `TLS_KEY_PATH`, `TLS_HTTP_PORT` env vars added to .env.example
 - [ ] **Docs**: Certificate generation guide (deferred)
 - [x] **Tests**: All 680 existing tests pass (TLS is opt-in, no impact on HTTP mode)
