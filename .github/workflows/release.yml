@@ -197,16 +197,54 @@ jobs:
           --build-arg BUILD_SHA=${{ github.sha }}
           --target binary-export
           --output type=local,dest=build/client .
-      - name: Generate checksum
+      - name: Rename and checksum
         run: |
           cd build/client
-          sha256sum montr-client > montr-client.sha256
+          mv montr-client montr-client-linux-amd64
+          sha256sum montr-client-linux-amd64 > montr-client-linux-amd64.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: montr-client-linux-amd64
           path: |
-            build/client/montr-client
-            build/client/montr-client.sha256
+            build/client/montr-client-linux-amd64
+            build/client/montr-client-linux-amd64.sha256
+
+  # ── Build Client (macOS) ──────────────────────────────────
+  build-client-macos:
+    name: Build Client (macOS)
+    needs: [tag, validate]
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+            artifact: montr-client-darwin-arm64
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            artifact: montr-client-darwin-amd64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build release binary
+        working-directory: client
+        env:
+          BUILD_SHA: ${{ github.sha }}
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Rename and checksum
+        run: |
+          mkdir -p build/client
+          cp client/target/${{ matrix.target }}/release/montr-client build/client/${{ matrix.artifact }}
+          cd build/client
+          shasum -a 256 ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            build/client/${{ matrix.artifact }}
+            build/client/${{ matrix.artifact }}.sha256
 
   # ── Build Client .deb ───────────────────────────────────────
   build-deb-client:
@@ -219,7 +257,10 @@ jobs:
         with:
           name: montr-client-linux-amd64
           path: build/client
-      - run: chmod +x build/client/montr-client
+      - name: Prepare binary for packaging
+        run: |
+          cp build/client/montr-client-linux-amd64 build/client/montr-client
+          chmod +x build/client/montr-client
       - name: Build .deb package
         run: scripts/packaging/build-deb.sh client
       - uses: actions/upload-artifact@v4
@@ -235,6 +276,7 @@ jobs:
       - build-server
       - build-deb-server
       - build-client-linux
+      - build-client-macos
       - build-deb-client
     runs-on: ubuntu-latest
     permissions:
@@ -285,7 +327,9 @@ jobs:
             echo ""
             echo "| Platform | File |"
             echo "|----------|------|"
-            echo "| Linux (binary) | \`montr-client\` |"
+            echo "| Linux x86_64 | \`montr-client-linux-amd64\` |"
+            echo "| macOS Apple Silicon | \`montr-client-darwin-arm64\` |"
+            echo "| macOS Intel | \`montr-client-darwin-amd64\` |"
             echo "| Linux (Debian) | \`montr-server_*.deb\`, \`montr-client_*.deb\` |"
             echo "| Server (all platforms) | \`montr-server-${TAG}.tar.gz\` |"
             echo ""
@@ -301,7 +345,11 @@ jobs:
           prerelease: false
           files: |
             artifacts/montr-server-${{ needs.tag.outputs.tag }}/*.tar.gz
-            artifacts/montr-client-linux-amd64/montr-client
-            artifacts/montr-client-linux-amd64/montr-client.sha256
+            artifacts/montr-client-linux-amd64/montr-client-linux-amd64
+            artifacts/montr-client-linux-amd64/montr-client-linux-amd64.sha256
+            artifacts/montr-client-darwin-arm64/montr-client-darwin-arm64
+            artifacts/montr-client-darwin-arm64/montr-client-darwin-arm64.sha256
+            artifacts/montr-client-darwin-amd64/montr-client-darwin-amd64
+            artifacts/montr-client-darwin-amd64/montr-client-darwin-amd64.sha256
             artifacts/montr-server-deb/*.deb
             artifacts/montr-client-deb/*.deb
