@@ -58,6 +58,7 @@ sysinfo = "0.30"
 
 # Random number generation (for jitter)
 rand = "0.8"
+exec = "0.3.1"
 
 [target.'cfg(unix)'.dependencies]
 # Unix-specific dependencies (if needed)
