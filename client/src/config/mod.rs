@@ -37,11 +37,11 @@ impl ConfigLoader {
         // Store the config path for later (UUID persistence)
         config.config_path = Some(config_path.clone());
 
-        // Apply platform-specific defaults
-        self.apply_platform_defaults(&mut config)?;
-
-        // Generate UUID if needed
+        // Generate UUID if needed (before defaults, so ID is available for name fallback)
         self.ensure_client_id(&mut config)?;
+
+        // Apply platform-specific defaults (including hostname fallback for name)
+        self.apply_platform_defaults(&mut config)?;
 
         // Validate
         config.validate()?;
@@ -170,6 +170,18 @@ impl ConfigLoader {
             };
         }
 
+        // Default client name to hostname if not set
+        if config.client.name.is_empty() {
+            config.client.name = sysinfo::System::host_name().unwrap_or_else(|| {
+                if config.client.id.len() >= 8 {
+                    format!("Client-{}", &config.client.id[..8])
+                } else {
+                    "montr-client".to_string()
+                }
+            });
+            tracing::info!("Using hostname as client name: {}", config.client.name);
+        }
+
         // Ensure directories exist
         self.ensure_directory_exists(&config.playback.media_cache_dir)?;
 
@@ -216,6 +228,84 @@ impl ConfigLoader {
             // If no config path (shouldn't happen), just skip saving
             Ok(())
         }
+    }
+
+    /// Get the preferred config path for writing a new config file
+    pub fn get_default_config_path() -> PathBuf {
+        if let Some(proj_dirs) = ProjectDirs::from("com", "Montr", "montr-client") {
+            proj_dirs.config_dir().join("config.toml")
+        } else {
+            PathBuf::from("config.toml")
+        }
+    }
+
+    /// Generate a default config file at the given path
+    pub fn generate_default_config(path: &Path) -> Result<()> {
+        let default_config = r#"# Montr Client Configuration
+# Generated automatically — edit as needed
+
+[server]
+# Server URL (required — set this to your Montr server address)
+url = "http://localhost:3000"
+# Optional API key for authentication
+# api_key = ""
+# Reconnection interval in seconds
+reconnect_interval = 5
+# Heartbeat interval in seconds
+heartbeat_interval = 30
+
+[client]
+# Client UUID (leave empty to auto-generate on first run)
+id = ""
+# Human-readable display name (leave empty to use hostname)
+name = ""
+
+[playback]
+# Default duration for images in seconds
+default_image_duration = 5
+# Whether to loop the playlist
+loop_playlist = true
+# Media cache directory (relative paths are resolved to platform-specific locations)
+media_cache_dir = "./cache"
+# Maximum cache size in MB
+max_cache_size_mb = 5000
+# Number of upcoming items to pre-fetch
+preload_next_items = 2
+
+[system]
+# Enable auto-start on system boot
+auto_start = false
+# Log level: error, warn, info, debug, trace
+log_level = "info"
+# Log file path (relative paths are resolved to platform-specific locations)
+log_file = "./client.log"
+# Maximum log file size in MB
+log_max_size_mb = 100
+# Maximum number of log files to keep
+log_max_files = 5
+
+[display]
+# Run in fullscreen mode
+fullscreen = true
+# Screen index for multi-monitor setups (0-indexed)
+screen_index = 0
+"#;
+        // Ensure parent directory exists
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent).map_err(|e| MontrError::DirectoryCreation {
+                    path: parent.to_path_buf(),
+                    source: e,
+                })?;
+            }
+        }
+
+        fs::write(path, default_config).map_err(|e| MontrError::ConfigSave {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+
+        Ok(())
     }
 
     /// Ensure a directory exists, creating it if necessary

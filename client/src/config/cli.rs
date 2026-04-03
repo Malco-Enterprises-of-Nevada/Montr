@@ -94,6 +94,13 @@ pub struct CliArgs {
         conflicts_with_all = ["log_level", "verbose"]
     )]
     pub trace: bool,
+
+    /// Interactive first-time setup wizard
+    ///
+    /// Prompts for server URL, client name, and display settings,
+    /// then writes a config file and starts the client.
+    #[arg(long, help = "Interactive first-time setup wizard")]
+    pub setup: bool,
 }
 
 impl CliArgs {

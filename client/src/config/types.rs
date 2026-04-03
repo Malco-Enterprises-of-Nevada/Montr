@@ -42,7 +42,8 @@ pub struct ClientConfig {
     #[serde(default)]
     pub id: String,
 
-    /// Human-readable client name
+    /// Human-readable client name (defaults to hostname if empty)
+    #[serde(default)]
     pub name: String,
 }
 

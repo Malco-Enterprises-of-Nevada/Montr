@@ -5,10 +5,33 @@ async fn main() -> Result<()> {
     // Step 1: Parse CLI arguments (must be first, synchronous)
     let args = config::CliArgs::parse_args();
 
+    // Step 1.5: Handle --setup interactive wizard
+    if args.setup {
+        run_setup(&args);
+    }
+
     // Step 2: Load configuration from file (synchronous, before logging)
     let loader = config::ConfigLoader::new(args.config.clone());
     let mut cfg = match loader.load() {
         Ok(config) => config,
+        Err(montr_client::error::MontrError::ConfigNotFound { locations }) => {
+            let config_path = config::ConfigLoader::get_default_config_path();
+            match config::ConfigLoader::generate_default_config(&config_path) {
+                Ok(()) => {
+                    eprintln!("No config file found (searched: {})", locations.join(", "));
+                    eprintln!();
+                    eprintln!("Created default config at: {}", config_path.display());
+                    eprintln!("Edit the server URL and restart, or use --setup for guided setup.");
+                    std::process::exit(0);
+                }
+                Err(e) => {
+                    eprintln!("Configuration error: no config file found");
+                    eprintln!("Searched: {}", locations.join(", "));
+                    eprintln!("Failed to generate default config: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
         Err(e) => {
             eprintln!("Configuration error: {}", e);
             std::process::exit(1);
@@ -371,6 +394,30 @@ async fn run_client(config: config::Config) -> Result<()> {
     });
 
     // ========================================================================
+    // Periodic Update Check (every 24 hours)
+    // ========================================================================
+    let update_auto = config.system.auto_update;
+    let update_cancel = cancel_token.clone();
+    let update_handle = tokio::spawn(async move {
+        let interval = tokio::time::Duration::from_secs(24 * 60 * 60);
+        loop {
+            tokio::select! {
+                _ = update_cancel.cancelled() => break,
+                _ = tokio::time::sleep(interval) => {
+                    match montr_client::update::check_and_update(update_auto).await {
+                        Ok(true) => {
+                            tracing::info!("Update applied, restarting...");
+                            std::process::exit(0);
+                        }
+                        Ok(false) => {}
+                        Err(e) => tracing::warn!("Periodic update check failed: {}", e),
+                    }
+                }
+            }
+        }
+    });
+
+    // ========================================================================
     // Main Loop - Wait for shutdown
     // ========================================================================
     tracing::info!("Montr client fully initialized and running");
@@ -397,6 +444,7 @@ async fn run_client(config: config::Config) -> Result<()> {
                 ws_msg_handle,
                 playback_event_handle,
                 preview_handle,
+                update_handle,
             );
         } => {
             tracing::info!("All tasks completed");
@@ -406,4 +454,87 @@ async fn run_client(config: config::Config) -> Result<()> {
     tracing::info!("Shutdown complete");
 
     Ok(())
+}
+
+/// Interactive setup wizard — prompts for essential config values and writes a config file
+fn run_setup(args: &config::CliArgs) {
+    use std::io::{self, Write};
+
+    let config_path = args
+        .config
+        .clone()
+        .unwrap_or_else(config::ConfigLoader::get_default_config_path);
+
+    if config_path.exists() {
+        eprint!(
+            "Config already exists at {}. Overwrite? [y/N] ",
+            config_path.display()
+        );
+        io::stderr().flush().unwrap();
+        let mut answer = String::new();
+        io::stdin().read_line(&mut answer).unwrap();
+        if !answer.trim().eq_ignore_ascii_case("y") {
+            eprintln!("Setup cancelled.");
+            std::process::exit(0);
+        }
+    }
+
+    let hostname = sysinfo::System::host_name().unwrap_or_default();
+
+    // Prompt for server URL
+    eprint!("Server URL [http://localhost:3000]: ");
+    io::stderr().flush().unwrap();
+    let mut server_url = String::new();
+    io::stdin().read_line(&mut server_url).unwrap();
+    let server_url = server_url.trim();
+    let server_url = if server_url.is_empty() {
+        "http://localhost:3000"
+    } else {
+        server_url
+    };
+
+    // Prompt for client name
+    let default_name = if hostname.is_empty() {
+        "montr-client"
+    } else {
+        &hostname
+    };
+    eprint!("Client name [{}]: ", default_name);
+    io::stderr().flush().unwrap();
+    let mut client_name = String::new();
+    io::stdin().read_line(&mut client_name).unwrap();
+    let client_name = client_name.trim();
+    let client_name = if client_name.is_empty() {
+        default_name
+    } else {
+        client_name
+    };
+
+    // Prompt for fullscreen
+    eprint!("Fullscreen mode? [Y/n]: ");
+    io::stderr().flush().unwrap();
+    let mut fullscreen_input = String::new();
+    io::stdin().read_line(&mut fullscreen_input).unwrap();
+    let fullscreen = !fullscreen_input.trim().eq_ignore_ascii_case("n");
+
+    // Generate config from template, then patch values
+    if let Err(e) = config::ConfigLoader::generate_default_config(&config_path) {
+        eprintln!("Failed to write config: {}", e);
+        std::process::exit(1);
+    }
+
+    // Read back and replace placeholder values
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    let content = content.replace(
+        "url = \"http://localhost:3000\"",
+        &format!("url = \"{}\"", server_url),
+    );
+    let content = content.replace("name = \"\"", &format!("name = \"{}\"", client_name));
+    let content = content.replace("fullscreen = true", &format!("fullscreen = {}", fullscreen));
+    std::fs::write(&config_path, content).unwrap();
+
+    eprintln!();
+    eprintln!("Config written to: {}", config_path.display());
+    eprintln!("Starting client...");
+    eprintln!();
 }
