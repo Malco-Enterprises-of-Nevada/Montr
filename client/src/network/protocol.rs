@@ -140,6 +140,12 @@ pub enum ServerMessage {
     /// Command from server (e.g., reload, pause)
     Command(CommandMessage),
 
+    /// Playlist interrupt — high-priority playlist overrides current
+    PlaylistInterrupt(PlaylistInterruptMessage),
+
+    /// Playlist resume — revert to previous playlist after interruption
+    PlaylistResume(PlaylistResumeMessage),
+
     /// Success acknowledgement (e.g., registration confirmed)
     Success(SuccessMessage),
 
@@ -192,6 +198,48 @@ pub struct PlaylistUpdatedMessage {
     pub playlist_id: u32,
 
     /// Updated playlist items
+    pub items: Vec<PlaylistItem>,
+
+    /// Whether to loop the playlist
+    #[serde(rename = "loopPlaylist")]
+    pub loop_playlist: bool,
+}
+
+/// Playlist interrupt message — overrides current playlist temporarily
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PlaylistInterruptMessage {
+    /// Playlist ID
+    #[serde(rename = "playlistId")]
+    pub playlist_id: u32,
+
+    /// Playlist name
+    #[serde(rename = "playlistName")]
+    pub playlist_name: String,
+
+    /// Playlist items in order
+    pub items: Vec<PlaylistItem>,
+
+    /// Whether to loop the playlist
+    #[serde(rename = "loopPlaylist")]
+    pub loop_playlist: bool,
+
+    /// Previous playlist ID (to resume after interrupt)
+    #[serde(rename = "previousPlaylistId")]
+    pub previous_playlist_id: Option<u32>,
+}
+
+/// Playlist resume message — revert to previous playlist
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PlaylistResumeMessage {
+    /// Playlist ID to resume (null = stop playback)
+    #[serde(rename = "playlistId")]
+    pub playlist_id: Option<u32>,
+
+    /// Playlist name
+    #[serde(rename = "playlistName")]
+    pub playlist_name: Option<String>,
+
+    /// Playlist items
     pub items: Vec<PlaylistItem>,
 
     /// Whether to loop the playlist

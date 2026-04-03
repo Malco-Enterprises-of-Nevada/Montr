@@ -31,6 +31,10 @@ pub enum PlaybackCommand {
     Resume,
     /// Stop playback
     Stop,
+    /// Set volume (0-100)
+    Volume { level: f64 },
+    /// Seek to absolute position (seconds)
+    Seek { position: f64 },
 }
 
 /// Trait for playback engine operations
@@ -284,11 +288,36 @@ impl PlaybackEngine {
     /// Poll mpv for events and position updates
     async fn event_loop(&self) {
         let mut eof_sent_for_file: Option<String> = None;
+        let mut ipc_fail_count: u32 = 0;
 
         loop {
             if self.cancel_token.is_cancelled() {
                 break;
             }
+
+            // Watchdog: check mpv is still responsive
+            if tokio::net::UnixStream::connect(&self.ipc_path)
+                .await
+                .is_err()
+            {
+                ipc_fail_count += 1;
+                if ipc_fail_count >= 5 {
+                    tracing::error!(
+                        "mpv IPC unresponsive for {} checks, process may have crashed",
+                        ipc_fail_count
+                    );
+                    let _ = self
+                        .event_tx
+                        .send(PlaybackEvent::Error {
+                            message: "mpv process unresponsive".to_string(),
+                        })
+                        .await;
+                    break;
+                }
+                sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+            ipc_fail_count = 0;
 
             let state = self.state.read().await.clone();
 
@@ -358,6 +387,8 @@ impl PlaybackEngine {
             PlaybackCommand::Pause => self.pause().await,
             PlaybackCommand::Resume => self.resume().await,
             PlaybackCommand::Stop => self.stop().await,
+            PlaybackCommand::Volume { level } => self.volume(level).await,
+            PlaybackCommand::Seek { position } => self.seek(position).await,
         }
     }
 
@@ -487,6 +518,18 @@ impl PlaybackEngine {
 
         let mut state = self.state.write().await;
         state.position = Some(position);
+        Ok(())
+    }
+
+    /// Set volume level (0-100)
+    pub async fn volume(&self, level: f64) -> Result<()> {
+        tracing::info!("Setting volume to {}", level);
+        self.send_command(&[
+            serde_json::json!("set_property"),
+            serde_json::json!("volume"),
+            serde_json::json!(level),
+        ])
+        .await?;
         Ok(())
     }
 

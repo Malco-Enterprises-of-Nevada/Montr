@@ -27,6 +27,8 @@ struct AppStateInner {
     is_playing: bool,
     /// Error message (if any)
     last_error: Option<String>,
+    /// Playlist ID saved during interrupt (for resume)
+    interrupted_from_playlist_id: Option<u32>,
 }
 
 /// Shared application state
@@ -50,6 +52,7 @@ impl AppState {
             current_position: None,
             is_playing: false,
             last_error: None,
+            interrupted_from_playlist_id: None,
         };
 
         Self {
@@ -147,6 +150,12 @@ impl AppState {
             }
         }
         items
+    }
+
+    /// Get interrupted playlist ID (saved during interrupt)
+    pub async fn interrupted_from_playlist_id(&self) -> Option<u32> {
+        let state = self.inner.read().await;
+        state.interrupted_from_playlist_id
     }
 
     /// Check if looping
@@ -292,6 +301,12 @@ impl AppState {
         if let Some(ref err) = error {
             tracing::error!("State error: {}", err);
         }
+    }
+
+    /// Set interrupted playlist ID
+    pub async fn set_interrupted_from(&self, playlist_id: Option<u32>) {
+        let mut state = self.inner.write().await;
+        state.interrupted_from_playlist_id = playlist_id;
     }
 
     /// Clear error

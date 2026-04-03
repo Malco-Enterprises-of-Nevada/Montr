@@ -9,7 +9,7 @@
 
 use crate::cache::CacheManager;
 use crate::error::{MontrError, Result};
-use crate::network::{PlaylistItem, ServerMessage};
+use crate::network::{HttpClient, PlaylistItem, ServerMessage};
 use crate::playback::engine::{PlaybackCommand, PlaybackEngineOps};
 use crate::state::app_state::AppState;
 use std::sync::Arc;
@@ -60,6 +60,14 @@ pub struct StateCoordinator {
     download_notify: Arc<Notify>,
     /// Number of upcoming items to pre-fetch
     preload_next_items: usize,
+    /// HTTP client for analytics reporting
+    http_client: Arc<HttpClient>,
+    /// API key for authenticated requests
+    api_key: Option<String>,
+    /// Current playback log ID (for analytics end reporting)
+    current_playback_log_id: Option<u64>,
+    /// Time when current media started playing
+    playback_start_time: Option<tokio::time::Instant>,
 }
 
 impl StateCoordinator {
@@ -67,9 +75,11 @@ impl StateCoordinator {
     pub fn new(
         state: AppState,
         cache_manager: Arc<CacheManager>,
+        http_client: Arc<HttpClient>,
         playback_engine: &impl PlaybackEngineOps,
         cancel_token: CancellationToken,
         preload_next_items: usize,
+        api_key: Option<String>,
     ) -> Self {
         let (message_tx, message_rx) = mpsc::unbounded_channel();
         let playback_tx = playback_engine.command_sender();
@@ -83,6 +93,10 @@ impl StateCoordinator {
             cancel_token,
             download_notify: Arc::new(Notify::new()),
             preload_next_items,
+            http_client,
+            api_key,
+            current_playback_log_id: None,
+            playback_start_time: None,
         }
     }
 
@@ -134,50 +148,107 @@ impl StateCoordinator {
     async fn handle_server_message(&mut self, message: ServerMessage) -> Result<()> {
         match message {
             ServerMessage::PlaylistAssigned(msg) => {
+                // Deduplicate: skip if same playlist with same items
+                if self
+                    .is_playlist_unchanged(msg.playlist_id, &msg.items)
+                    .await
+                {
+                    tracing::debug!(
+                        "Playlist {} unchanged, skipping duplicate assignment",
+                        msg.playlist_id
+                    );
+                    return Ok(());
+                }
+
                 tracing::info!(
                     "Playlist assigned: {} ({} items)",
                     msg.playlist_name,
                     msg.items.len()
                 );
 
+                // End current analytics session
+                self.end_analytics_session(false).await;
+
                 // Update state with new playlist
                 self.state
                     .update_playlist(msg.playlist_id, msg.items.clone(), msg.loop_playlist)
                     .await?;
 
-                // Download all media first, then start playback
-                let ready = self.download_playlist_media(msg.items).await?;
-                if ready > 0 {
-                    tracing::info!("{} media files cached, starting playback", ready);
-                    self.start_playback().await?;
-                } else {
-                    tracing::warn!("No media files available, playback not started");
-                }
+                // Download media and start playback as soon as first item is ready
+                self.download_and_start(msg.items).await?;
 
                 Ok(())
             }
             ServerMessage::PlaylistUpdated(msg) => {
+                if self
+                    .is_playlist_unchanged(msg.playlist_id, &msg.items)
+                    .await
+                {
+                    tracing::debug!("Playlist update unchanged, skipping");
+                    return Ok(());
+                }
+
                 tracing::info!("Playlist updated: {} items", msg.items.len());
 
-                // Check if we need to stop current playback
                 let current_media_id = self.state.current_media_id().await;
                 let new_items_have_current = current_media_id
                     .map(|id| msg.items.iter().any(|item| item.media_id == id))
                     .unwrap_or(false);
 
-                // Update playlist
                 self.state
                     .update_playlist(msg.playlist_id, msg.items.clone(), msg.loop_playlist)
                     .await?;
 
-                // Download all media, then restart if needed
                 let ready = self.download_playlist_media(msg.items).await?;
 
                 if !new_items_have_current && ready > 0 {
                     tracing::info!("Current media not in updated playlist, restarting");
+                    self.end_analytics_session(false).await;
                     self.start_playback().await?;
                 }
 
+                Ok(())
+            }
+            ServerMessage::PlaylistInterrupt(msg) => {
+                tracing::info!(
+                    "Playlist interrupt: {} ({} items)",
+                    msg.playlist_name,
+                    msg.items.len()
+                );
+
+                // Save current playlist for resume
+                let current_id = self.state.playlist_id().await;
+                self.state.set_interrupted_from(current_id).await;
+
+                self.end_analytics_session(false).await;
+
+                self.state
+                    .update_playlist(msg.playlist_id, msg.items.clone(), msg.loop_playlist)
+                    .await?;
+
+                self.download_and_start(msg.items).await?;
+                Ok(())
+            }
+            ServerMessage::PlaylistResume(msg) => {
+                tracing::info!(
+                    "Playlist resume: {}",
+                    msg.playlist_name.as_deref().unwrap_or("(stop)")
+                );
+
+                self.state.set_interrupted_from(None).await;
+                self.end_analytics_session(false).await;
+
+                if let Some(playlist_id) = msg.playlist_id {
+                    self.state
+                        .update_playlist(playlist_id, msg.items.clone(), msg.loop_playlist)
+                        .await?;
+                    self.download_and_start(msg.items).await?;
+                } else {
+                    self.state.clear_playlist().await;
+                    self.playback_tx
+                        .send(PlaybackCommand::Stop)
+                        .map_err(|e| MontrError::Playback(format!("Failed to send stop: {}", e)))?;
+                }
                 Ok(())
             }
             ServerMessage::Command(cmd) => {
@@ -206,14 +277,44 @@ impl StateCoordinator {
                         self.state.set_playing(true).await;
                     }
                     "skip" => {
+                        self.end_analytics_session(false).await;
                         if let Some(next_item) = self.state.next_item().await {
                             self.play_media(next_item).await?;
                             self.preload_upcoming();
                         }
                     }
                     "previous" => {
+                        self.end_analytics_session(false).await;
                         if let Some(prev_item) = self.state.previous_item().await {
                             self.play_media(prev_item).await?;
+                        }
+                    }
+                    "volume" => {
+                        if let Some(level) = cmd
+                            .args
+                            .as_ref()
+                            .and_then(|a| a.get("level"))
+                            .and_then(|v| v.as_f64())
+                        {
+                            self.playback_tx
+                                .send(PlaybackCommand::Volume { level })
+                                .map_err(|e| {
+                                    MontrError::Playback(format!("Failed to send volume: {}", e))
+                                })?;
+                        }
+                    }
+                    "seek" => {
+                        if let Some(position) = cmd
+                            .args
+                            .as_ref()
+                            .and_then(|a| a.get("position"))
+                            .and_then(|v| v.as_f64())
+                        {
+                            self.playback_tx
+                                .send(PlaybackCommand::Seek { position })
+                                .map_err(|e| {
+                                    MontrError::Playback(format!("Failed to send seek: {}", e))
+                                })?;
                         }
                     }
                     _ => {
@@ -241,6 +342,7 @@ impl StateCoordinator {
                 tracing::info!("Media {} finished, advancing to next", media_id);
 
                 self.state.set_playing(false).await;
+                self.end_analytics_session(true).await;
 
                 // Advance to next item
                 if let Some(next_item) = self.state.next_item().await {
@@ -378,8 +480,108 @@ impl StateCoordinator {
         self.play_media(item).await
     }
 
+    /// Check if incoming playlist matches current (deduplication)
+    async fn is_playlist_unchanged(&self, playlist_id: u32, items: &[PlaylistItem]) -> bool {
+        if self.state.playlist_id().await != Some(playlist_id) {
+            return false;
+        }
+        let current = self.state.queue_items().await;
+        if current.len() != items.len() {
+            return false;
+        }
+        current
+            .iter()
+            .zip(items.iter())
+            .all(|(a, b)| a.media_id == b.media_id && a.order_index == b.order_index)
+    }
+
+    /// Download media and start playback as soon as first item is cached
+    async fn download_and_start(&mut self, items: Vec<PlaylistItem>) -> Result<()> {
+        if items.is_empty() {
+            tracing::warn!("No media files to download");
+            return Ok(());
+        }
+
+        let first_item = items[0].clone();
+        let first_cached = self
+            .cache_manager
+            .is_cached(first_item.media_id, &first_item.filename)
+            .await;
+
+        if first_cached {
+            // First item already cached — start immediately, download rest in background
+            tracing::info!("First item cached, starting playback immediately");
+            self.start_playback().await?;
+            let cm = self.cache_manager.clone();
+            let remaining = items.into_iter().skip(1).collect::<Vec<_>>();
+            if !remaining.is_empty() {
+                tokio::spawn(async move {
+                    cm.download_batch(remaining, None).await;
+                });
+            }
+        } else {
+            // Need to download — start playback as soon as first completes
+            let ready = self.download_playlist_media(items).await?;
+            if ready > 0 {
+                tracing::info!("{} media files cached, starting playback", ready);
+                self.start_playback().await?;
+            } else {
+                tracing::warn!("No media files available, playback not started");
+            }
+        }
+        Ok(())
+    }
+
+    /// Report playback start to analytics
+    async fn start_analytics_session(&mut self, media_id: u32) {
+        let client_id = self.state.client_id().await;
+        let api_key = self.api_key.as_deref();
+        match self
+            .http_client
+            .report_playback_start(&client_id, media_id, api_key)
+            .await
+        {
+            Ok(Some(log_id)) => {
+                self.current_playback_log_id = Some(log_id);
+                self.playback_start_time = Some(tokio::time::Instant::now());
+                tracing::debug!("Analytics: started session {}", log_id);
+            }
+            Ok(None) => {
+                self.current_playback_log_id = None;
+                self.playback_start_time = None;
+            }
+            Err(e) => {
+                tracing::debug!("Analytics start error: {}", e);
+                self.current_playback_log_id = None;
+                self.playback_start_time = None;
+            }
+        }
+    }
+
+    /// Report playback end to analytics
+    async fn end_analytics_session(&mut self, completed: bool) {
+        if let (Some(log_id), Some(start_time)) =
+            (self.current_playback_log_id, self.playback_start_time)
+        {
+            let duration = start_time.elapsed().as_secs_f64();
+            let api_key = self.api_key.as_deref();
+            let _ = self
+                .http_client
+                .report_playback_end(log_id, duration, completed, api_key)
+                .await;
+            tracing::debug!(
+                "Analytics: ended session {} ({}s, completed={})",
+                log_id,
+                duration as u32,
+                completed
+            );
+        }
+        self.current_playback_log_id = None;
+        self.playback_start_time = None;
+    }
+
     /// Play a specific media item
-    async fn play_media(&self, item: PlaylistItem) -> Result<()> {
+    async fn play_media(&mut self, item: PlaylistItem) -> Result<()> {
         let media_id = item.media_id;
         let filename = &item.filename;
 
@@ -422,6 +624,9 @@ impl StateCoordinator {
                 image_duration: Some(item.image_duration),
             })
             .map_err(|e| MontrError::Playback(format!("Failed to send play command: {}", e)))?;
+
+        // Report analytics
+        self.start_analytics_session(media_id).await;
 
         Ok(())
     }
@@ -475,7 +680,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
-                http_client,
+                http_client.clone(),
                 temp_dir.path().to_path_buf(),
                 cancel_token.clone(),
             )
@@ -483,8 +688,15 @@ mod tests {
         );
 
         let playback_engine = create_mock_playback_engine();
-        let coordinator =
-            StateCoordinator::new(state, cache_manager, &playback_engine, cancel_token, 2);
+        let coordinator = StateCoordinator::new(
+            state,
+            cache_manager,
+            http_client,
+            &playback_engine,
+            cancel_token,
+            2,
+            None,
+        );
 
         // Should be able to get message sender
         let _sender = coordinator.message_sender();
@@ -498,7 +710,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
-                http_client,
+                http_client.clone(),
                 temp_dir.path().to_path_buf(),
                 cancel_token.clone(),
             )
@@ -509,9 +721,11 @@ mod tests {
         let mut coordinator = StateCoordinator::new(
             state.clone(),
             cache_manager.clone(),
+            http_client.clone(),
             &playback_engine,
             cancel_token,
             2,
+            None,
         );
 
         let items = vec![create_test_item(1, 1), create_test_item(2, 2)];
@@ -546,7 +760,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
-                http_client,
+                http_client.clone(),
                 temp_dir.path().to_path_buf(),
                 cancel_token.clone(),
             )
@@ -557,9 +771,11 @@ mod tests {
         let mut coordinator = StateCoordinator::new(
             state.clone(),
             cache_manager.clone(),
+            http_client.clone(),
             &playback_engine,
             cancel_token,
             2,
+            None,
         );
 
         // Set up playlist
@@ -610,7 +826,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
-                http_client,
+                http_client.clone(),
                 temp_dir.path().to_path_buf(),
                 cancel_token.clone(),
             )
@@ -618,8 +834,15 @@ mod tests {
         );
 
         let playback_engine = create_mock_playback_engine();
-        let coordinator =
-            StateCoordinator::new(state, cache_manager, &playback_engine, cancel_token, 2);
+        let coordinator = StateCoordinator::new(
+            state,
+            cache_manager,
+            http_client,
+            &playback_engine,
+            cancel_token,
+            2,
+            None,
+        );
 
         let sender = coordinator.message_sender();
 
@@ -640,7 +863,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
-                http_client,
+                http_client.clone(),
                 temp_dir.path().to_path_buf(),
                 cancel_token.clone(),
             )
@@ -651,9 +874,11 @@ mod tests {
         let mut coordinator = StateCoordinator::new(
             state.clone(),
             cache_manager,
+            http_client,
             &playback_engine,
             cancel_token,
             2,
+            None,
         );
 
         state.set_playing(true).await;
@@ -675,7 +900,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
-                http_client,
+                http_client.clone(),
                 temp_dir.path().to_path_buf(),
                 cancel_token.clone(),
             )
@@ -686,9 +911,11 @@ mod tests {
         let mut coordinator = StateCoordinator::new(
             state.clone(),
             cache_manager,
+            http_client,
             &playback_engine,
             cancel_token,
             2,
+            None,
         );
 
         state.set_playing(false).await;
@@ -710,7 +937,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
-                http_client,
+                http_client.clone(),
                 temp_dir.path().to_path_buf(),
                 cancel_token.clone(),
             )
@@ -721,9 +948,11 @@ mod tests {
         let mut coordinator = StateCoordinator::new(
             state.clone(),
             cache_manager.clone(),
+            http_client.clone(),
             &playback_engine,
             cancel_token,
             2,
+            None,
         );
 
         // Set up playlist with cached files
@@ -756,7 +985,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
-                http_client,
+                http_client.clone(),
                 temp_dir.path().to_path_buf(),
                 cancel_token.clone(),
             )
@@ -767,9 +996,11 @@ mod tests {
         let mut coordinator = StateCoordinator::new(
             state.clone(),
             cache_manager.clone(),
+            http_client.clone(),
             &playback_engine,
             cancel_token,
             2,
+            None,
         );
 
         // Set up playlist with 2 items and create cached files
@@ -802,7 +1033,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
-                http_client,
+                http_client.clone(),
                 temp_dir.path().to_path_buf(),
                 cancel_token.clone(),
             )
@@ -813,9 +1044,11 @@ mod tests {
         let mut coordinator = StateCoordinator::new(
             state.clone(),
             cache_manager,
+            http_client,
             &playback_engine,
             cancel_token,
             2,
+            None,
         );
 
         let cmd = ServerMessage::Command(crate::network::CommandMessage {
@@ -835,7 +1068,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
-                http_client,
+                http_client.clone(),
                 temp_dir.path().to_path_buf(),
                 cancel_token.clone(),
             )
@@ -846,9 +1079,11 @@ mod tests {
         let mut coordinator = StateCoordinator::new(
             state.clone(),
             cache_manager,
+            http_client,
             &playback_engine,
             cancel_token,
             2,
+            None,
         );
 
         state.set_playing(true).await;
@@ -874,7 +1109,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
-                http_client,
+                http_client.clone(),
                 temp_dir.path().to_path_buf(),
                 cancel_token.clone(),
             )
@@ -885,9 +1120,11 @@ mod tests {
         let mut coordinator = StateCoordinator::new(
             state.clone(),
             cache_manager,
+            http_client,
             &playback_engine,
             cancel_token,
             2,
+            None,
         );
 
         let event = PlaybackEventMessage::PositionUpdate { position: 42.5 };
@@ -904,7 +1141,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
-                http_client,
+                http_client.clone(),
                 temp_dir.path().to_path_buf(),
                 cancel_token.clone(),
             )
@@ -915,9 +1152,11 @@ mod tests {
         let mut coordinator = StateCoordinator::new(
             state.clone(),
             cache_manager,
+            http_client,
             &playback_engine,
             cancel_token,
             2,
+            None,
         );
 
         // Initially not playing, no current media
@@ -940,7 +1179,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
-                http_client,
+                http_client.clone(),
                 temp_dir.path().to_path_buf(),
                 cancel_token.clone(),
             )
@@ -951,9 +1190,11 @@ mod tests {
         let mut coordinator = StateCoordinator::new(
             state.clone(),
             cache_manager,
+            http_client,
             &playback_engine,
             cancel_token,
             2,
+            None,
         );
 
         // Should succeed without error
@@ -976,7 +1217,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cache_manager = Arc::new(
             CacheManager::new(
-                http_client,
+                http_client.clone(),
                 temp_dir.path().to_path_buf(),
                 cancel_token.clone(),
             )
@@ -987,9 +1228,11 @@ mod tests {
         let coordinator = StateCoordinator::new(
             state,
             cache_manager,
+            http_client,
             &playback_engine,
             cancel_token.clone(),
             2,
+            None,
         );
 
         // Cancel immediately

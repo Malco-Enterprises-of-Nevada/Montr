@@ -165,11 +165,22 @@ impl ConnectionState {
 
     /// Transition to error state
     pub fn transition_to_error(&mut self, reason: ErrorReason) {
-        tracing::error!(
-            "Connection error: {:?} (from state {:?})",
-            reason,
-            self.current
-        );
+        match reason {
+            ErrorReason::ServerClosed | ErrorReason::ConnectionLost => {
+                tracing::debug!(
+                    "Connection closed: {:?} (from state {:?})",
+                    reason,
+                    self.current
+                );
+            }
+            _ => {
+                tracing::error!(
+                    "Connection error: {:?} (from state {:?})",
+                    reason,
+                    self.current
+                );
+            }
+        }
 
         self.previous = Some(self.current);
         self.current = State::Error { reason };
