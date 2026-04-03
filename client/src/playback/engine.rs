@@ -141,15 +141,22 @@ impl PlaybackEngine {
             "--force-window=yes".to_string(),
             "--keep-open=yes".to_string(),
             "--hwdec=auto".to_string(),
+            // Suppress all OSD, controls, and branding
             "--osd-level=0".to_string(),
+            "--no-osc".to_string(),
+            "--no-input-default-bindings".to_string(),
+            "--no-input-cursor".to_string(),
+            "--cursor-autohide=always".to_string(),
+            "--background-color=#000000".to_string(),
             "--border=no".to_string(),
             "--autofit=1280x720".to_string(),
             "--geometry=50%:50%".to_string(),
+            "--fullscreen=yes".to_string(),
             format!("--fs-screen={}", screen_index),
         ];
 
-        if fullscreen {
-            args.push("--fullscreen=yes".to_string());
+        if !fullscreen {
+            args.retain(|a| a != "--fullscreen=yes");
         }
 
         tracing::info!("Starting mpv subprocess with IPC at {}", ipc_path);
