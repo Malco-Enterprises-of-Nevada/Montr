@@ -220,9 +220,11 @@ async fn run_client(config: config::Config) -> Result<()> {
     let coordinator = StateCoordinator::new(
         (*app_state).clone(),
         cache_manager.clone(),
+        http_client.clone(),
         playback_engine.as_ref(),
         cancel_token.clone(),
         config.playback.preload_next_items,
+        config.server.api_key.clone(),
     );
 
     let coordinator_tx = coordinator.message_sender();

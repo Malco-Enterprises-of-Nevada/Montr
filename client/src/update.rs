@@ -109,12 +109,15 @@ pub async fn check_and_update(auto_update: bool) -> Result<bool> {
         .unwrap_or("");
 
     if remote_sha.is_empty() {
-        tracing::debug!("Could not parse commit SHA from release, skipping");
+        tracing::info!("Could not parse commit SHA from release body, skipping update");
         return Ok(false);
     }
 
     if remote_sha == BUILD_SHA {
-        tracing::info!("Already up to date");
+        tracing::info!(
+            "Already up to date (build {})",
+            &BUILD_SHA[..8.min(BUILD_SHA.len())]
+        );
         return Ok(false);
     }
 
@@ -137,7 +140,11 @@ pub async fn check_and_update(auto_update: bool) -> Result<bool> {
     let binary_asset = match binary_asset {
         Some(a) => a,
         None => {
-            tracing::warn!("Binary asset not found in release");
+            tracing::warn!(
+                "Binary asset '{}' not found in release (available: {:?})",
+                binary_asset_name(),
+                release.assets.iter().map(|a| &a.name).collect::<Vec<_>>()
+            );
             return Ok(false);
         }
     };

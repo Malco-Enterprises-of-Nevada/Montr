@@ -14,8 +14,8 @@ pub use connection::{ConnectionState, ErrorReason, State};
 pub use http::{DownloadOptions, HttpClient};
 pub use protocol::{
     ClientCapabilities, ClientMessage, CommandMessage, ErrorMessage, HeartbeatMessage, MediaInfo,
-    PlaylistAssignedMessage, PlaylistItem, PlaylistUpdatedMessage, RegisterMessage, ServerMessage,
-    StatusUpdateMessage,
+    PlaylistAssignedMessage, PlaylistInterruptMessage, PlaylistItem, PlaylistResumeMessage,
+    PlaylistUpdatedMessage, RegisterMessage, ServerMessage, StatusUpdateMessage,
 };
 pub use reconnect::ReconnectStrategy;
 pub use websocket::WebSocketClient;

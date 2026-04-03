@@ -321,6 +321,78 @@ impl HttpClient {
         Ok(size)
     }
 
+    /// Get the server URL
+    pub fn server_url(&self) -> &str {
+        &self.server_url
+    }
+
+    /// Report playback start to analytics API
+    pub async fn report_playback_start(
+        &self,
+        client_id: &str,
+        media_id: u32,
+        api_key: Option<&str>,
+    ) -> Result<Option<u64>> {
+        let url = format!("{}/api/analytics/playback/start", self.server_url);
+        let body = serde_json::json!({
+            "clientId": client_id,
+            "mediaId": media_id,
+        });
+
+        let mut req = self.client.post(&url).json(&body);
+        if let Some(key) = api_key {
+            req = req.header("X-API-Key", key);
+        }
+
+        match req.timeout(Duration::from_secs(5)).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                if let Ok(json) = resp.json::<serde_json::Value>().await {
+                    let id = json
+                        .get("data")
+                        .and_then(|d| d.get("id"))
+                        .and_then(|v| v.as_u64());
+                    Ok(id)
+                } else {
+                    Ok(None)
+                }
+            }
+            Ok(resp) => {
+                tracing::debug!("Analytics start returned {}", resp.status());
+                Ok(None)
+            }
+            Err(e) => {
+                tracing::debug!("Analytics start failed: {}", e);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Report playback end to analytics API
+    pub async fn report_playback_end(
+        &self,
+        log_id: u64,
+        duration_watched: f64,
+        completed: bool,
+        api_key: Option<&str>,
+    ) -> Result<()> {
+        let url = format!("{}/api/analytics/playback/{}/end", self.server_url, log_id);
+        let body = serde_json::json!({
+            "durationWatched": duration_watched,
+            "completed": completed,
+        });
+
+        let mut req = self.client.post(&url).json(&body);
+        if let Some(key) = api_key {
+            req = req.header("X-API-Key", key);
+        }
+
+        match req.timeout(Duration::from_secs(5)).send().await {
+            Ok(_) => {}
+            Err(e) => tracing::debug!("Analytics end failed: {}", e),
+        }
+        Ok(())
+    }
+
     /// Check server health
     pub async fn check_health(&self) -> Result<bool> {
         let url = format!("{}/api/health", self.server_url);
