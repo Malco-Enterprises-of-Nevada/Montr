@@ -353,3 +353,60 @@ jobs:
             artifacts/montr-client-darwin-amd64/montr-client-darwin-amd64.sha256
             artifacts/montr-server-deb/*.deb
             artifacts/montr-client-deb/*.deb
+
+  # ── Upload Client Binaries to Spaces ───────────────────────
+  upload-to-spaces:
+    name: Upload to Spaces
+    needs:
+      - tag
+      - build-client-linux
+      - build-client-macos
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      SPACES_ENDPOINT: https://sfo3.digitaloceanspaces.com
+      SPACES_BUCKET: montr-media
+      BASE_URL: https://montr-media.sfo3.digitaloceanspaces.com/releases
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Upload binaries to Spaces
+        run: |
+          for file in \
+            artifacts/montr-client-linux-amd64/montr-client-linux-amd64 \
+            artifacts/montr-client-linux-amd64/montr-client-linux-amd64.sha256 \
+            artifacts/montr-client-darwin-arm64/montr-client-darwin-arm64 \
+            artifacts/montr-client-darwin-arm64/montr-client-darwin-arm64.sha256 \
+            artifacts/montr-client-darwin-amd64/montr-client-darwin-amd64 \
+            artifacts/montr-client-darwin-amd64/montr-client-darwin-amd64.sha256; do
+            name=$(basename "$file")
+            echo "Uploading $name..."
+            aws s3 cp "$file" "s3://${SPACES_BUCKET}/releases/${name}" \
+              --endpoint-url "${SPACES_ENDPOINT}" \
+              --acl public-read
+          done
+
+      - name: Generate and upload latest.json manifest
+        run: |
+          cat > latest.json <<MANIFEST
+          {
+            "version": "${{ needs.tag.outputs.tag }}",
+            "commit": "${{ github.sha }}",
+            "assets": {
+              "montr-client-linux-amd64": "${BASE_URL}/montr-client-linux-amd64",
+              "montr-client-linux-amd64.sha256": "${BASE_URL}/montr-client-linux-amd64.sha256",
+              "montr-client-darwin-arm64": "${BASE_URL}/montr-client-darwin-arm64",
+              "montr-client-darwin-arm64.sha256": "${BASE_URL}/montr-client-darwin-arm64.sha256",
+              "montr-client-darwin-amd64": "${BASE_URL}/montr-client-darwin-amd64",
+              "montr-client-darwin-amd64.sha256": "${BASE_URL}/montr-client-darwin-amd64.sha256"
+            }
+          }
+          MANIFEST
+          aws s3 cp latest.json "s3://${SPACES_BUCKET}/releases/latest.json" \
+            --endpoint-url "${SPACES_ENDPOINT}" \
+            --acl public-read \
+            --content-type "application/json"
