@@ -11,9 +11,9 @@ use std::path::Path;
 /// Build commit SHA embedded at compile time by build.rs
 pub const BUILD_SHA: &str = env!("BUILD_SHA");
 
-/// GitHub Releases API URL for the rolling `latest` tag
+/// GitHub Releases API URL for the most recent published release
 const RELEASE_URL: &str =
-    "https://api.github.com/repos/Malco-Enterprises-of-Nevada/Montr/releases/tags/latest";
+    "https://api.github.com/repos/Malco-Enterprises-of-Nevada/Montr/releases/latest";
 
 /// Binary asset name to look for in the release
 const BINARY_ASSET_NAME: &str = "montr-client";
