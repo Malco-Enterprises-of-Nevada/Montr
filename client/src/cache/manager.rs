@@ -378,7 +378,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_http_client() -> Arc<HttpClient> {
-        Arc::new(HttpClient::new("http://localhost:3000".to_string()).unwrap())
+        Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap())
     }
 
     #[tokio::test]

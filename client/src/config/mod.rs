@@ -253,6 +253,10 @@ url = "http://localhost:3000"
 reconnect_interval = 5
 # Heartbeat interval in seconds
 heartbeat_interval = 30
+# Path to custom CA certificate (PEM) for TLS verification
+# ca_cert_path = "/path/to/ca.pem"
+# Skip TLS certificate verification (DANGEROUS — dev/testing only)
+# tls_skip_verify = false
 
 [client]
 # Client UUID (leave empty to auto-generate on first run)

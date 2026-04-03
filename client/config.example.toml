@@ -3,6 +3,10 @@ url = "http://192.168.1.100:3000"
 api_key = ""
 reconnect_interval = 5
 heartbeat_interval = 30
+# Path to custom CA certificate (PEM) for TLS verification
+# ca_cert_path = "/path/to/ca.pem"
+# Skip TLS certificate verification (DANGEROUS — dev/testing only)
+# tls_skip_verify = false
 
 [client]
 id = "de863e20-55ed-4b89-85ed-ac6efa1b9b67"

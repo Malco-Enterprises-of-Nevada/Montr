@@ -52,10 +52,29 @@ impl Default for DownloadOptions {
 
 impl HttpClient {
     /// Create a new HTTP client
-    pub fn new(server_url: String) -> Result<Self> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(300))
-            .build()?;
+    pub fn new(
+        server_url: String,
+        ca_cert_path: Option<&Path>,
+        tls_skip_verify: bool,
+    ) -> Result<Self> {
+        let mut builder = Client::builder().timeout(Duration::from_secs(300));
+
+        if tls_skip_verify {
+            tracing::warn!(
+                "TLS certificate verification is DISABLED — do not use in production"
+            );
+            builder = builder.danger_accept_invalid_certs(true);
+        } else if let Some(ca_path) = ca_cert_path {
+            let cert_pem = std::fs::read(ca_path).map_err(|e| MontrError::FileAccess {
+                path: ca_path.to_path_buf(),
+                source: e,
+            })?;
+            let cert = reqwest::Certificate::from_pem(&cert_pem)
+                .map_err(|e| MontrError::HttpRequest(format!("Invalid CA certificate: {}", e)))?;
+            builder = builder.add_root_certificate(cert);
+        }
+
+        let client = builder.build()?;
 
         Ok(Self { client, server_url })
     }
@@ -417,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_http_client_creation() {
-        let client = HttpClient::new("http://localhost:3000".to_string());
+        let client = HttpClient::new("http://localhost:3000".to_string(), None, false);
         assert!(client.is_ok());
     }
 
@@ -450,7 +469,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_media_invalid_url() {
-        let client = HttpClient::new("http://invalid-nonexistent-server.test".to_string()).unwrap();
+        let client = HttpClient::new("http://invalid-nonexistent-server.test".to_string(), None, false).unwrap();
         let temp_dir = TempDir::new().unwrap();
         let dest = temp_dir.path().join("test.mp4");
 
@@ -469,7 +488,7 @@ mod tests {
     #[test]
     fn test_http_client_server_url() {
         let server_url = "http://192.168.1.100:3000".to_string();
-        let client = HttpClient::new(server_url.clone()).unwrap();
+        let client = HttpClient::new(server_url.clone(), None, false).unwrap();
         assert_eq!(client.server_url, server_url);
     }
 

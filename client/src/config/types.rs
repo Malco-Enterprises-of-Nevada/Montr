@@ -33,6 +33,16 @@ pub struct ServerConfig {
     /// Heartbeat interval in seconds
     #[serde(default = "default_heartbeat_interval")]
     pub heartbeat_interval: u64,
+
+    /// Path to a custom CA certificate file (PEM format) for TLS verification.
+    /// Used when the server has a certificate signed by a private/internal CA.
+    #[serde(default)]
+    pub ca_cert_path: Option<PathBuf>,
+
+    /// Skip TLS certificate verification (DANGEROUS — dev/testing only).
+    /// When true, accepts any server certificate including self-signed.
+    #[serde(default)]
+    pub tls_skip_verify: bool,
 }
 
 /// Client identification configuration
@@ -238,6 +248,23 @@ impl Config {
             });
         }
 
+        // Validate TLS settings
+        if self.server.ca_cert_path.is_some() && self.server.tls_skip_verify {
+            return Err(MontrError::ConfigValidation {
+                field: "server.tls_skip_verify".to_string(),
+                reason: "Cannot set both ca_cert_path and tls_skip_verify".to_string(),
+            });
+        }
+
+        if let Some(ref ca_path) = self.server.ca_cert_path {
+            if !ca_path.exists() {
+                return Err(MontrError::ConfigValidation {
+                    field: "server.ca_cert_path".to_string(),
+                    reason: format!("CA certificate file not found: {}", ca_path.display()),
+                });
+            }
+        }
+
         Ok(())
     }
 }
@@ -253,6 +280,8 @@ mod tests {
                 api_key: None,
                 reconnect_interval: 5,
                 heartbeat_interval: 30,
+                ca_cert_path: None,
+                tls_skip_verify: false,
             },
             client: ClientConfig {
                 id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
@@ -393,5 +422,46 @@ mod tests {
         assert_eq!(default_log_max_size(), 100);
         assert_eq!(default_log_max_files(), 5);
         assert_eq!(default_fullscreen(), true);
+    }
+
+    #[test]
+    fn test_config_tls_defaults() {
+        let config = create_valid_config();
+        assert!(config.server.ca_cert_path.is_none());
+        assert!(!config.server.tls_skip_verify);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_tls_skip_verify_with_ca_cert() {
+        let mut config = create_valid_config();
+        config.server.tls_skip_verify = true;
+        config.server.ca_cert_path = Some(PathBuf::from("/tmp/ca.pem"));
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        if let Err(MontrError::ConfigValidation { field, reason }) = result {
+            assert_eq!(field, "server.tls_skip_verify");
+            assert!(reason.contains("Cannot set both"));
+        } else {
+            panic!("Expected ConfigValidation error");
+        }
+    }
+
+    #[test]
+    fn test_config_tls_ca_cert_not_found() {
+        let mut config = create_valid_config();
+        config.server.ca_cert_path = Some(PathBuf::from("/nonexistent/ca.pem"));
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        if let Err(MontrError::ConfigValidation { field, reason }) = result {
+            assert_eq!(field, "server.ca_cert_path");
+            assert!(reason.contains("not found"));
+        } else {
+            panic!("Expected ConfigValidation error");
+        }
     }
 }

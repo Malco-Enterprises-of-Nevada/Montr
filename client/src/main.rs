@@ -135,7 +135,11 @@ async fn run_client(config: config::Config) -> Result<()> {
     // Initialize HTTP Client
     // ========================================================================
     tracing::info!("Initializing HTTP client");
-    let http_client = Arc::new(HttpClient::new(config.server.url.clone())?);
+    let http_client = Arc::new(HttpClient::new(
+        config.server.url.clone(),
+        config.server.ca_cert_path.as_deref(),
+        config.server.tls_skip_verify,
+    )?);
 
     // ========================================================================
     // Initialize Cache Manager
@@ -527,6 +531,25 @@ fn run_setup(args: &config::CliArgs) {
     io::stdin().read_line(&mut fullscreen_input).unwrap();
     let fullscreen = !fullscreen_input.trim().eq_ignore_ascii_case("n");
 
+    // Prompt for TLS settings (only if HTTPS)
+    let mut ca_cert_path = String::new();
+    let mut tls_skip_verify = false;
+    if server_url.starts_with("https://") {
+        eprint!("TLS: Custom CA certificate path (leave empty for system CA) []: ");
+        io::stderr().flush().unwrap();
+        let mut ca_input = String::new();
+        io::stdin().read_line(&mut ca_input).unwrap();
+        ca_cert_path = ca_input.trim().to_string();
+
+        if ca_cert_path.is_empty() {
+            eprint!("TLS: Skip certificate verification? (INSECURE, dev only) [y/N]: ");
+            io::stderr().flush().unwrap();
+            let mut skip_input = String::new();
+            io::stdin().read_line(&mut skip_input).unwrap();
+            tls_skip_verify = skip_input.trim().eq_ignore_ascii_case("y");
+        }
+    }
+
     // Generate config from template, then patch values
     if let Err(e) = config::ConfigLoader::generate_default_config(&config_path) {
         eprintln!("Failed to write config: {}", e);
@@ -541,6 +564,25 @@ fn run_setup(args: &config::CliArgs) {
     );
     let content = content.replace("name = \"\"", &format!("name = \"{}\"", client_name));
     let content = content.replace("fullscreen = true", &format!("fullscreen = {}", fullscreen));
+
+    // Patch TLS settings if specified
+    let content = if !ca_cert_path.is_empty() {
+        content.replace(
+            "# ca_cert_path = \"/path/to/ca.pem\"",
+            &format!("ca_cert_path = \"{}\"", ca_cert_path),
+        )
+    } else {
+        content
+    };
+    let content = if tls_skip_verify {
+        content.replace(
+            "# tls_skip_verify = false",
+            "tls_skip_verify = true",
+        )
+    } else {
+        content
+    };
+
     std::fs::write(&config_path, content).unwrap();
 
     eprintln!();
