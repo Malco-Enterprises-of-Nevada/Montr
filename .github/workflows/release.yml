@@ -265,6 +265,8 @@ jobs:
 
           {
             echo "NOTES<<EOF"
+            echo "Automated build from commit ${{ github.sha }}"
+            echo ""
             echo "## What's Changed"
             echo ""
             echo "### Features"
