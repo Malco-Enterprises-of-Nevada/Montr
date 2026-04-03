@@ -1,19 +1,19 @@
 //! Self-update module for the Montr client.
 //!
-//! On startup, checks the GitHub Releases API for a newer build.
+//! On startup, checks a manifest hosted on DigitalOcean Spaces for a newer build.
 //! If found, downloads the binary, verifies its checksum, replaces
 //! the current executable, and signals the caller to restart.
 
 use crate::error::Result;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Build commit SHA embedded at compile time by build.rs
 pub const BUILD_SHA: &str = env!("BUILD_SHA");
 
-/// GitHub Releases API URL for the most recent published release
-const RELEASE_URL: &str =
-    "https://api.github.com/repos/Malco-Enterprises-of-Nevada/Montr/releases/latest";
+/// Update manifest URL hosted on DigitalOcean Spaces
+const MANIFEST_URL: &str = "https://montr-media.sfo3.digitaloceanspaces.com/releases/latest.json";
 
 /// Returns the platform-specific binary asset name
 fn binary_asset_name() -> &'static str {
@@ -26,27 +26,13 @@ fn binary_asset_name() -> &'static str {
     }
 }
 
-/// Returns the platform-specific checksum asset name
-fn checksum_asset_name() -> &'static str {
-    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
-        "montr-client-darwin-arm64.sha256"
-    } else if cfg!(target_os = "macos") && cfg!(target_arch = "x86_64") {
-        "montr-client-darwin-amd64.sha256"
-    } else {
-        "montr-client-linux-amd64.sha256"
-    }
-}
-
+/// Update manifest from Spaces
 #[derive(Debug, serde::Deserialize)]
-struct GitHubRelease {
-    body: Option<String>,
-    assets: Vec<GitHubAsset>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct GitHubAsset {
-    name: String,
-    browser_download_url: String,
+struct UpdateManifest {
+    #[allow(dead_code)]
+    version: String,
+    commit: String,
+    assets: HashMap<String, String>,
 }
 
 /// Check for updates and apply if available.
@@ -76,44 +62,32 @@ pub async fn check_and_update(auto_update: bool) -> Result<bool> {
         .build()
         .map_err(|e| crate::error::MontrError::HttpRequest(e.to_string()))?;
 
-    // Fetch latest release metadata
+    // Fetch update manifest from Spaces
     let response = client
-        .get(RELEASE_URL)
-        .header("Accept", "application/vnd.github.v3+json")
+        .get(MANIFEST_URL)
         .send()
         .await
         .map_err(|e| crate::error::MontrError::HttpRequest(e.to_string()))?;
 
     if !response.status().is_success() {
-        tracing::debug!("GitHub API returned {}, skipping update", response.status());
+        tracing::info!(
+            "Update manifest returned {}, skipping update",
+            response.status()
+        );
         return Ok(false);
     }
 
-    let release: GitHubRelease = response
+    let manifest: UpdateManifest = response
         .json()
         .await
         .map_err(|e| crate::error::MontrError::HttpRequest(e.to_string()))?;
 
-    // Extract commit SHA from release body (format: "Automated build from commit <sha>")
-    let remote_sha = release
-        .body
-        .as_deref()
-        .and_then(|body| {
-            body.lines()
-                .find(|line| line.starts_with("Automated build from commit "))
-                .map(|line| {
-                    line.trim_start_matches("Automated build from commit ")
-                        .trim()
-                })
-        })
-        .unwrap_or("");
-
-    if remote_sha.is_empty() {
-        tracing::info!("Could not parse commit SHA from release body, skipping update");
+    if manifest.commit.is_empty() {
+        tracing::info!("Manifest has no commit SHA, skipping update");
         return Ok(false);
     }
 
-    if remote_sha == BUILD_SHA {
+    if manifest.commit == BUILD_SHA {
         tracing::info!(
             "Already up to date (build {})",
             &BUILD_SHA[..8.min(BUILD_SHA.len())]
@@ -122,28 +96,21 @@ pub async fn check_and_update(auto_update: bool) -> Result<bool> {
     }
 
     tracing::info!(
-        "Update available: {} -> {}",
+        "Update available: {} -> {} ({})",
         &BUILD_SHA[..8.min(BUILD_SHA.len())],
-        &remote_sha[..8.min(remote_sha.len())]
+        &manifest.commit[..8.min(manifest.commit.len())],
+        manifest.version,
     );
 
-    // Find binary and checksum assets for this platform
-    let binary_asset = release
-        .assets
-        .iter()
-        .find(|a| a.name == binary_asset_name());
-    let checksum_asset = release
-        .assets
-        .iter()
-        .find(|a| a.name == checksum_asset_name());
-
-    let binary_asset = match binary_asset {
-        Some(a) => a,
+    // Find binary URL for this platform
+    let asset_name = binary_asset_name();
+    let binary_url = match manifest.assets.get(asset_name) {
+        Some(url) => url,
         None => {
             tracing::warn!(
-                "Binary asset '{}' not found in release (available: {:?})",
-                binary_asset_name(),
-                release.assets.iter().map(|a| &a.name).collect::<Vec<_>>()
+                "Binary '{}' not found in manifest (available: {:?})",
+                asset_name,
+                manifest.assets.keys().collect::<Vec<_>>()
             );
             return Ok(false);
         }
@@ -157,13 +124,14 @@ pub async fn check_and_update(auto_update: bool) -> Result<bool> {
         })?;
     let temp_path = current_exe.with_extension("new");
 
-    tracing::info!("Downloading update...");
-    download_file(&client, &binary_asset.browser_download_url, &temp_path).await?;
+    tracing::info!("Downloading update from Spaces...");
+    download_file(&client, binary_url, &temp_path).await?;
 
     // Verify checksum if available
-    if let Some(checksum_asset) = checksum_asset {
+    let checksum_key = format!("{}.sha256", asset_name);
+    if let Some(checksum_url) = manifest.assets.get(&checksum_key) {
         let checksum_text = client
-            .get(&checksum_asset.browser_download_url)
+            .get(checksum_url)
             .send()
             .await
             .map_err(|e| crate::error::MontrError::HttpRequest(e.to_string()))?
@@ -188,7 +156,7 @@ pub async fn check_and_update(auto_update: bool) -> Result<bool> {
 
         tracing::info!("Checksum verified");
     } else {
-        tracing::warn!("No checksum file in release, skipping verification");
+        tracing::warn!("No checksum in manifest, skipping verification");
     }
 
     // Replace current binary
