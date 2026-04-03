@@ -121,6 +121,18 @@ export class MontrWebSocketServer {
       const rawMessage = data.toString();
       const parsedData = JSON.parse(rawMessage);
 
+      // Handle admin_register before full validation (admin messages don't have clientId)
+      if (parsedData.type === 'admin_register') {
+        clientConnectionManager.addAdminConnection(ws);
+        ws.on('close', () => {
+          clientConnectionManager.removeAdminConnection(ws);
+        });
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'success', message: 'Admin registered' }));
+        }
+        return;
+      }
+
       // Validate and parse client message
       const message: ClientMessage = parseClientMessage(parsedData);
 
@@ -196,6 +208,13 @@ export class MontrWebSocketServer {
         `Client ${ws.clientId} disconnected (code: ${code}, reason: ${reason || 'none'})`
       );
       clientConnectionManager.removeConnection(ws.clientId);
+
+      // Broadcast offline state to admin browsers
+      clientConnectionManager.broadcastToAdmins({
+        type: 'client_state_change',
+        clientId: ws.clientId,
+        status: 'offline',
+      });
 
       // Update client status in database asynchronously
       this.updateClientStatusOffline(ws.clientId).catch((error) => {

@@ -241,10 +241,10 @@
       );
 
       return \`
-        <div class="client-card" data-id="\${client.id}">
+        <div class="client-card" data-id="\${client.id}" data-client-id-card="\${client.id}">
           <div class="client-card-header">
             <h3>\${client.name || client.id}</h3>
-            <span class="badge \${statusClass}">
+            <span class="badge status-badge \${statusClass}">
               \${this.getStatusIcon(client.status)} \${client.status}
             </span>
           </div>
@@ -321,18 +321,18 @@
           \${status.current_media_id ? \`
             <div class="status-item">
               <label>Playing:</label>
-              <span>\${status.media_filename || \`Media #\${status.current_media_id}\`}</span>
+              <span class="live-media">\${status.media_filename || \`Media #\${status.current_media_id}\`}</span>
             </div>
           \` : ''}
           \${status.position ? \`
             <div class="status-item">
               <label>Position:</label>
-              <span>\${Math.floor(status.position)}s</span>
+              <span class="live-position">\${formatDuration(status.position)}</span>
             </div>
           \` : ''}
           <div class="status-item">
             <label>State:</label>
-            <span>\${status.is_playing ? '▶️ Playing' : '⏸️ Paused'}</span>
+            <span class="live-state">\${status.is_playing ? 'Playing' : 'Paused'}</span>
           </div>
           \${status.error_message ? \`
             <div class="status-item status-error">
@@ -514,26 +514,20 @@
             \${client.current_status ? \`
               <hr/>
               <h4>Now Playing</h4>
-              \${client.current_status.current_media_id ? \`
-                <div class="detail-group">
-                  <label>Media:</label>
-                  <span>\${client.current_status.media_filename || \`Media #\${client.current_status.current_media_id}\`}</span>
-                </div>
-              \` : \`
-                <div class="detail-group">
-                  <label>Media:</label>
-                  <span>Nothing playing</span>
-                </div>
-              \`}
-              \${client.current_status.position !== null && client.current_status.position !== undefined ? \`
-                <div class="detail-group">
-                  <label>Timecode:</label>
-                  <span>\${formatDuration(client.current_status.position)}</span>
-                </div>
-              \` : ''}
+              <div class="detail-group">
+                <label>Media:</label>
+                <span class="live-media-name">\${client.current_status.current_media_id
+                  ? (client.current_status.media_filename || \`Media #\${client.current_status.current_media_id}\`)
+                  : 'Nothing playing'}</span>
+              </div>
+              <div class="detail-group">
+                <label>Timecode:</label>
+                <span class="live-timecode">\${client.current_status.position !== null && client.current_status.position !== undefined
+                  ? formatDuration(client.current_status.position) : '--:--'}</span>
+              </div>
               <div class="detail-group">
                 <label>State:</label>
-                <span>\${client.current_status.is_playing ? 'Playing' : 'Paused'}</span>
+                <span class="live-play-state">\${client.current_status.is_playing ? 'Playing' : 'Paused'}</span>
               </div>
               \${client.current_status.error_message ? \`
                 <div class="detail-group">
@@ -651,4 +645,45 @@
 
   // Export ClientDashboard to global scope
   window.ClientDashboard = ClientDashboard;
+
+  // Expose real-time update hooks for admin WebSocket
+  window.montrDashboard = {
+    /** Update client status from WebSocket broadcast */
+    updateClientStatus(clientId, status) {
+      // Update detail modal if it's open for this client
+      const modalContent = document.querySelector('.client-details');
+      if (!modalContent) return;
+
+      // Check if modal is for this client
+      const idEl = modalContent.querySelector('code');
+      if (!idEl || idEl.textContent !== clientId) return;
+
+      // Update timecode
+      const timecodeEl = modalContent.querySelector('.live-timecode');
+      if (timecodeEl && status.position !== null && status.position !== undefined) {
+        timecodeEl.textContent = formatDuration(status.position);
+      }
+
+      // Update state
+      const stateEl = modalContent.querySelector('.live-play-state');
+      if (stateEl) {
+        stateEl.textContent = status.isPlaying ? 'Playing' : 'Paused';
+      }
+
+      // Update media name
+      const mediaEl = modalContent.querySelector('.live-media-name');
+      if (mediaEl && status.currentMedia) {
+        mediaEl.textContent = status.currentMedia.filename;
+      }
+    },
+
+    /** Update client online/offline state */
+    updateClientState(clientId, newStatus) {
+      // If client dashboard instance exists, trigger a silent refresh
+      const dashboard = document.querySelector('.client-dashboard');
+      if (dashboard && dashboard.__instance) {
+        dashboard.__instance.loadClients(true);
+      }
+    },
+  };
 })();

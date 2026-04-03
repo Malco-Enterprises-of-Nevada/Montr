@@ -4,7 +4,14 @@
  */
 
 import { getLogger } from '../utils/logger';
-import { ExtendedWebSocket, ServerMessage, ConnectionMetadata, WebSocketStats } from './types';
+import {
+  ExtendedWebSocket,
+  ServerMessage,
+  AdminBroadcast,
+  ConnectionMetadata,
+  WebSocketStats,
+} from './types';
+import WebSocket from 'ws';
 
 const logger = getLogger();
 
@@ -18,9 +25,12 @@ export class ClientConnectionManager {
 
   private stats: WebSocketStats;
 
+  private adminConnections: Set<WebSocket>;
+
   constructor() {
     this.connections = new Map();
     this.metadata = new Map();
+    this.adminConnections = new Set();
     this.stats = {
       totalConnections: 0,
       activeConnections: 0,
@@ -300,6 +310,42 @@ export class ClientConnectionManager {
   }
 
   /**
+   * Adds an admin/browser WebSocket connection
+   */
+  addAdminConnection(ws: WebSocket): void {
+    this.adminConnections.add(ws);
+    logger.info(`Admin browser connected (total admins: ${this.adminConnections.size})`);
+  }
+
+  /**
+   * Removes an admin/browser WebSocket connection
+   */
+  removeAdminConnection(ws: WebSocket): void {
+    this.adminConnections.delete(ws);
+    logger.debug(`Admin browser disconnected (total admins: ${this.adminConnections.size})`);
+  }
+
+  /**
+   * Broadcasts a message to all connected admin/browser connections
+   */
+  broadcastToAdmins(message: AdminBroadcast): number {
+    let sentCount = 0;
+
+    this.adminConnections.forEach((ws) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify(message));
+          sentCount += 1;
+        } catch (error) {
+          logger.debug('Error sending to admin connection:', error);
+        }
+      }
+    });
+
+    return sentCount;
+  }
+
+  /**
    * Closes all connections
    */
   closeAll(): void {
@@ -314,6 +360,14 @@ export class ClientConnectionManager {
     this.connections.clear();
     this.metadata.clear();
     this.stats.activeConnections = 0;
+
+    // Close admin connections
+    this.adminConnections.forEach((ws) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close(1000, 'Server shutting down');
+      }
+    });
+    this.adminConnections.clear();
   }
 
   /**
