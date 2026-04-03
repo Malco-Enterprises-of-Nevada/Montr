@@ -23,6 +23,8 @@ export class MontrWebSocketServer {
 
   private staleConnectionInterval: NodeJS.Timeout | null = null;
 
+  private offlineCheckInterval: NodeJS.Timeout | null = null;
+
   /**
    * Initializes the WebSocket server
    */
@@ -53,7 +55,28 @@ export class MontrWebSocketServer {
       }
     }, config.websocket.staleTimeout);
 
+    // Start periodic offline client check (catches clients that disconnected without clean close)
+    this.startOfflineCheck();
+
     logger.info('WebSocket server initialized successfully');
+  }
+
+  /**
+   * Starts periodic check for clients whose last_seen exceeds the timeout
+   */
+  private startOfflineCheck(): void {
+    this.offlineCheckInterval = setInterval(() => {
+      import('../services/client.service')
+        .then(({ clientService }) => clientService.markOfflineClients())
+        .then((count) => {
+          if (count > 0) {
+            logger.info(`Marked ${count} client(s) offline (stale heartbeat)`);
+          }
+        })
+        .catch((error) => {
+          logger.error('Error during offline client check:', error);
+        });
+    }, 60000);
   }
 
   /**
@@ -246,6 +269,11 @@ export class MontrWebSocketServer {
     if (this.staleConnectionInterval) {
       clearInterval(this.staleConnectionInterval);
       this.staleConnectionInterval = null;
+    }
+
+    if (this.offlineCheckInterval) {
+      clearInterval(this.offlineCheckInterval);
+      this.offlineCheckInterval = null;
     }
 
     // Close all client connections

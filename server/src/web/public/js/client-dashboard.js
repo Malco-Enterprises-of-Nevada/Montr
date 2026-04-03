@@ -269,6 +269,13 @@
               </div>
             </div>
 
+            \${client.version ? \`
+            <div class="client-info-group">
+              <label>Version:</label>
+              <span>v\${client.version}</span>
+            </div>
+            \` : ''}
+
             <div class="client-info-group">
               <label>Last Seen:</label>
               <span>\${client.last_seen ? formatDate(client.last_seen, true) : 'Never'}</span>
@@ -483,6 +490,10 @@
             <div class="detail-group">
               <label>Assigned Playlist:</label>
               <span>\${assignedPlaylist ? assignedPlaylist.name : 'None'}</span>
+            </div>
+            <div class="detail-group">
+              <label>Version:</label>
+              <span>\${client.version ? \`v\${client.version}\` : 'Unknown'}</span>
             </div>
             <div class="detail-group">
               <label>Registered:</label>
