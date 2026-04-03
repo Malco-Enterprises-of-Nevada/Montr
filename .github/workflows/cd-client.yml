@@ -14,7 +14,7 @@ concurrency:
 jobs:
   build-and-release:
     name: Build & Release (Linux amd64)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     permissions:
       contents: write
     steps:

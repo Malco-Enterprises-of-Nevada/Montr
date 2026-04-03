@@ -15,7 +15,7 @@ concurrency:
 jobs:
   deploy:
     name: Deploy to Production
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1

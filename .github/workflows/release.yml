@@ -25,7 +25,7 @@ jobs:
   # ── Auto-tag from conventional commits ──────────────────────
   tag:
     name: Auto-Tag
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     permissions:
       contents: write
     outputs:
@@ -109,7 +109,7 @@ jobs:
     name: Validate
     needs: tag
     if: needs.tag.outputs.skipped != 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
 
@@ -143,7 +143,7 @@ jobs:
   build-server:
     name: Build Server
     needs: [tag, validate]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -164,7 +164,7 @@ jobs:
   build-deb-server:
     name: Build Server (.deb)
     needs: [tag, validate]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -187,7 +187,7 @@ jobs:
   build-client-linux:
     name: Build Client (Linux)
     needs: [tag, validate]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
       - name: Build via Docker
@@ -250,7 +250,7 @@ jobs:
   build-deb-client:
     name: Build Client (.deb)
     needs: [tag, build-client-linux]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -278,7 +278,7 @@ jobs:
       - build-client-linux
       - build-client-macos
       - build-deb-client
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     permissions:
       contents: write
     steps:
@@ -361,7 +361,7 @@ jobs:
       - tag
       - build-client-linux
       - build-client-macos
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
