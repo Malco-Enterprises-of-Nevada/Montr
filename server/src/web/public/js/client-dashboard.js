@@ -269,12 +269,10 @@
               </div>
             </div>
 
-            \${client.version ? \`
             <div class="client-info-group">
               <label>Version:</label>
-              <span>v\${client.version}</span>
+              <span>\${client.version ? \`v\${client.version}\` : 'Unknown'}</span>
             </div>
-            \` : ''}
 
             <div class="client-info-group">
               <label>Last Seen:</label>
@@ -462,14 +460,23 @@
       try {
         LoadingIndicator.showOverlay('Loading client details...');
 
-        const response = await api.get(\`/clients/\${clientId}/status\`);
-        const client = response.data;
+        const [statusResp, playlistsResp] = await Promise.all([
+          api.get(\`/clients/\${clientId}/status\`),
+          api.get(\`/clients/\${clientId}/playlists\`),
+        ]);
+        const client = statusResp.data;
+        const playlists = playlistsResp.data || [];
 
         LoadingIndicator.hideOverlay();
 
-        const assignedPlaylist = this.playlists.find(
-          (p) => p.id === client.assigned_playlist_id
-        );
+        const playlistsHtml = playlists.length > 0
+          ? playlists.map(p => \`
+            <div class="detail-group">
+              <label>\${p.playlist_name}:</label>
+              <span>Priority \${p.priority}</span>
+            </div>
+          \`).join('')
+          : '<span>No playlists assigned</span>';
 
         const content = \`
           <div class="client-details">
@@ -488,10 +495,6 @@
               </span>
             </div>
             <div class="detail-group">
-              <label>Assigned Playlist:</label>
-              <span>\${assignedPlaylist ? assignedPlaylist.name : 'None'}</span>
-            </div>
-            <div class="detail-group">
               <label>Version:</label>
               <span>\${client.version ? \`v\${client.version}\` : 'Unknown'}</span>
             </div>
@@ -504,24 +507,33 @@
               <span>\${client.last_seen ? formatDate(client.last_seen) : 'Never'}</span>
             </div>
 
+            <hr/>
+            <h4>Assigned Playlists</h4>
+            \${playlistsHtml}
+
             \${client.current_status ? \`
               <hr/>
-              <h4>Playback Status</h4>
+              <h4>Now Playing</h4>
               \${client.current_status.current_media_id ? \`
                 <div class="detail-group">
-                  <label>Current Media:</label>
+                  <label>Media:</label>
                   <span>\${client.current_status.media_filename || \`Media #\${client.current_status.current_media_id}\`}</span>
                 </div>
-              \` : ''}
+              \` : \`
+                <div class="detail-group">
+                  <label>Media:</label>
+                  <span>Nothing playing</span>
+                </div>
+              \`}
               \${client.current_status.position !== null && client.current_status.position !== undefined ? \`
                 <div class="detail-group">
-                  <label>Position:</label>
-                  <span>\${Math.floor(client.current_status.position)} seconds</span>
+                  <label>Timecode:</label>
+                  <span>\${formatDuration(client.current_status.position)}</span>
                 </div>
               \` : ''}
               <div class="detail-group">
-                <label>Playing:</label>
-                <span>\${client.current_status.is_playing ? 'Yes ▶️' : 'No ⏸️'}</span>
+                <label>State:</label>
+                <span>\${client.current_status.is_playing ? 'Playing' : 'Paused'}</span>
               </div>
               \${client.current_status.error_message ? \`
                 <div class="detail-group">
@@ -531,7 +543,7 @@
               \` : ''}
               <div class="detail-group">
                 <label>Last Updated:</label>
-                <span>\${formatDate(client.current_status.updated_at)}</span>
+                <span>\${formatDate(client.current_status.timestamp)}</span>
               </div>
             \` : '<p>No playback status available</p>'}
           </div>
