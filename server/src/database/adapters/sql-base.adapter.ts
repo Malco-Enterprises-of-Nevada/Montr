@@ -588,7 +588,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
 
   async getLatestClientStatus(clientId: string): Promise<ClientStatus | null> {
     return this.rawQueryOne<ClientStatus>(
-      `SELECT * FROM client_status WHERE client_id = ${this.placeholder(1)} ORDER BY timestamp DESC, id DESC LIMIT 1`,
+      `SELECT cs.*, mf.original_filename AS media_filename FROM client_status cs LEFT JOIN media_files mf ON cs.current_media_id = mf.id WHERE cs.client_id = ${this.placeholder(1)} ORDER BY cs.timestamp DESC, cs.id DESC LIMIT 1`,
       [clientId]
     );
   }
