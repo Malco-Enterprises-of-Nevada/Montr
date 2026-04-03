@@ -57,7 +57,11 @@ async fn main() -> Result<()> {
     match montr_client::update::check_and_update(cfg.system.auto_update).await {
         Ok(true) => {
             tracing::info!("Update applied, restarting...");
-            std::process::exit(0);
+            let exe = std::env::current_exe().expect("Failed to get current executable path");
+            let args: Vec<String> = std::env::args().collect();
+            let err = exec::execvp(&exe, &args);
+            tracing::error!("Failed to restart: {}", err);
+            std::process::exit(1);
         }
         Ok(false) => {}
         Err(e) => tracing::warn!("Update check failed (continuing): {}", e),
@@ -409,7 +413,11 @@ async fn run_client(config: config::Config) -> Result<()> {
                     match montr_client::update::check_and_update(update_auto).await {
                         Ok(true) => {
                             tracing::info!("Update applied, restarting...");
-                            std::process::exit(0);
+                            let exe = std::env::current_exe().expect("Failed to get executable path");
+                            let args: Vec<String> = std::env::args().collect();
+                            let err = exec::execvp(&exe, &args);
+                            tracing::error!("Failed to restart: {}", err);
+                            std::process::exit(1);
                         }
                         Ok(false) => {}
                         Err(e) => tracing::warn!("Periodic update check failed: {}", e),
