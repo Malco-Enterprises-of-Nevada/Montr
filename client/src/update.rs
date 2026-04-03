@@ -125,7 +125,10 @@ pub async fn check_and_update(auto_update: bool) -> Result<bool> {
     );
 
     // Find binary and checksum assets for this platform
-    let binary_asset = release.assets.iter().find(|a| a.name == binary_asset_name());
+    let binary_asset = release
+        .assets
+        .iter()
+        .find(|a| a.name == binary_asset_name());
     let checksum_asset = release
         .assets
         .iter()
