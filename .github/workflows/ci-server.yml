@@ -20,7 +20,7 @@ concurrency:
 jobs:
   lint-and-format:
     name: Lint, Format, Typecheck
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     defaults:
       run:
         working-directory: server
@@ -38,7 +38,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     defaults:
       run:
         working-directory: server
@@ -54,7 +54,7 @@ jobs:
 
   integration-test:
     name: Integration Tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     needs: [lint-and-format]
     defaults:
       run:
