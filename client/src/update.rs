@@ -15,11 +15,27 @@ pub const BUILD_SHA: &str = env!("BUILD_SHA");
 const RELEASE_URL: &str =
     "https://api.github.com/repos/Malco-Enterprises-of-Nevada/Montr/releases/latest";
 
-/// Binary asset name to look for in the release
-const BINARY_ASSET_NAME: &str = "montr-client";
+/// Returns the platform-specific binary asset name
+fn binary_asset_name() -> &'static str {
+    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "montr-client-darwin-arm64"
+    } else if cfg!(target_os = "macos") && cfg!(target_arch = "x86_64") {
+        "montr-client-darwin-amd64"
+    } else {
+        "montr-client-linux-amd64"
+    }
+}
 
-/// Checksum asset name
-const CHECKSUM_ASSET_NAME: &str = "montr-client.sha256";
+/// Returns the platform-specific checksum asset name
+fn checksum_asset_name() -> &'static str {
+    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "montr-client-darwin-arm64.sha256"
+    } else if cfg!(target_os = "macos") && cfg!(target_arch = "x86_64") {
+        "montr-client-darwin-amd64.sha256"
+    } else {
+        "montr-client-linux-amd64.sha256"
+    }
+}
 
 #[derive(Debug, serde::Deserialize)]
 struct GitHubRelease {
@@ -108,12 +124,12 @@ pub async fn check_and_update(auto_update: bool) -> Result<bool> {
         &remote_sha[..8.min(remote_sha.len())]
     );
 
-    // Find binary and checksum assets
-    let binary_asset = release.assets.iter().find(|a| a.name == BINARY_ASSET_NAME);
+    // Find binary and checksum assets for this platform
+    let binary_asset = release.assets.iter().find(|a| a.name == binary_asset_name());
     let checksum_asset = release
         .assets
         .iter()
-        .find(|a| a.name == CHECKSUM_ASSET_NAME);
+        .find(|a| a.name == checksum_asset_name());
 
     let binary_asset = match binary_asset {
         Some(a) => a,
