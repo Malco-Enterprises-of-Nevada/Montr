@@ -83,6 +83,13 @@ export async function handleRegister(
     // Add connection to manager
     clientConnectionManager.addConnection(clientId, ws);
 
+    // Broadcast online state to admin browsers
+    clientConnectionManager.broadcastToAdmins({
+      type: 'client_state_change',
+      clientId,
+      status: 'online',
+    });
+
     // Send success response
     clientConnectionManager.sendSuccess(clientId, 'Registration successful');
 
@@ -130,6 +137,16 @@ export async function handleStatusUpdate(
 
     // Update heartbeat
     clientConnectionManager.updateHeartbeat(clientId);
+
+    // Broadcast to admin browsers for real-time dashboard updates
+    clientConnectionManager.broadcastToAdmins({
+      type: 'client_status_update',
+      clientId,
+      currentMedia,
+      position,
+      isPlaying,
+      timestamp: Date.now(),
+    });
 
     logger.debug(
       `Status update from ${clientId}: ${isPlaying ? 'playing' : 'paused'} ${currentMedia?.filename || 'no media'} at ${position}s`

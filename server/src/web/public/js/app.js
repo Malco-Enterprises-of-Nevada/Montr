@@ -2629,7 +2629,101 @@ function initApp() {
         }
     });
 
+    // Connect admin WebSocket for real-time updates
+    connectAdminWebSocket();
+
     console.log('Montr Web UI initialized successfully');
+}
+
+// ===== Admin WebSocket for Real-Time Updates =====
+
+let adminWs = null;
+
+function connectAdminWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+    try {
+        adminWs = new WebSocket(wsUrl);
+
+        adminWs.onopen = () => {
+            adminWs.send(JSON.stringify({ type: 'admin_register' }));
+            console.log('Admin WebSocket connected');
+        };
+
+        adminWs.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                handleAdminMessage(msg);
+            } catch (e) {
+                // Ignore parse errors
+            }
+        };
+
+        adminWs.onclose = () => {
+            console.log('Admin WebSocket disconnected, reconnecting in 5s...');
+            setTimeout(connectAdminWebSocket, 5000);
+        };
+
+        adminWs.onerror = () => {
+            // onclose will fire after onerror
+        };
+    } catch (e) {
+        setTimeout(connectAdminWebSocket, 5000);
+    }
+}
+
+function handleAdminMessage(msg) {
+    if (msg.type === 'client_status_update') {
+        // Update client card in-place if on clients page
+        updateClientCardStatus(msg.clientId, msg);
+
+        // Update detail modal if open for this client
+        if (window.montrDashboard && window.montrDashboard.updateClientStatus) {
+            window.montrDashboard.updateClientStatus(msg.clientId, msg);
+        }
+    } else if (msg.type === 'client_state_change') {
+        // Client went online/offline — update badge in-place
+        updateClientCardState(msg.clientId, msg.status);
+
+        // Notify dashboard if open
+        if (window.montrDashboard && window.montrDashboard.updateClientState) {
+            window.montrDashboard.updateClientState(msg.clientId, msg.status);
+        }
+    }
+}
+
+function updateClientCardStatus(clientId, status) {
+    // Find the client card's status section and update in-place
+    const card = document.querySelector(`[data-client-id-card="${clientId}"]`);
+    if (!card) return;
+
+    const posEl = card.querySelector('.live-position');
+    if (posEl && status.position !== null && status.position !== undefined) {
+        posEl.textContent = formatDuration(status.position);
+    }
+
+    const stateEl = card.querySelector('.live-state');
+    if (stateEl) {
+        stateEl.textContent = status.isPlaying ? 'Playing' : 'Paused';
+    }
+
+    const mediaEl = card.querySelector('.live-media');
+    if (mediaEl && status.currentMedia) {
+        mediaEl.textContent = status.currentMedia.filename;
+    }
+}
+
+function updateClientCardState(clientId, newStatus) {
+    // Update the status badge on the client card
+    const card = document.querySelector(`[data-client-id-card="${clientId}"]`);
+    if (!card) return;
+
+    const badge = card.querySelector('.status-badge');
+    if (badge) {
+        badge.textContent = newStatus;
+        badge.className = `badge status-badge badge-${newStatus === 'online' ? 'success' : 'secondary'}`;
+    }
 }
 
 // Start the application when DOM is ready

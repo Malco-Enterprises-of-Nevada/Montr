@@ -85,7 +85,14 @@ export interface ErrorMessage {
 }
 
 /**
- * Union type of all client-to-server messages
+ * Admin/browser registration message
+ */
+export interface AdminRegisterMessage {
+  type: 'admin_register';
+}
+
+/**
+ * Union type of all client-to-server messages (from playback clients)
  */
 export type ClientMessage = RegisterMessage | StatusUpdateMessage | HeartbeatMessage | ErrorMessage;
 
@@ -186,6 +193,36 @@ export type ServerMessage =
   | CommandMessage
   | ErrorResponseMessage
   | SuccessResponseMessage;
+
+// ===========================
+// Server → Admin/Browser Messages
+// ===========================
+
+/**
+ * Client status broadcast to admin browsers
+ */
+export interface ClientStatusBroadcast {
+  type: 'client_status_update';
+  clientId: string;
+  currentMedia: CurrentMediaInfo | null;
+  position: number | null;
+  isPlaying: boolean;
+  timestamp: number;
+}
+
+/**
+ * Client state change broadcast to admin browsers
+ */
+export interface ClientStateChangeBroadcast {
+  type: 'client_state_change';
+  clientId: string;
+  status: 'online' | 'offline';
+}
+
+/**
+ * Union type of admin broadcast messages
+ */
+export type AdminBroadcast = ClientStatusBroadcast | ClientStateChangeBroadcast;
 
 // ===========================
 // Zod Validation Schemas
