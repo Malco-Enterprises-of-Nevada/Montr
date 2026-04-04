@@ -25,6 +25,7 @@ const state = {
     media: [],
     playlists: [],
     clients: [],
+    schedules: [],
     currentPlaylist: null,
     stats: {
         mediaCount: 0,
@@ -417,6 +418,27 @@ const schedulesAPI = {
     }
 };
 
+const approvalsAPI = {
+    async listPending() {
+        return await apiCall('/media/pending');
+    },
+
+    async approve(mediaId) {
+        return await apiCall(`/media/${mediaId}/approve`, { method: 'POST' });
+    },
+
+    async reject(mediaId, comment) {
+        return await apiCall(`/media/${mediaId}/reject`, {
+            method: 'POST',
+            body: JSON.stringify({ comment: comment || null })
+        });
+    },
+
+    async getLogs(mediaId) {
+        return await apiCall(`/media/${mediaId}/approval-logs`);
+    }
+};
+
 // ===== Navigation =====
 
 function initNavigation() {
@@ -514,6 +536,9 @@ function navigateTo(view) {
             break;
         case 'notifications':
             loadNotifications();
+            break;
+        case 'approvals':
+            loadApprovals();
             break;
         case 'users':
             loadUsers();
@@ -1605,23 +1630,37 @@ function escapeHtml(text) {
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+let _scheduleViewMode = 'cards'; // 'cards' or 'calendar'
+
 async function loadSchedules() {
     const gridEl = document.getElementById('schedulesGrid');
     const emptyEl = document.getElementById('schedulesEmpty');
+    const calendarEl = document.getElementById('schedulesCalendar');
 
-    gridEl.innerHTML = '<div class="loading">Loading schedules...</div>';
+    if (_scheduleViewMode === 'cards') {
+        gridEl.innerHTML = '<div class="loading">Loading schedules...</div>';
+    }
     emptyEl.style.display = 'none';
 
     try {
         const schedules = await schedulesAPI.list();
+        state.schedules = schedules;
 
-        if (schedules.length === 0) {
+        const filtered = filterSchedules(schedules);
+
+        if (filtered.length === 0) {
             gridEl.innerHTML = '';
+            calendarEl.innerHTML = '';
             emptyEl.style.display = '';
             return;
         }
 
-        gridEl.innerHTML = schedules.map(schedule => {
+        if (_scheduleViewMode === 'calendar') {
+            renderScheduleCalendar(filtered);
+            return;
+        }
+
+        gridEl.innerHTML = filtered.map(schedule => {
             const days = schedule.days_of_week.split(',').map(d => DAY_NAMES[parseInt(d)]).join(', ');
             const timeRange = schedule.end_time
                 ? `${schedule.start_time} - ${schedule.end_time}`
@@ -1823,6 +1862,163 @@ async function openEditSchedule(id) {
     } catch (error) {
         showToast('Failed to load schedule', 'error');
     }
+}
+
+// ===== Schedule Calendar =====
+
+const SCHEDULE_COLORS = [
+    '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
+    '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1'
+];
+
+// Map data day numbers (0=Sun) to Mon-Sun column order
+const DAY_COL_MAP = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 0: 6 };
+const CAL_DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function parseTime(timeStr) {
+    const [h, m] = timeStr.split(':').map(Number);
+    return h * 60 + (m || 0);
+}
+
+function filterSchedules(schedules) {
+    const filterType = document.getElementById('scheduleViewFilter').value;
+    const targetId = document.getElementById('scheduleTargetFilter').value;
+
+    if (filterType === 'all') return schedules;
+
+    return schedules.filter(s => {
+        if (filterType === 'client') {
+            return targetId ? s.client_id === targetId : !!s.client_id;
+        }
+        if (filterType === 'group') {
+            return targetId ? s.group_id === parseInt(targetId) : !!s.group_id;
+        }
+        return true;
+    });
+}
+
+function renderScheduleCalendar(schedules) {
+    const container = document.getElementById('schedulesCalendar');
+    const ROW_HEIGHT = 60; // px per hour
+
+    // Build header
+    let html = '<div class="calendar-scroll"><div class="calendar-grid">';
+    html += '<div class="calendar-header-cell"></div>';
+    for (const day of CAL_DAY_NAMES) {
+        html += `<div class="calendar-header-cell">${day}</div>`;
+    }
+
+    // Build hour rows
+    for (let hour = 0; hour < 24; hour++) {
+        const label = String(hour).padStart(2, '0') + ':00';
+        html += `<div class="calendar-time-label">${label}</div>`;
+        for (let col = 0; col < 7; col++) {
+            html += `<div class="calendar-day-cell" data-hour="${hour}" data-col="${col}"></div>`;
+        }
+    }
+    html += '</div></div>';
+    container.innerHTML = html;
+
+    // Place schedule blocks
+    const dayColumns = {};
+    for (let col = 0; col < 7; col++) {
+        dayColumns[col] = container.querySelectorAll(`.calendar-day-cell[data-col="${col}"]`);
+    }
+
+    schedules.forEach(schedule => {
+        const startMin = parseTime(schedule.start_time);
+        const endMin = schedule.end_time ? parseTime(schedule.end_time) : startMin + 60;
+        const duration = Math.max(endMin - startMin, 1);
+        const topPx = (startMin / 60) * ROW_HEIGHT;
+        const heightPx = Math.max((duration / 60) * ROW_HEIGHT, 16);
+        const color = SCHEDULE_COLORS[schedule.playlist_id % SCHEDULE_COLORS.length];
+        const timeLabel = schedule.end_time
+            ? `${schedule.start_time} - ${schedule.end_time}`
+            : schedule.start_time;
+
+        const days = schedule.days_of_week.split(',').map(d => parseInt(d));
+
+        days.forEach(day => {
+            const col = DAY_COL_MAP[day];
+            if (col === undefined) return;
+
+            // Find the cell for the starting hour to use as anchor
+            const startHour = Math.floor(startMin / 60);
+            const cell = dayColumns[col]?.[startHour];
+            if (!cell) return;
+
+            const offsetInCell = (startMin - startHour * 60) / 60 * ROW_HEIGHT;
+
+            const block = document.createElement('div');
+            block.className = 'calendar-block' + (schedule.enabled ? '' : ' disabled');
+            block.style.backgroundColor = color;
+            block.style.top = offsetInCell + 'px';
+            block.style.height = heightPx + 'px';
+            block.dataset.scheduleId = schedule.id;
+            block.innerHTML = `<div class="calendar-block-name">${escapeHtml(schedule.name)}</div>` +
+                (heightPx >= 28 ? `<div class="calendar-block-time">${timeLabel}</div>` : '');
+            block.addEventListener('click', () => openEditSchedule(schedule.id));
+            cell.appendChild(block);
+        });
+    });
+}
+
+function initScheduleCalendarView() {
+    const cardBtn = document.getElementById('scheduleCardViewBtn');
+    const calBtn = document.getElementById('scheduleCalendarViewBtn');
+    const gridEl = document.getElementById('schedulesGrid');
+    const calendarEl = document.getElementById('schedulesCalendar');
+    const emptyEl = document.getElementById('schedulesEmpty');
+
+    cardBtn.addEventListener('click', () => {
+        _scheduleViewMode = 'cards';
+        cardBtn.classList.add('active');
+        calBtn.classList.remove('active');
+        gridEl.style.display = '';
+        calendarEl.style.display = 'none';
+        loadSchedules();
+    });
+
+    calBtn.addEventListener('click', () => {
+        _scheduleViewMode = 'calendar';
+        calBtn.classList.add('active');
+        cardBtn.classList.remove('active');
+        gridEl.style.display = 'none';
+        calendarEl.style.display = '';
+        emptyEl.style.display = 'none';
+        loadSchedules();
+    });
+
+    // Target filter
+    const viewFilter = document.getElementById('scheduleViewFilter');
+    const targetFilter = document.getElementById('scheduleTargetFilter');
+
+    viewFilter.addEventListener('change', async () => {
+        const type = viewFilter.value;
+        if (type === 'all') {
+            targetFilter.style.display = 'none';
+            targetFilter.value = '';
+            loadSchedules();
+        } else {
+            targetFilter.style.display = '';
+            try {
+                if (type === 'client') {
+                    const clients = await clientAPI.list();
+                    targetFilter.innerHTML = '<option value="">All Clients</option>' +
+                        clients.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+                } else if (type === 'group') {
+                    const groups = await groupsAPI.list();
+                    targetFilter.innerHTML = '<option value="">All Groups</option>' +
+                        groups.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('');
+                }
+            } catch (e) {
+                console.error('Failed to populate filter:', e);
+            }
+            loadSchedules();
+        }
+    });
+
+    targetFilter.addEventListener('change', () => loadSchedules());
 }
 
 // ===== Live Previews =====
@@ -2432,6 +2628,170 @@ const usersAPI = {
     }
 };
 
+// ===== Approvals View =====
+
+let _rejectMediaId = null;
+
+async function loadApprovals() {
+    const grid = document.getElementById('approvalsGrid');
+    const empty = document.getElementById('approvalsEmpty');
+    grid.innerHTML = '<div class="loading">Loading approvals...</div>';
+    empty.style.display = 'none';
+
+    try {
+        const filter = document.getElementById('approvalStatusFilter').value;
+        let media;
+        if (filter === 'pending') {
+            media = await approvalsAPI.listPending();
+        } else {
+            const all = await mediaAPI.list();
+            media = filter === 'all' ? all : all.filter(m => m.approval_status === filter);
+        }
+
+        if (!media || media.length === 0) {
+            grid.innerHTML = '';
+            empty.style.display = '';
+            return;
+        }
+
+        grid.innerHTML = media.map(m => renderApprovalCard(m)).join('');
+        attachApprovalHandlers();
+    } catch (error) {
+        console.error('Failed to load approvals:', error);
+        grid.innerHTML = '<div class="empty-state"><p>Failed to load approvals</p></div>';
+    }
+}
+
+function renderApprovalCard(media) {
+    const statusBadge = {
+        pending: 'badge-warning',
+        approved: 'badge-success',
+        rejected: 'badge-danger'
+    }[media.approval_status] || 'badge-info';
+
+    const typeBadge = media.type === 'video'
+        ? '<span class="badge badge-info">Video</span>'
+        : '<span class="badge badge-secondary">Image</span>';
+
+    const size = media.file_size ? formatFileSize(media.file_size) : 'Unknown size';
+    const date = formatDate(media.created_at);
+    const isPending = media.approval_status === 'pending';
+
+    return `
+        <div class="card approval-card">
+            <div class="card-body" style="display:flex; align-items:center; gap:1rem;">
+                <div style="flex:1; min-width:0;">
+                    <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.25rem;">
+                        <strong style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${media.original_filename || media.filename}</strong>
+                        ${typeBadge}
+                        <span class="badge ${statusBadge}">${media.approval_status}</span>
+                    </div>
+                    <div class="text-muted" style="font-size:0.85rem;">${size} &middot; Uploaded ${date}</div>
+                </div>
+                <div style="display:flex; gap:0.5rem; flex-shrink:0;">
+                    ${isPending ? `
+                        <button class="btn btn-sm btn-success approve-btn" data-id="${media.id}">Approve</button>
+                        <button class="btn btn-sm btn-danger reject-btn" data-id="${media.id}" data-name="${media.original_filename || media.filename}">Reject</button>
+                    ` : ''}
+                    <button class="btn btn-sm btn-secondary history-btn" data-id="${media.id}">History</button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function attachApprovalHandlers() {
+    document.querySelectorAll('.approve-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            try {
+                await approvalsAPI.approve(parseInt(btn.dataset.id));
+                showToast('Media approved', 'success');
+                loadApprovals();
+            } catch (error) {
+                showToast(error.message || 'Failed to approve', 'error');
+            }
+        });
+    });
+
+    document.querySelectorAll('.reject-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            _rejectMediaId = parseInt(btn.dataset.id);
+            document.getElementById('rejectMediaName').textContent = btn.dataset.name;
+            document.getElementById('rejectComment').value = '';
+            openModal('rejectModal');
+        });
+    });
+
+    document.querySelectorAll('.history-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            try {
+                const logs = await approvalsAPI.getLogs(parseInt(btn.dataset.id));
+                renderApprovalHistory(logs || []);
+                openModal('approvalHistoryModal');
+            } catch (error) {
+                showToast(error.message || 'Failed to load history', 'error');
+            }
+        });
+    });
+}
+
+function renderApprovalHistory(logs) {
+    const container = document.getElementById('approvalHistoryContent');
+    if (!logs || logs.length === 0) {
+        container.innerHTML = '<p class="text-muted">No approval history for this file.</p>';
+        return;
+    }
+
+    container.innerHTML = `
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Action</th>
+                    <th>Comment</th>
+                    <th>Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${logs.map(log => `
+                    <tr>
+                        <td><span class="badge badge-${log.action === 'approved' ? 'success' : log.action === 'rejected' ? 'danger' : 'warning'}">${log.action}</span></td>
+                        <td>${log.comment || '<span class="text-muted">-</span>'}</td>
+                        <td>${formatDate(log.timestamp)}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function initApprovals() {
+    // Filter change
+    document.getElementById('approvalStatusFilter').addEventListener('change', loadApprovals);
+
+    // Reject modal
+    document.getElementById('closeRejectModal').addEventListener('click', () => closeModal('rejectModal'));
+    document.getElementById('cancelRejectModal').addEventListener('click', () => closeModal('rejectModal'));
+    document.getElementById('confirmRejectBtn').addEventListener('click', async () => {
+        if (!_rejectMediaId) return;
+        const comment = document.getElementById('rejectComment').value.trim();
+        try {
+            await approvalsAPI.reject(_rejectMediaId, comment);
+            showToast('Media rejected', 'success');
+            closeModal('rejectModal');
+            _rejectMediaId = null;
+            loadApprovals();
+        } catch (error) {
+            showToast(error.message || 'Failed to reject', 'error');
+        }
+    });
+
+    // History modal
+    document.getElementById('closeApprovalHistoryModal').addEventListener('click', () => closeModal('approvalHistoryModal'));
+    document.getElementById('closeApprovalHistoryBtn').addEventListener('click', () => closeModal('approvalHistoryModal'));
+}
+
+// ===== User Management =====
+
 async function loadUsers() {
     const grid = document.getElementById('usersGrid');
     grid.innerHTML = '<div class="loading">Loading users...</div>';
@@ -2587,6 +2947,7 @@ function initApp() {
 
     // Initialize schedule functionality
     initScheduleModal();
+    initScheduleCalendarView();
 
     // Initialize client control modal
     initClientControlModal();
@@ -2596,6 +2957,9 @@ function initApp() {
 
     // Initialize notifications
     initNotifications();
+
+    // Initialize approvals (admin only)
+    initApprovals();
 
     // Initialize user management (admin only)
     initCreateUserModal();
