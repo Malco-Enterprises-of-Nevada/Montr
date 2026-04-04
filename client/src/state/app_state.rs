@@ -4,9 +4,19 @@
 //! State includes playlist queue, current playback position, and client info.
 
 use crate::error::Result;
+use crate::network::PlaylistItem;
 use crate::playback::queue::PlaylistQueue;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+/// Saved playlist state for the interrupt stack
+#[derive(Debug, Clone)]
+pub struct InterruptedPlaylist {
+    pub playlist_id: u32,
+    pub items: Vec<PlaylistItem>,
+    pub loop_enabled: bool,
+    pub current_index: Option<usize>,
+}
 
 /// Inner state protected by RwLock
 #[derive(Debug)]
@@ -27,8 +37,8 @@ struct AppStateInner {
     is_playing: bool,
     /// Error message (if any)
     last_error: Option<String>,
-    /// Playlist ID saved during interrupt (for resume)
-    interrupted_from_playlist_id: Option<u32>,
+    /// Stack of interrupted playlists (supports nested interrupts)
+    interrupt_stack: Vec<InterruptedPlaylist>,
 }
 
 /// Shared application state
@@ -52,7 +62,7 @@ impl AppState {
             current_position: None,
             is_playing: false,
             last_error: None,
-            interrupted_from_playlist_id: None,
+            interrupt_stack: Vec::new(),
         };
 
         Self {
@@ -152,10 +162,10 @@ impl AppState {
         items
     }
 
-    /// Get interrupted playlist ID (saved during interrupt)
-    pub async fn interrupted_from_playlist_id(&self) -> Option<u32> {
+    /// Check if currently in an interrupted state
+    pub async fn is_interrupted(&self) -> bool {
         let state = self.inner.read().await;
-        state.interrupted_from_playlist_id
+        !state.interrupt_stack.is_empty()
     }
 
     /// Check if looping
@@ -303,10 +313,49 @@ impl AppState {
         }
     }
 
-    /// Set interrupted playlist ID
-    pub async fn set_interrupted_from(&self, playlist_id: Option<u32>) {
+    /// Push current playlist onto the interrupt stack (call before loading new playlist)
+    pub async fn push_interrupt(&self) {
         let mut state = self.inner.write().await;
-        state.interrupted_from_playlist_id = playlist_id;
+        if let Some(pid) = state.playlist_id {
+            let entry = InterruptedPlaylist {
+                playlist_id: pid,
+                items: state.queue.items().to_vec(),
+                loop_enabled: state.queue.is_looping(),
+                current_index: state.queue.current_index(),
+            };
+            state.interrupt_stack.push(entry);
+            tracing::debug!(
+                "Pushed playlist {} onto interrupt stack (depth: {})",
+                pid,
+                state.interrupt_stack.len()
+            );
+        }
+    }
+
+    /// Pop the most recent interrupted playlist from the stack
+    pub async fn pop_interrupt(&self) -> Option<InterruptedPlaylist> {
+        let mut state = self.inner.write().await;
+        let restored = state.interrupt_stack.pop();
+        if let Some(ref r) = restored {
+            tracing::debug!(
+                "Popped playlist {} from interrupt stack (depth: {})",
+                r.playlist_id,
+                state.interrupt_stack.len()
+            );
+        }
+        restored
+    }
+
+    /// Clear the entire interrupt stack (e.g., on normal playlist assignment)
+    pub async fn clear_interrupt_stack(&self) {
+        let mut state = self.inner.write().await;
+        if !state.interrupt_stack.is_empty() {
+            tracing::debug!(
+                "Cleared interrupt stack ({} entries)",
+                state.interrupt_stack.len()
+            );
+            state.interrupt_stack.clear();
+        }
     }
 
     /// Clear error
@@ -524,5 +573,87 @@ mod tests {
 
         state1.set_playing(true).await;
         assert!(state2.is_playing().await); // Should see the same state
+    }
+
+    #[tokio::test]
+    async fn test_push_pop_interrupt_single() {
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let items = vec![create_test_item(1, 10), create_test_item(2, 20)];
+        state.update_playlist(42, items.clone(), true).await.unwrap();
+
+        assert!(!state.is_interrupted().await);
+
+        state.push_interrupt().await;
+        assert!(state.is_interrupted().await);
+
+        let restored = state.pop_interrupt().await;
+        assert!(restored.is_some());
+        let restored = restored.unwrap();
+        assert_eq!(restored.playlist_id, 42);
+        assert_eq!(restored.items.len(), 2);
+        assert!(restored.loop_enabled);
+
+        assert!(!state.is_interrupted().await);
+    }
+
+    #[tokio::test]
+    async fn test_push_pop_interrupt_nested() {
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+
+        // Load playlist A
+        let items_a = vec![create_test_item(1, 10)];
+        state.update_playlist(1, items_a, true).await.unwrap();
+        state.push_interrupt().await;
+
+        // Load playlist B (interrupt)
+        let items_b = vec![create_test_item(2, 20), create_test_item(3, 30)];
+        state.update_playlist(2, items_b, false).await.unwrap();
+        state.push_interrupt().await;
+
+        // Load playlist C (interrupt the interrupt)
+        let items_c = vec![create_test_item(4, 40)];
+        state.update_playlist(3, items_c, true).await.unwrap();
+
+        // Pop should return B first
+        let restored_b = state.pop_interrupt().await.unwrap();
+        assert_eq!(restored_b.playlist_id, 2);
+        assert_eq!(restored_b.items.len(), 2);
+        assert!(!restored_b.loop_enabled);
+
+        // Pop should return A
+        let restored_a = state.pop_interrupt().await.unwrap();
+        assert_eq!(restored_a.playlist_id, 1);
+        assert_eq!(restored_a.items.len(), 1);
+        assert!(restored_a.loop_enabled);
+
+        // Stack is now empty
+        assert!(!state.is_interrupted().await);
+        assert!(state.pop_interrupt().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_clear_interrupt_stack() {
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+
+        let items = vec![create_test_item(1, 10)];
+        state.update_playlist(1, items.clone(), false).await.unwrap();
+        state.push_interrupt().await;
+        state.update_playlist(2, items.clone(), false).await.unwrap();
+        state.push_interrupt().await;
+
+        assert!(state.is_interrupted().await);
+
+        state.clear_interrupt_stack().await;
+        assert!(!state.is_interrupted().await);
+        assert!(state.pop_interrupt().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_push_interrupt_no_playlist() {
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+
+        // No playlist loaded — push should be a no-op
+        state.push_interrupt().await;
+        assert!(!state.is_interrupted().await);
     }
 }

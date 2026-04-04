@@ -82,6 +82,7 @@
                 <li><a href="#schedules" class="nav-link" data-page="schedules">Schedules</a></li>
                 <li><a href="#analytics" class="nav-link" data-page="analytics">Analytics</a></li>
                 <li><a href="#notifications" class="nav-link" data-page="notifications">Notifications</a></li>
+                <li class="admin-only" style="display:none"><a href="#approvals" class="nav-link" data-page="approvals">Approvals</a></li>
                 <li class="admin-only" style="display:none"><a href="#users" class="nav-link" data-page="users">Users</a></li>
             </ul>
             <div class="nav-user" id="navUser" style="display: none;">
@@ -353,6 +354,25 @@
                 <button class="btn btn-primary editor-action" id="createScheduleBtn">Create Schedule</button>
             </div>
 
+            <div class="schedule-toolbar">
+                <div class="filter-group">
+                    <select id="scheduleViewFilter" class="form-select">
+                        <option value="all">All Targets</option>
+                        <option value="client">By Client</option>
+                        <option value="group">By Group</option>
+                    </select>
+                    <select id="scheduleTargetFilter" class="form-select" style="display:none">
+                        <option value="">Select...</option>
+                    </select>
+                </div>
+                <div class="view-toggle">
+                    <button class="btn btn-sm active" id="scheduleCardViewBtn">Cards</button>
+                    <button class="btn btn-sm" id="scheduleCalendarViewBtn">Calendar</button>
+                </div>
+            </div>
+
+            <div id="schedulesCalendar" class="schedule-calendar" style="display:none"></div>
+
             <div id="schedulesGrid" class="grid">
                 <div class="loading">Loading schedules...</div>
             </div>
@@ -364,6 +384,30 @@
                 </svg>
                 <h3>No Schedules</h3>
                 <p>Create a schedule to automatically switch playlists at specific times</p>
+            </div>
+        </section>
+
+        <!-- Approvals View -->
+        <section id="approvals-view" class="view">
+            <div class="page-header">
+                <h2>Content Approvals</h2>
+                <select id="approvalStatusFilter" class="form-select" style="width:auto">
+                    <option value="pending">Pending</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                    <option value="all">All</option>
+                </select>
+            </div>
+
+            <div id="approvalsGrid" class="grid"></div>
+
+            <div id="approvalsEmpty" class="empty-state" style="display: none;">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                    <path d="M9 11l3 3L22 4"/>
+                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+                </svg>
+                <h3>No Pending Media</h3>
+                <p>All media files have been reviewed</p>
             </div>
         </section>
 
@@ -865,6 +909,43 @@
                 <span id="mediaPreviewMeta" class="text-muted" style="flex:1"></span>
                 <button class="btn btn-secondary" id="mediaPreviewDownload">Download</button>
                 <button class="btn btn-secondary" id="closeMediaPreviewBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reject Media Modal -->
+    <div id="rejectModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Reject Media</h3>
+                <button class="modal-close" id="closeRejectModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Rejecting: <strong id="rejectMediaName"></strong></p>
+                <div class="form-group">
+                    <label for="rejectComment">Reason (optional)</label>
+                    <textarea id="rejectComment" rows="3" placeholder="Why is this media being rejected?"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelRejectModal">Cancel</button>
+                <button class="btn btn-danger" id="confirmRejectBtn">Reject</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Approval History Modal -->
+    <div id="approvalHistoryModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Approval History</h3>
+                <button class="modal-close" id="closeApprovalHistoryModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="approvalHistoryContent"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="closeApprovalHistoryBtn">Close</button>
             </div>
         </div>
     </div>

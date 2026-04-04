@@ -166,6 +166,9 @@ impl StateCoordinator {
                     msg.items.len()
                 );
 
+                // Normal assignment clears any interrupt context
+                self.state.clear_interrupt_stack().await;
+
                 // End current analytics session
                 self.end_analytics_session(false).await;
 
@@ -216,9 +219,8 @@ impl StateCoordinator {
                     msg.items.len()
                 );
 
-                // Save current playlist for resume
-                let current_id = self.state.playlist_id().await;
-                self.state.set_interrupted_from(current_id).await;
+                // Save current playlist onto interrupt stack for resume
+                self.state.push_interrupt().await;
 
                 self.end_analytics_session(false).await;
 
@@ -235,7 +237,7 @@ impl StateCoordinator {
                     msg.playlist_name.as_deref().unwrap_or("(stop)")
                 );
 
-                self.state.set_interrupted_from(None).await;
+                let _restored = self.state.pop_interrupt().await;
                 self.end_analytics_session(false).await;
 
                 if let Some(playlist_id) = msg.playlist_id {
