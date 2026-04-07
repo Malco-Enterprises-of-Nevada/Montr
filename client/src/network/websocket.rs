@@ -10,7 +10,7 @@ use crate::network::{
 };
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::sleep;
@@ -228,14 +228,18 @@ impl WebSocketClient {
 
             match Self::connect(&ws_url, tls_connector.clone()).await {
                 Ok(ws_stream) => {
-                    // Connection established
+                    // Connection established. Note: we do NOT reset the
+                    // reconnect backoff here — a connection that the server
+                    // accepts and immediately closes should still count
+                    // against the backoff. We only reset after the
+                    // connection has been stable for STABILITY_THRESHOLD.
                     {
                         let mut s = state.write().await;
                         let _ = s.transition(State::Connected);
-                        reconnect.write().await.reset();
                     }
 
                     tracing::info!("WebSocket connected to {}", ws_url);
+                    let connected_at = Instant::now();
 
                     // Auto-send on-connect message (e.g., re-registration)
                     let ws_stream = if let Some(ref msg) = *on_connect_msg.read().await {
@@ -262,9 +266,38 @@ impl WebSocketClient {
                     .await;
 
                     // Connection closed
-                    let mut s = state.write().await;
-                    if !cancel_token.is_cancelled() {
-                        s.transition_to_error(ErrorReason::ConnectionLost);
+                    {
+                        let mut s = state.write().await;
+                        if !cancel_token.is_cancelled() {
+                            s.transition_to_error(ErrorReason::ConnectionLost);
+                        }
+                    }
+
+                    // If the connection lasted long enough to be considered
+                    // stable, reset the reconnect backoff so the next failure
+                    // gets the snappy initial delay. If it died quickly
+                    // (e.g. because the server kicked us right after
+                    // register), apply the exponential backoff instead. This
+                    // is the defense that prevents tight reconnect storms
+                    // when something goes wrong server-side.
+                    let lifetime = connected_at.elapsed();
+                    if lifetime >= Self::STABILITY_THRESHOLD {
+                        reconnect.write().await.reset();
+                    } else {
+                        let delay = reconnect.write().await.next_delay();
+                        tracing::warn!(
+                            "WebSocket connection only lasted {:?} (< {:?}); backing off {:?} before reconnect",
+                            lifetime,
+                            Self::STABILITY_THRESHOLD,
+                            delay
+                        );
+                        tokio::select! {
+                            _ = sleep(delay) => {},
+                            _ = cancel_token.cancelled() => {
+                                tracing::info!("Cancelling reconnection");
+                                break;
+                            }
+                        }
                     }
                 }
                 Err(e) => {
@@ -293,6 +326,12 @@ impl WebSocketClient {
             }
         }
     }
+
+    /// Minimum time a successful WebSocket connection must stay open before
+    /// we consider it "stable" and reset the reconnect backoff. Connections
+    /// that die in less than this get exponential backoff applied before the
+    /// next reconnect attempt.
+    const STABILITY_THRESHOLD: Duration = Duration::from_secs(30);
 
     /// Attempt WebSocket connection
     async fn connect(

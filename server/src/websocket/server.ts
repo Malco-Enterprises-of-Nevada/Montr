@@ -207,7 +207,10 @@ export class MontrWebSocketServer {
       logger.info(
         `Client ${ws.clientId} disconnected (code: ${code}, reason: ${reason || 'none'})`
       );
-      clientConnectionManager.removeConnection(ws.clientId);
+      // Identity-checked removal: if a newer connection has already replaced
+      // this one in the map (e.g. because addConnection kicked us), this is a
+      // no-op and won't tear down the replacement.
+      clientConnectionManager.removeConnection(ws.clientId, ws);
 
       // Broadcast offline state to admin browsers
       clientConnectionManager.broadcastToAdmins({

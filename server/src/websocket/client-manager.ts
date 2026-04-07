@@ -77,25 +77,34 @@ export class ClientConnectionManager {
   }
 
   /**
-   * Removes a client connection
+   * Removes a client connection.
+   *
+   * When `ws` is provided, this is an identity-checked removal: if the current
+   * map entry for `clientId` is a different instance (because a newer
+   * connection has already replaced it), the call is a no-op. This prevents a
+   * race where a kicked old connection's async `'close'` event tears down the
+   * connection that replaced it.
    */
-  removeConnection(clientId: string): void {
-    const ws = this.connections.get(clientId);
+  removeConnection(clientId: string, ws?: ExtendedWebSocket): void {
+    const current = this.connections.get(clientId);
+    if (!current) return;
 
-    if (ws) {
-      // Close the connection if still open
-      if (ws.readyState === ws.OPEN) {
-        ws.close(1000, 'Connection removed');
-      }
-
-      this.connections.delete(clientId);
-      this.metadata.delete(clientId);
-      this.stats.activeConnections = this.connections.size;
-
-      logger.info(
-        `Client ${clientId} connection removed (total active: ${this.stats.activeConnections})`
-      );
+    if (ws && current !== ws) {
+      // A newer connection has replaced this one — leave the map alone.
+      return;
     }
+
+    if (current.readyState === current.OPEN) {
+      current.close(1000, 'Connection removed');
+    }
+
+    this.connections.delete(clientId);
+    this.metadata.delete(clientId);
+    this.stats.activeConnections = this.connections.size;
+
+    logger.info(
+      `Client ${clientId} connection removed (total active: ${this.stats.activeConnections})`
+    );
   }
 
   /**
@@ -271,7 +280,7 @@ export class ClientConnectionManager {
     this.connections.forEach((ws, clientId) => {
       if (!ws.isAlive) {
         logger.warn(`Client ${clientId} failed health check, terminating connection`);
-        this.removeConnection(clientId);
+        this.removeConnection(clientId, ws);
         return;
       }
 
@@ -301,7 +310,7 @@ export class ClientConnectionManager {
     this.connections.forEach((ws, clientId) => {
       if (ws.lastHeartbeat && now - ws.lastHeartbeat > maxAge) {
         logger.info(`Removing stale connection for client ${clientId}`);
-        this.removeConnection(clientId);
+        this.removeConnection(clientId, ws);
         removedCount += 1;
       }
     });
