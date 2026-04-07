@@ -60,9 +60,7 @@ impl HttpClient {
         let mut builder = Client::builder().timeout(Duration::from_secs(300));
 
         if tls_skip_verify {
-            tracing::warn!(
-                "TLS certificate verification is DISABLED — do not use in production"
-            );
+            tracing::warn!("TLS certificate verification is DISABLED — do not use in production");
             builder = builder.danger_accept_invalid_certs(true);
         } else if let Some(ca_path) = ca_cert_path {
             let cert_pem = std::fs::read(ca_path).map_err(|e| MontrError::FileAccess {
@@ -469,7 +467,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_media_invalid_url() {
-        let client = HttpClient::new("http://invalid-nonexistent-server.test".to_string(), None, false).unwrap();
+        let client = HttpClient::new(
+            "http://invalid-nonexistent-server.test".to_string(),
+            None,
+            false,
+        )
+        .unwrap();
         let temp_dir = TempDir::new().unwrap();
         let dest = temp_dir.path().join("test.mp4");
 

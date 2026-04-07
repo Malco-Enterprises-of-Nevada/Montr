@@ -579,7 +579,10 @@ mod tests {
     async fn test_push_pop_interrupt_single() {
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
         let items = vec![create_test_item(1, 10), create_test_item(2, 20)];
-        state.update_playlist(42, items.clone(), true).await.unwrap();
+        state
+            .update_playlist(42, items.clone(), true)
+            .await
+            .unwrap();
 
         assert!(!state.is_interrupted().await);
 
@@ -636,9 +639,15 @@ mod tests {
         let state = AppState::new("test-id".to_string(), "Test Client".to_string());
 
         let items = vec![create_test_item(1, 10)];
-        state.update_playlist(1, items.clone(), false).await.unwrap();
+        state
+            .update_playlist(1, items.clone(), false)
+            .await
+            .unwrap();
         state.push_interrupt().await;
-        state.update_playlist(2, items.clone(), false).await.unwrap();
+        state
+            .update_playlist(2, items.clone(), false)
+            .await
+            .unwrap();
         state.push_interrupt().await;
 
         assert!(state.is_interrupted().await);
