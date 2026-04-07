@@ -371,7 +371,10 @@ describe('MontrWebSocketServer', () => {
 
       eventHandlers['close'](1000, Buffer.from('normal closure'));
 
-      expect(mockManager.removeConnection).toHaveBeenCalledWith('client-1');
+      // handleDisconnection passes the ws instance for the identity check
+      // (see fix(ws): stop reconnect storm caused by identity-blind
+      // removeConnection). The mocked manager receives both args.
+      expect(mockManager.removeConnection).toHaveBeenCalledWith('client-1', ws);
     });
 
     it('should not remove connection or throw when clientId is not set', () => {
