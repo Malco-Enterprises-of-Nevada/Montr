@@ -575,10 +575,7 @@ fn run_setup(args: &config::CliArgs) {
         content
     };
     let content = if tls_skip_verify {
-        content.replace(
-            "# tls_skip_verify = false",
-            "tls_skip_verify = true",
-        )
+        content.replace("# tls_skip_verify = false", "tls_skip_verify = true")
     } else {
         content
     };
