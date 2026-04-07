@@ -243,19 +243,22 @@ jobs:
             build/client/montr-client-linux-arm64.sha256
 
   # ── Build Client (macOS) ──────────────────────────────────
+  # Runs on the self-hosted Apple Silicon Mac (mac-monrose-arm64). Both
+  # matrix entries dispatch to the same runner: arm64 builds natively,
+  # x86_64 cross-compiles via the rustup target installed by
+  # dtolnay/rust-toolchain. The host SDK on Apple Silicon includes the
+  # x86_64 slice so no extra toolchain setup is needed.
   build-client-macos:
     name: Build Client (macOS)
     needs: [tag, validate]
     strategy:
       matrix:
         include:
-          - runner: macos-latest
-            target: aarch64-apple-darwin
+          - target: aarch64-apple-darwin
             artifact: montr-client-darwin-arm64
-          - runner: macos-latest
-            target: x86_64-apple-darwin
+          - target: x86_64-apple-darwin
             artifact: montr-client-darwin-amd64
-    runs-on: ${{ matrix.runner }}
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
