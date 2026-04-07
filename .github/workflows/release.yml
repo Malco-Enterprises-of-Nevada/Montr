@@ -209,6 +209,39 @@ jobs:
             build/client/montr-client-linux-amd64
             build/client/montr-client-linux-amd64.sha256
 
+  # ── Build Client (Linux arm64) ─────────────────────────────
+  build-client-linux-arm64:
+    name: Build Client (Linux arm64)
+    needs: [tag, validate]
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build via Docker
+        run: >
+          docker buildx build
+          -f docker/client.Dockerfile
+          --platform linux/arm64
+          --build-arg BUILD_SHA=${{ github.sha }}
+          --target binary-export
+          --output type=local,dest=build/client .
+      - name: Rename and checksum
+        run: |
+          cd build/client
+          mv montr-client montr-client-linux-arm64
+          sha256sum montr-client-linux-arm64 > montr-client-linux-arm64.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: montr-client-linux-arm64
+          path: |
+            build/client/montr-client-linux-arm64
+            build/client/montr-client-linux-arm64.sha256
+
   # ── Build Client (macOS) ──────────────────────────────────
   build-client-macos:
     name: Build Client (macOS)
@@ -276,6 +309,7 @@ jobs:
       - build-server
       - build-deb-server
       - build-client-linux
+      - build-client-linux-arm64
       - build-client-macos
       - build-deb-client
     runs-on: [self-hosted, linux]
@@ -328,6 +362,7 @@ jobs:
             echo "| Platform | File |"
             echo "|----------|------|"
             echo "| Linux x86_64 | \`montr-client-linux-amd64\` |"
+            echo "| Linux arm64 | \`montr-client-linux-arm64\` |"
             echo "| macOS Apple Silicon | \`montr-client-darwin-arm64\` |"
             echo "| macOS Intel | \`montr-client-darwin-amd64\` |"
             echo "| Linux (Debian) | \`montr-server_*.deb\`, \`montr-client_*.deb\` |"
@@ -347,6 +382,8 @@ jobs:
             artifacts/montr-server-${{ needs.tag.outputs.tag }}/*.tar.gz
             artifacts/montr-client-linux-amd64/montr-client-linux-amd64
             artifacts/montr-client-linux-amd64/montr-client-linux-amd64.sha256
+            artifacts/montr-client-linux-arm64/montr-client-linux-arm64
+            artifacts/montr-client-linux-arm64/montr-client-linux-arm64.sha256
             artifacts/montr-client-darwin-arm64/montr-client-darwin-arm64
             artifacts/montr-client-darwin-arm64/montr-client-darwin-arm64.sha256
             artifacts/montr-client-darwin-amd64/montr-client-darwin-amd64
@@ -360,6 +397,7 @@ jobs:
     needs:
       - tag
       - build-client-linux
+      - build-client-linux-arm64
       - build-client-macos
     runs-on: [self-hosted, linux]
     env:
@@ -379,6 +417,8 @@ jobs:
           for file in \
             artifacts/montr-client-linux-amd64/montr-client-linux-amd64 \
             artifacts/montr-client-linux-amd64/montr-client-linux-amd64.sha256 \
+            artifacts/montr-client-linux-arm64/montr-client-linux-arm64 \
+            artifacts/montr-client-linux-arm64/montr-client-linux-arm64.sha256 \
             artifacts/montr-client-darwin-arm64/montr-client-darwin-arm64 \
             artifacts/montr-client-darwin-arm64/montr-client-darwin-arm64.sha256 \
             artifacts/montr-client-darwin-amd64/montr-client-darwin-amd64 \
@@ -399,6 +439,8 @@ jobs:
             "assets": {
               "montr-client-linux-amd64": "${BASE_URL}/montr-client-linux-amd64",
               "montr-client-linux-amd64.sha256": "${BASE_URL}/montr-client-linux-amd64.sha256",
+              "montr-client-linux-arm64": "${BASE_URL}/montr-client-linux-arm64",
+              "montr-client-linux-arm64.sha256": "${BASE_URL}/montr-client-linux-arm64.sha256",
               "montr-client-darwin-arm64": "${BASE_URL}/montr-client-darwin-arm64",
               "montr-client-darwin-arm64.sha256": "${BASE_URL}/montr-client-darwin-arm64.sha256",
               "montr-client-darwin-amd64": "${BASE_URL}/montr-client-darwin-amd64",

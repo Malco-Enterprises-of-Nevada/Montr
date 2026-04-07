@@ -21,6 +21,8 @@ fn binary_asset_name() -> &'static str {
         "montr-client-darwin-arm64"
     } else if cfg!(target_os = "macos") && cfg!(target_arch = "x86_64") {
         "montr-client-darwin-amd64"
+    } else if cfg!(target_arch = "aarch64") {
+        "montr-client-linux-arm64"
     } else {
         "montr-client-linux-amd64"
     }
