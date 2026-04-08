@@ -6,7 +6,8 @@
     <meta http-equiv="X-UA-Compatible" content="ie=edge">
     <title>Montr - Media Playlist Management</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/styles.css?v=5">
+    <link rel="stylesheet" href="/css/styles.css?v=6">
+    <script src="/vendor/chart.umd.min.js"></script>
 </head>
 <body>
     <!-- Login Screen -->
@@ -950,6 +951,64 @@
         </div>
     </div>
 
+    <!-- Client Detail Modal (telemetry charts + recent log events) -->
+    <div id="clientDetailModal" class="modal">
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">
+                <h3 id="clientDetailTitle">Client Details</h3>
+                <button class="modal-close" id="closeClientDetailModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="clientDetailSummary"></div>
+                <hr style="margin: 16px 0;"/>
+                <h4>System Telemetry (last hour)</h4>
+                <div id="clientDetailChartsEmpty" class="empty-state" style="display: none;">
+                    <p>No telemetry yet. Charts will appear once the client reports data.</p>
+                </div>
+                <div class="telemetry-charts" id="clientDetailCharts">
+                    <div class="chart-container"><canvas id="cpuChart"></canvas></div>
+                    <div class="chart-container"><canvas id="memChart"></canvas></div>
+                    <div class="chart-container"><canvas id="diskChart"></canvas></div>
+                    <div class="chart-container"><canvas id="tempChart"></canvas></div>
+                </div>
+                <hr style="margin: 16px 0;"/>
+                <div class="admin-only">
+                    <h4>Recent log events <button class="btn btn-sm btn-primary" id="openFetchLogsBtn" style="float: right;">Fetch full logs…</button></h4>
+                    <div id="recentLogEvents" class="errors-list"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="closeClientDetailBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Fetch Logs Modal (admin-only) -->
+    <div id="fetchLogsModal" class="modal">
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">
+                <h3>Fetch client logs</h3>
+                <button class="modal-close" id="closeFetchLogsModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="logTailSize">Tail size:</label>
+                    <select id="logTailSize">
+                        <option value="10240">10 KB</option>
+                        <option value="102400" selected>100 KB</option>
+                        <option value="1048576">1 MB</option>
+                        <option value="5242880">5 MB</option>
+                    </select>
+                    <button class="btn btn-primary" id="confirmFetchLogs" style="margin-left: 12px;">Fetch</button>
+                </div>
+                <pre id="logTailViewer" style="margin-top: 12px; max-height: 60vh; overflow: auto; background: #111; color: #ddd; padding: 12px; font-size: 0.75rem; border-radius: 4px; white-space: pre-wrap;"></pre>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="closeFetchLogsBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Notification -->
     <div id="toast" class="toast"></div>
 
@@ -958,6 +1017,6 @@
         <div class="spinner"></div>
     </div>
 
-    <script src="/js/app.js?v=12"></script>
+    <script src="/js/app.js?v=13"></script>
 </body>
 </html>

@@ -26,6 +26,7 @@ const state = {
     playlists: [],
     clients: [],
     schedules: [],
+    latestTelemetry: {},
     currentPlaylist: null,
     stats: {
         mediaCount: 0,
@@ -1226,8 +1227,15 @@ async function loadClients() {
     emptyEl.style.display = 'none';
 
     try {
-        const clients = await clientAPI.list();
+        // Fetch clients and the latest telemetry snapshot in parallel.
+        // Telemetry is best-effort: if the endpoint fails (e.g. older clients
+        // never reported), the badges simply won't render.
+        const [clients, latestTelemetry] = await Promise.all([
+            clientAPI.list(),
+            apiCall('/telemetry/clients/latest').catch(() => ({})),
+        ]);
         state.clients = clients || [];
+        state.latestTelemetry = latestTelemetry || {};
         renderClientsGrid(clients || []);
         updateClientStats(clients || []);
         loadPreviews(clients || []);
@@ -1236,6 +1244,78 @@ async function loadClients() {
         showToast('Failed to load clients', 'error');
         gridEl.innerHTML = '<div class="empty-state"><p>Failed to load clients</p></div>';
     }
+}
+
+// ===== Telemetry helpers (shared between badges and detail modal) =====
+
+const TELEMETRY_THRESHOLDS = {
+    diskWarnPctFree: 10,
+    diskCritPctFree: 5,
+    cpuWarn: 90,
+    tempWarn: 85,
+};
+
+function diskPctFree(disk) {
+    if (!disk || !disk.total_bytes) return 100;
+    return ((disk.total_bytes - disk.used_bytes) / disk.total_bytes) * 100;
+}
+
+function maxDiskUsedPct(disks) {
+    if (!disks || !disks.length) return null;
+    let max = 0;
+    for (const d of disks) {
+        if (!d.total_bytes) continue;
+        const used = (d.used_bytes / d.total_bytes) * 100;
+        if (used > max) max = used;
+    }
+    return max;
+}
+
+function maxTempCelsius(temps) {
+    if (!temps || !temps.length) return null;
+    return temps.reduce((m, t) => (t.celsius > m ? t.celsius : m), -Infinity);
+}
+
+function diskBadgeClass(disks) {
+    if (!disks || !disks.length) return 'normal';
+    const minFree = disks.reduce((m, d) => Math.min(m, diskPctFree(d)), 100);
+    if (minFree <= TELEMETRY_THRESHOLDS.diskCritPctFree) return 'critical';
+    if (minFree <= TELEMETRY_THRESHOLDS.diskWarnPctFree) return 'warning';
+    return 'normal';
+}
+
+function cpuBadgeClass(cpu_pct) {
+    if (cpu_pct >= TELEMETRY_THRESHOLDS.cpuWarn) return 'warning';
+    return 'normal';
+}
+
+function tempBadgeClass(temps) {
+    const max = maxTempCelsius(temps);
+    if (max === null) return 'normal';
+    if (max >= TELEMETRY_THRESHOLDS.tempWarn) return 'warning';
+    return 'normal';
+}
+
+function renderTelemetryBadges(t) {
+    if (!t) return '';
+    const usedPct = maxDiskUsedPct(t.disks);
+    const maxTemp = maxTempCelsius(t.temps);
+    const badges = [];
+    badges.push(
+        `<span class="telemetry-badge ${diskBadgeClass(t.disks)}" title="Highest disk usage across mounts">DSK ${usedPct !== null ? usedPct.toFixed(0) + '%' : '–'}</span>`
+    );
+    badges.push(
+        `<span class="telemetry-badge ${cpuBadgeClass(t.cpu_pct)}" title="Most recent CPU usage">CPU ${(t.cpu_pct || 0).toFixed(0)}%</span>`
+    );
+    if (maxTemp !== null) {
+        badges.push(
+            `<span class="telemetry-badge ${tempBadgeClass(t.temps)}" title="Highest reported sensor temp">${maxTemp.toFixed(0)}°C</span>`
+        );
+    }
+    if (t.mpv && t.mpv.alive === false) {
+        badges.push(`<span class="telemetry-badge critical" title="mpv not responding">mpv✗</span>`);
+    }
+    return `<div class="telemetry-badges">${badges.join('')}</div>`;
 }
 
 function updateClientStats(clients) {
@@ -1265,16 +1345,18 @@ function renderClientsGrid(clients) {
     gridEl.innerHTML = clients.map(client => {
         const statusClass = client.status || 'offline';
         const assignedPlaylist = state.playlists.find(p => p.id === client.assigned_playlist_id);
+        const telemetry = state.latestTelemetry ? state.latestTelemetry[client.id] : null;
 
         return `
             <div class="client-card">
                 <div class="client-header">
-                    <h3 class="client-name">${client.name || client.id}</h3>
+                    <h3 class="client-name clickable" data-client-id="${client.id}" data-client-name="${client.name || client.id}">${client.name || client.id}</h3>
                     <div class="client-status">
                         <span class="status-indicator ${statusClass}"></span>
                         <span>${statusClass}</span>
                     </div>
                 </div>
+                ${renderTelemetryBadges(telemetry)}
                 <div class="client-info">
                     <div class="info-row">
                         <span class="info-label">Client ID:</span>
@@ -1290,6 +1372,9 @@ function renderClientsGrid(clients) {
                     </div>
                 </div>
                 <div class="client-actions">
+                    <button class="btn btn-sm btn-secondary client-detail-btn" data-client-id="${client.id}" data-client-name="${client.name || client.id}">
+                        Details
+                    </button>
                     <button class="btn btn-sm btn-secondary client-control-btn" data-client-id="${client.id}">
                         Controls
                     </button>
@@ -1306,6 +1391,12 @@ function renderClientsGrid(clients) {
     });
     gridEl.querySelectorAll('.client-assign-btn').forEach(btn => {
         btn.addEventListener('click', () => openAssignPlaylistModal(btn.dataset.clientId, btn.dataset.clientName));
+    });
+    gridEl.querySelectorAll('.client-detail-btn').forEach(btn => {
+        btn.addEventListener('click', () => openClientDetailModal(btn.dataset.clientId, btn.dataset.clientName));
+    });
+    gridEl.querySelectorAll('.client-name.clickable').forEach(el => {
+        el.addEventListener('click', () => openClientDetailModal(el.dataset.clientId, el.dataset.clientName));
     });
 }
 
@@ -1361,6 +1452,230 @@ function initAssignPlaylistModal() {
         } catch (error) {
             console.error('Failed to assign playlist:', error);
             showToast('Failed to assign playlist', 'error');
+        }
+    });
+}
+
+// ===== Client Detail Modal (telemetry charts + log events) =====
+
+const clientDetailState = {
+    clientId: null,
+    clientName: null,
+    charts: {},  // canvasId -> Chart instance
+};
+
+function destroyDetailCharts() {
+    for (const id of Object.keys(clientDetailState.charts)) {
+        try { clientDetailState.charts[id].destroy(); } catch (e) { /* noop */ }
+    }
+    clientDetailState.charts = {};
+}
+
+function makeLineChart(canvasId, label, points, color) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+    if (clientDetailState.charts[canvasId]) {
+        clientDetailState.charts[canvasId].destroy();
+    }
+    clientDetailState.charts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: points.map(p => new Date(p.x).toLocaleTimeString()),
+            datasets: [{
+                label,
+                data: points.map(p => p.y),
+                borderColor: color,
+                backgroundColor: color + '22',
+                tension: 0.2,
+                pointRadius: 0,
+                fill: true,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: { legend: { display: true, position: 'top' } },
+            scales: {
+                y: { beginAtZero: true },
+                x: { ticks: { maxTicksLimit: 6 } },
+            },
+        },
+    });
+}
+
+async function openClientDetailModal(clientId, clientName) {
+    clientDetailState.clientId = clientId;
+    clientDetailState.clientName = clientName;
+
+    document.getElementById('clientDetailTitle').textContent = `${clientName} – telemetry`;
+
+    // Render summary section using the freshest data we have on hand.
+    const client = state.clients.find(c => c.id === clientId);
+    const telemetry = state.latestTelemetry ? state.latestTelemetry[clientId] : null;
+    document.getElementById('clientDetailSummary').innerHTML = renderClientDetailSummary(client, telemetry);
+
+    openModal('clientDetailModal');
+    destroyDetailCharts();
+
+    // Load 1h of time-series in parallel with the recent log events.
+    const fromMs = Date.now() - 3600 * 1000;
+    const toMs = Date.now();
+
+    try {
+        const [rangeRows, logEvents] = await Promise.all([
+            apiCall(`/telemetry/clients/${clientId}/range?from=${fromMs}&to=${toMs}&limit=2000`).catch(() => []),
+            // Logs endpoint is admin-only; viewers will get a 403 — render empty in that case.
+            apiCall(`/telemetry/clients/${clientId}/logs?limit=50`).catch(() => []),
+        ]);
+
+        renderTelemetryCharts(rangeRows || []);
+        renderRecentLogEvents(logEvents || []);
+    } catch (err) {
+        console.error('Failed to load client telemetry:', err);
+        showToast('Failed to load telemetry', 'error');
+    }
+}
+
+function renderClientDetailSummary(client, t) {
+    if (!client) return '<p>Client not found.</p>';
+    const playlist = state.playlists.find(p => p.id === client.assigned_playlist_id);
+    const memUsedPct = t && t.mem_total_mb
+        ? ((t.mem_used_mb / t.mem_total_mb) * 100).toFixed(0) + '%'
+        : '–';
+    const uptime = t && t.process ? t.process.client_uptime_s : null;
+    return `
+        <div class="info-row"><span class="info-label">Status:</span> <span>${client.status}</span></div>
+        <div class="info-row"><span class="info-label">Version:</span> <span>${client.version || '–'}</span></div>
+        <div class="info-row"><span class="info-label">Playlist:</span> <span>${playlist ? playlist.name : 'None'}</span></div>
+        <div class="info-row"><span class="info-label">Last seen:</span> <span>${client.last_seen ? formatRelativeTime(client.last_seen) : 'Never'}</span></div>
+        ${t ? `
+            <div class="info-row"><span class="info-label">CPU:</span> <span>${t.cpu_pct.toFixed(0)}%</span></div>
+            <div class="info-row"><span class="info-label">Memory:</span> <span>${t.mem_used_mb}/${t.mem_total_mb} MB (${memUsedPct})</span></div>
+            <div class="info-row"><span class="info-label">Uptime:</span> <span>${uptime !== null ? formatDuration(uptime) : '–'}</span></div>
+        ` : '<div class="info-row"><em>No telemetry yet.</em></div>'}
+    `;
+}
+
+function formatDuration(seconds) {
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+    return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
+}
+
+function renderTelemetryCharts(rows) {
+    const emptyEl = document.getElementById('clientDetailChartsEmpty');
+    const chartsEl = document.getElementById('clientDetailCharts');
+    if (!rows || rows.length === 0) {
+        emptyEl.style.display = '';
+        chartsEl.style.display = 'none';
+        return;
+    }
+    emptyEl.style.display = 'none';
+    chartsEl.style.display = '';
+
+    const cpuPoints = rows.map(r => ({ x: new Date(r.recorded_at).getTime(), y: r.cpu_pct }));
+    const memPoints = rows.map(r => ({
+        x: new Date(r.recorded_at).getTime(),
+        y: r.mem_total_mb ? (r.mem_used_mb / r.mem_total_mb) * 100 : 0,
+    }));
+    const diskPoints = rows.map(r => ({
+        x: new Date(r.recorded_at).getTime(),
+        y: maxDiskUsedPct(r.disks) || 0,
+    }));
+    const tempPoints = rows
+        .map(r => {
+            const max = maxTempCelsius(r.temps);
+            return max === null ? null : { x: new Date(r.recorded_at).getTime(), y: max };
+        })
+        .filter(p => p !== null);
+
+    makeLineChart('cpuChart', 'CPU %', cpuPoints, '#3b82f6');
+    makeLineChart('memChart', 'Memory %', memPoints, '#10b981');
+    makeLineChart('diskChart', 'Disk used %', diskPoints, '#f59e0b');
+    if (tempPoints.length) {
+        makeLineChart('tempChart', 'Max temp °C', tempPoints, '#ef4444');
+    } else {
+        // No temperature sensors — destroy any leftover chart and label the canvas.
+        if (clientDetailState.charts.tempChart) {
+            clientDetailState.charts.tempChart.destroy();
+            delete clientDetailState.charts.tempChart;
+        }
+        const canvas = document.getElementById('tempChart');
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('No temperature sensors reported', canvas.width / 2, canvas.height / 2);
+        }
+    }
+}
+
+function escapeHtml(s) {
+    return String(s)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
+}
+
+function renderRecentLogEvents(events) {
+    const el = document.getElementById('recentLogEvents');
+    if (!events || events.length === 0) {
+        el.innerHTML = '<div class="errors-list-empty">No recent log events.</div>';
+        return;
+    }
+    el.innerHTML = events.map(ev => `
+        <div class="error-row ${ev.level}">
+            <span class="ts">${new Date(ev.recorded_at).toLocaleString()}</span>
+            <span class="target">[${escapeHtml(ev.target)}]</span>
+            ${escapeHtml(ev.message)}
+        </div>
+    `).join('');
+}
+
+function initClientDetailModal() {
+    document.getElementById('closeClientDetailModal').addEventListener('click', () => {
+        destroyDetailCharts();
+        closeModal('clientDetailModal');
+    });
+    document.getElementById('closeClientDetailBtn').addEventListener('click', () => {
+        destroyDetailCharts();
+        closeModal('clientDetailModal');
+    });
+    document.getElementById('openFetchLogsBtn').addEventListener('click', () => {
+        document.getElementById('logTailViewer').textContent = '';
+        openModal('fetchLogsModal');
+    });
+}
+
+// ===== Fetch Logs Modal (admin-only) =====
+
+function initFetchLogsModal() {
+    document.getElementById('closeFetchLogsModal').addEventListener('click', () => closeModal('fetchLogsModal'));
+    document.getElementById('closeFetchLogsBtn').addEventListener('click', () => closeModal('fetchLogsModal'));
+    document.getElementById('confirmFetchLogs').addEventListener('click', async () => {
+        const sizeEl = document.getElementById('logTailSize');
+        const viewer = document.getElementById('logTailViewer');
+        const maxBytes = parseInt(sizeEl.value, 10);
+        const clientId = clientDetailState.clientId;
+        if (!clientId) {
+            showToast('No client selected', 'error');
+            return;
+        }
+        viewer.textContent = 'Fetching logs from client…';
+        try {
+            const result = await apiCall(`/telemetry/clients/${clientId}/logs/fetch`, {
+                method: 'POST',
+                body: JSON.stringify({ max_bytes: maxBytes }),
+            });
+            viewer.textContent = (result && result.bytes) || '(no log data returned)';
+        } catch (err) {
+            console.error('Fetch logs failed:', err);
+            viewer.textContent = `Failed to fetch logs: ${err.message}`;
         }
     });
 }
@@ -2941,6 +3256,8 @@ function initApp() {
     // Initialize client functionality
     initRefreshClients();
     initAssignPlaylistModal();
+    initClientDetailModal();
+    initFetchLogsModal();
 
     // Initialize group functionality
     initGroupModals();

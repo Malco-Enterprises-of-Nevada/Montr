@@ -95,6 +95,17 @@ pub struct PlaybackState {
     pub is_image: bool,
 }
 
+/// Snapshot of mpv health metrics, queried by the telemetry subsystem.
+#[derive(Debug, Clone, Default)]
+pub struct MpvHealthStats {
+    /// Whether the mpv IPC socket accepted a connection just now.
+    pub alive: bool,
+    /// Cumulative dropped frame count reported by `decoder-frame-drop-count`.
+    pub dropped_frames: u64,
+    /// Best-effort string for the most recent decoder error (None if not exposed).
+    pub last_decoder_error: Option<String>,
+}
+
 /// Playback events emitted by the engine
 #[derive(Debug, Clone)]
 pub enum PlaybackEvent {
@@ -194,6 +205,37 @@ impl PlaybackEngine {
     async fn send_command(&self, command: &[serde_json::Value]) -> Result<serde_json::Value> {
         let msg = serde_json::json!({ "command": command });
         self.send_raw(&msg).await
+    }
+
+    /// Query the current mpv health stats for telemetry reporting.
+    ///
+    /// This is best-effort: if mpv is unreachable we report `alive: false` with
+    /// zero counters. If it's alive but a property query fails (e.g. mpv doesn't
+    /// expose `decoder-frame-drop-count` for the current file), the affected
+    /// field stays at its default. Never returns an error.
+    pub async fn query_health_stats(&self) -> MpvHealthStats {
+        let alive = tokio::net::UnixStream::connect(&self.ipc_path)
+            .await
+            .is_ok();
+        if !alive {
+            return MpvHealthStats::default();
+        }
+
+        let dropped_frames = self
+            .send_command(&[
+                serde_json::json!("get_property"),
+                serde_json::json!("decoder-frame-drop-count"),
+            ])
+            .await
+            .ok()
+            .and_then(|r| r.get("data").and_then(|d| d.as_u64()))
+            .unwrap_or(0);
+
+        MpvHealthStats {
+            alive: true,
+            dropped_frames,
+            last_decoder_error: None,
+        }
     }
 
     /// Send a raw JSON message to mpv IPC socket

@@ -366,3 +366,77 @@ export interface NotificationHistory {
   error_message: string | null;
   sent_at: string;
 }
+
+// Client telemetry types
+export interface TelemetryDiskSample {
+  mount: string;
+  used_bytes: number;
+  total_bytes: number;
+}
+
+export interface TelemetryTempSample {
+  label: string;
+  celsius: number;
+}
+
+export interface TelemetryNetSample {
+  ws_reconnects: number;
+  last_rtt_ms: number | null;
+  bytes_dl_total: number;
+}
+
+export interface TelemetryMpvSample {
+  alive: boolean;
+  dropped_frames: number;
+  last_decoder_error: string | null;
+}
+
+export interface TelemetryProcessSample {
+  client_uptime_s: number;
+  mpv_uptime_s: number;
+  restart_count: number;
+}
+
+export interface ClientTelemetryRow {
+  id: number;
+  client_id: string;
+  cpu_pct: number;
+  mem_used_mb: number;
+  mem_total_mb: number;
+  disks: TelemetryDiskSample[];
+  temps: TelemetryTempSample[];
+  net: TelemetryNetSample;
+  mpv: TelemetryMpvSample;
+  process: TelemetryProcessSample;
+  recorded_at: string;
+}
+
+export interface CreateClientTelemetryInput {
+  client_id: string;
+  cpu_pct: number;
+  mem_used_mb: number;
+  mem_total_mb: number;
+  disks: TelemetryDiskSample[];
+  temps: TelemetryTempSample[];
+  net: TelemetryNetSample;
+  mpv: TelemetryMpvSample;
+  process: TelemetryProcessSample;
+}
+
+export type ClientLogLevel = 'warn' | 'error';
+
+export interface ClientLogEventRow {
+  id: number;
+  client_id: string;
+  level: ClientLogLevel;
+  target: string;
+  message: string;
+  recorded_at: string;
+}
+
+export interface CreateClientLogEventInput {
+  client_id: string;
+  level: ClientLogLevel;
+  target: string;
+  message: string;
+}

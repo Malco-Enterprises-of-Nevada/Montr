@@ -49,6 +49,11 @@ import {
   MediaFilter,
   ClientFilter,
   PlaylistItemWithMedia,
+  ClientTelemetryRow,
+  CreateClientTelemetryInput,
+  ClientLogEventRow,
+  CreateClientLogEventInput,
+  ClientLogLevel,
 } from '../types';
 import { MigrationRunner, MigrationExecutor } from '../migrations/runner';
 import { AdapterType } from '../migrations/types';
@@ -1020,6 +1025,119 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
   async getUserCount(): Promise<number> {
     return this.col('users').countDocuments();
+  }
+
+  // ── Client telemetry operations ─────────────────────────────────────────
+
+  async recordClientTelemetry(input: CreateClientTelemetryInput): Promise<ClientTelemetryRow> {
+    const id = await this.nextId('client_telemetry');
+    const doc = {
+      id,
+      client_id: input.client_id,
+      cpu_pct: input.cpu_pct,
+      mem_used_mb: input.mem_used_mb,
+      mem_total_mb: input.mem_total_mb,
+      disks: input.disks,
+      temps: input.temps,
+      net: input.net,
+      mpv: input.mpv,
+      process: input.process,
+      recorded_at: new Date().toISOString(),
+    };
+    await this.col('client_telemetry').insertOne(doc);
+    return doc as ClientTelemetryRow;
+  }
+
+  async getClientTelemetryRange(
+    clientId: string,
+    fromMs: number,
+    toMs: number,
+    limit: number = 1000
+  ): Promise<ClientTelemetryRow[]> {
+    const fromIso = new Date(fromMs).toISOString();
+    const toIso = new Date(toMs).toISOString();
+    const docs = await this.col('client_telemetry')
+      .find({ client_id: clientId, recorded_at: { $gte: fromIso, $lte: toIso } })
+      .sort({ recorded_at: 1 })
+      .limit(limit)
+      .toArray();
+    return docs.map((d) => this.docToObj<ClientTelemetryRow>(d)!);
+  }
+
+  async getClientTelemetryLatest(clientId: string): Promise<ClientTelemetryRow | null> {
+    const doc = await this.col('client_telemetry')
+      .find({ client_id: clientId })
+      .sort({ recorded_at: -1 })
+      .limit(1)
+      .next();
+    return this.docToObj<ClientTelemetryRow>(doc);
+  }
+
+  async getAllClientTelemetryLatest(): Promise<Record<string, ClientTelemetryRow>> {
+    const results = await this.col('client_telemetry')
+      .aggregate([
+        { $sort: { recorded_at: -1 } },
+        {
+          $group: {
+            _id: '$client_id',
+            doc: { $first: '$$ROOT' },
+          },
+        },
+      ])
+      .toArray();
+    const out: Record<string, ClientTelemetryRow> = {};
+    for (const r of results) {
+      const row = this.docToObj<ClientTelemetryRow>(r.doc as Document);
+      if (row) out[row.client_id] = row;
+    }
+    return out;
+  }
+
+  async recordClientLogEvent(input: CreateClientLogEventInput): Promise<ClientLogEventRow> {
+    const id = await this.nextId('client_log_events');
+    const doc = {
+      id,
+      client_id: input.client_id,
+      level: input.level,
+      target: input.target,
+      message: input.message,
+      recorded_at: new Date().toISOString(),
+    };
+    await this.col('client_log_events').insertOne(doc);
+    return doc as ClientLogEventRow;
+  }
+
+  async getClientLogEvents(
+    clientId: string,
+    level?: ClientLogLevel,
+    limit: number = 100
+  ): Promise<ClientLogEventRow[]> {
+    const query: Record<string, unknown> = { client_id: clientId };
+    if (level) query.level = level;
+    const docs = await this.col('client_log_events')
+      .find(query)
+      .sort({ recorded_at: -1 })
+      .limit(limit)
+      .toArray();
+    return docs.map((d) => this.docToObj<ClientLogEventRow>(d)!);
+  }
+
+  async deleteOldClientTelemetry(olderThanDays: number): Promise<number> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - olderThanDays);
+    const result = await this.col('client_telemetry').deleteMany({
+      recorded_at: { $lt: cutoff.toISOString() },
+    });
+    return result.deletedCount;
+  }
+
+  async deleteOldClientLogEvents(olderThanDays: number): Promise<number> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - olderThanDays);
+    const result = await this.col('client_log_events').deleteMany({
+      recorded_at: { $lt: cutoff.toISOString() },
+    });
+    return result.deletedCount;
   }
 
   getMigrationExecutor(): MigrationExecutor {

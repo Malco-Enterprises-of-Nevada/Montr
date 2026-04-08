@@ -92,9 +92,88 @@ export interface AdminRegisterMessage {
 }
 
 /**
+ * Per-disk telemetry sample
+ */
+export interface TelemetryDiskSample {
+  mount: string;
+  used_bytes: number;
+  total_bytes: number;
+}
+
+/**
+ * Per-sensor temperature sample
+ */
+export interface TelemetryTempSample {
+  label: string;
+  celsius: number;
+}
+
+/**
+ * Network telemetry sub-sample
+ */
+export interface TelemetryNetSample {
+  ws_reconnects: number;
+  last_rtt_ms: number | null;
+  bytes_dl_total: number;
+}
+
+/**
+ * mpv health telemetry sub-sample
+ */
+export interface TelemetryMpvSample {
+  alive: boolean;
+  dropped_frames: number;
+  last_decoder_error: string | null;
+}
+
+/**
+ * Process-level telemetry sub-sample
+ */
+export interface TelemetryProcessSample {
+  client_uptime_s: number;
+  mpv_uptime_s: number;
+  restart_count: number;
+}
+
+/**
+ * Periodic telemetry message (60s cadence)
+ */
+export interface TelemetryMessage {
+  type: 'telemetry';
+  clientId: string;
+  cpu_pct: number;
+  mem_used_mb: number;
+  mem_total_mb: number;
+  disks: TelemetryDiskSample[];
+  temps: TelemetryTempSample[];
+  net: TelemetryNetSample;
+  mpv: TelemetryMpvSample;
+  process: TelemetryProcessSample;
+  timestamp: number;
+}
+
+/**
+ * Auto-pushed log event message (warn/error only)
+ */
+export interface LogEventMessage {
+  type: 'log_event';
+  clientId: string;
+  level: 'warn' | 'error';
+  target: string;
+  message: string;
+  timestamp: number;
+}
+
+/**
  * Union type of all client-to-server messages (from playback clients)
  */
-export type ClientMessage = RegisterMessage | StatusUpdateMessage | HeartbeatMessage | ErrorMessage;
+export type ClientMessage =
+  | RegisterMessage
+  | StatusUpdateMessage
+  | HeartbeatMessage
+  | ErrorMessage
+  | TelemetryMessage
+  | LogEventMessage;
 
 // ===========================
 // Server → Client Messages
@@ -131,7 +210,8 @@ export type CommandType =
   | 'skip'
   | 'previous'
   | 'volume'
-  | 'seek';
+  | 'seek'
+  | 'fetch_logs';
 
 /**
  * Command message with optional arguments
@@ -288,6 +368,63 @@ export const errorMessageSchema = z.object({
 });
 
 /**
+ * Schemas for telemetry sub-objects
+ */
+const telemetryDiskSchema = z.object({
+  mount: z.string(),
+  used_bytes: z.number().min(0),
+  total_bytes: z.number().min(0),
+});
+const telemetryTempSchema = z.object({
+  label: z.string(),
+  celsius: z.number(),
+});
+const telemetryNetSchema = z.object({
+  ws_reconnects: z.number().min(0),
+  last_rtt_ms: z.number().min(0).nullable(),
+  bytes_dl_total: z.number().min(0),
+});
+const telemetryMpvSchema = z.object({
+  alive: z.boolean(),
+  dropped_frames: z.number().min(0),
+  last_decoder_error: z.string().nullable(),
+});
+const telemetryProcessSchema = z.object({
+  client_uptime_s: z.number().min(0),
+  mpv_uptime_s: z.number().min(0),
+  restart_count: z.number().min(0),
+});
+
+/**
+ * Schema for telemetry message
+ */
+export const telemetryMessageSchema = z.object({
+  type: z.literal('telemetry'),
+  clientId: z.string().uuid('Client ID must be a valid UUID'),
+  cpu_pct: z.number().min(0).max(100),
+  mem_used_mb: z.number().min(0),
+  mem_total_mb: z.number().min(0),
+  disks: z.array(telemetryDiskSchema),
+  temps: z.array(telemetryTempSchema),
+  net: telemetryNetSchema,
+  mpv: telemetryMpvSchema,
+  process: telemetryProcessSchema,
+  timestamp: z.number(),
+});
+
+/**
+ * Schema for log event message
+ */
+export const logEventMessageSchema = z.object({
+  type: z.literal('log_event'),
+  clientId: z.string().uuid('Client ID must be a valid UUID'),
+  level: z.enum(['warn', 'error']),
+  target: z.string(),
+  message: z.string(),
+  timestamp: z.number(),
+});
+
+/**
  * Schema for any client message
  */
 export const clientMessageSchema = z.discriminatedUnion('type', [
@@ -295,6 +432,8 @@ export const clientMessageSchema = z.discriminatedUnion('type', [
   statusUpdateMessageSchema,
   heartbeatMessageSchema,
   errorMessageSchema,
+  telemetryMessageSchema,
+  logEventMessageSchema,
 ]);
 
 // ===========================

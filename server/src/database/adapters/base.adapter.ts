@@ -46,6 +46,11 @@ import {
   PaginatedResult,
   MediaFilter,
   ClientFilter,
+  ClientTelemetryRow,
+  CreateClientTelemetryInput,
+  ClientLogEventRow,
+  CreateClientLogEventInput,
+  ClientLogLevel,
 } from '../types';
 
 export interface DatabaseAdapter {
@@ -165,6 +170,25 @@ export interface DatabaseAdapter {
   ): Promise<ApprovalLog>;
   getApprovalLogs(mediaId: number): Promise<ApprovalLog[]>;
   getPendingMedia(): Promise<MediaFile[]>;
+
+  // Client telemetry operations
+  recordClientTelemetry(input: CreateClientTelemetryInput): Promise<ClientTelemetryRow>;
+  getClientTelemetryRange(
+    clientId: string,
+    fromMs: number,
+    toMs: number,
+    limit?: number
+  ): Promise<ClientTelemetryRow[]>;
+  getClientTelemetryLatest(clientId: string): Promise<ClientTelemetryRow | null>;
+  getAllClientTelemetryLatest(): Promise<Record<string, ClientTelemetryRow>>;
+  recordClientLogEvent(input: CreateClientLogEventInput): Promise<ClientLogEventRow>;
+  getClientLogEvents(
+    clientId: string,
+    level?: ClientLogLevel,
+    limit?: number
+  ): Promise<ClientLogEventRow[]>;
+  deleteOldClientTelemetry(olderThanDays: number): Promise<number>;
+  deleteOldClientLogEvents(olderThanDays: number): Promise<number>;
 
   // User operations
   createUser(input: CreateUserInput): Promise<User>;

@@ -7,6 +7,7 @@ use crate::cache::checksum;
 use crate::error::{MontrError, Result};
 use crate::network::http::{DownloadOptions, HttpClient};
 use crate::network::PlaylistItem;
+use crate::state::AppState;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
@@ -41,6 +42,9 @@ pub struct CacheManager {
     cancel_token: CancellationToken,
     /// Optional API key for server authentication
     api_key: Option<String>,
+    /// Optional shared application state — when set, the manager bumps
+    /// `bytes_downloaded_total` after every successful download for telemetry.
+    app_state: Option<AppState>,
 }
 
 impl CacheManager {
@@ -56,12 +60,20 @@ impl CacheManager {
             download_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS)),
             cancel_token,
             api_key: None,
+            app_state: None,
         })
     }
 
     /// Set the API key for authenticated downloads
     pub fn with_api_key(mut self, api_key: Option<String>) -> Self {
         self.api_key = api_key;
+        self
+    }
+
+    /// Wire in shared application state so the manager can update telemetry
+    /// counters (e.g. cumulative bytes downloaded) after each download.
+    pub fn with_app_state(mut self, state: AppState) -> Self {
+        self.app_state = Some(state);
         self
     }
 
@@ -166,6 +178,15 @@ impl CacheManager {
                 path: final_path.clone(),
                 source: e,
             })?;
+
+        // Best-effort telemetry: bump the cumulative downloaded-bytes counter
+        // by the size of the file we just wrote. We tolerate stat failures
+        // since they only affect a metric, not correctness.
+        if let Some(ref state) = self.app_state {
+            if let Ok(meta) = fs::metadata(&final_path).await {
+                state.add_bytes_downloaded(meta.len()).await;
+            }
+        }
 
         tracing::info!("Successfully downloaded media {} to cache", media_id);
         Ok(final_path)
@@ -368,6 +389,7 @@ impl Clone for CacheManager {
             download_semaphore: self.download_semaphore.clone(),
             cancel_token: self.cancel_token.clone(),
             api_key: self.api_key.clone(),
+            app_state: self.app_state.clone(),
         }
     }
 }

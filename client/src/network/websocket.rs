@@ -191,6 +191,11 @@ impl WebSocketClient {
         self.state.read().await.is_operational()
     }
 
+    /// Returns the cumulative reconnect attempt count for telemetry reporting.
+    pub async fn reconnect_attempts(&self) -> u32 {
+        self.state.read().await.reconnect_attempts()
+    }
+
     /// Shutdown the client
     pub async fn shutdown(&self) {
         tracing::info!("Shutting down WebSocket client");

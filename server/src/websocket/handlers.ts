@@ -6,12 +6,15 @@
 import { getLogger } from '../utils/logger';
 import { clientService } from '../services/client.service';
 import { playlistService } from '../services/playlist.service';
+import { telemetryService } from '../services/telemetry.service';
 import { clientConnectionManager } from './client-manager';
 import {
   RegisterMessage,
   StatusUpdateMessage,
   HeartbeatMessage,
   ErrorMessage,
+  TelemetryMessage,
+  LogEventMessage,
   ExtendedWebSocket,
   PlaylistMediaItem,
 } from './types';
@@ -219,6 +222,86 @@ export async function handleError(_ws: ExtendedWebSocket, message: ErrorMessage)
     clientConnectionManager.updateHeartbeat(clientId);
   } catch (error) {
     logger.error(`Error handling error report from ${clientId}:`, error);
+  }
+}
+
+/**
+ * Handles client telemetry message (60s cadence sysinfo + mpv health snapshot).
+ * Persists the row, then evaluates rising-edge alerting thresholds.
+ */
+export async function handleTelemetry(
+  _ws: ExtendedWebSocket,
+  message: TelemetryMessage
+): Promise<void> {
+  const {
+    clientId,
+    cpu_pct,
+    mem_used_mb,
+    mem_total_mb,
+    disks,
+    temps,
+    net,
+    mpv,
+    process: proc,
+  } = message;
+
+  try {
+    if (!clientConnectionManager.isConnected(clientId)) {
+      logger.warn(`Received telemetry from unregistered client: ${clientId}`);
+      return;
+    }
+
+    const input = {
+      client_id: clientId,
+      cpu_pct,
+      mem_used_mb,
+      mem_total_mb,
+      disks,
+      temps,
+      net,
+      mpv,
+      process: proc,
+    };
+
+    await telemetryService.recordTelemetry(input);
+    await telemetryService.evaluateThresholds(input);
+
+    clientConnectionManager.updateHeartbeat(clientId);
+
+    logger.debug(
+      `Telemetry from ${clientId}: cpu=${cpu_pct.toFixed(0)}% mem=${mem_used_mb}/${mem_total_mb}MB disks=${disks.length}`
+    );
+  } catch (error) {
+    logger.error(`Error handling telemetry for ${clientId}:`, error);
+  }
+}
+
+/**
+ * Handles auto-pushed log events (warn/error only). Persists for the dashboard
+ * "Recent log events" panel; rate is unbounded by design.
+ */
+export async function handleLogEvent(
+  _ws: ExtendedWebSocket,
+  message: LogEventMessage
+): Promise<void> {
+  const { clientId, level, target, message: msg } = message;
+
+  try {
+    if (!clientConnectionManager.isConnected(clientId)) {
+      logger.warn(`Received log event from unregistered client: ${clientId}`);
+      return;
+    }
+
+    await telemetryService.recordLogEvent({
+      client_id: clientId,
+      level,
+      target,
+      message: msg,
+    });
+
+    logger.debug(`Log event from ${clientId} [${level}] ${target}: ${msg}`);
+  } catch (error) {
+    logger.error(`Error handling log event for ${clientId}:`, error);
   }
 }
 
