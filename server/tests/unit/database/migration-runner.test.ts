@@ -43,7 +43,7 @@ describe('MigrationRunner', () => {
 
   it('should create all expected tables', async () => {
     const executor = adapter.getMigrationExecutor();
-    for (const table of ['media_files', 'playlists', 'playlist_items', 'clients', 'client_status', 'system_state', 'client_groups', 'client_group_members', 'schedules', 'client_playlists', 'playback_logs', 'notification_rules', 'notification_history', 'approval_logs', 'users']) {
+    for (const table of ['media_files', 'playlists', 'playlist_items', 'clients', 'client_status', 'system_state', 'client_groups', 'client_group_members', 'schedules', 'client_playlists', 'playback_logs', 'notification_rules', 'notification_history', 'approval_logs', 'users', 'client_telemetry', 'client_log_events']) {
       const exists = await executor.tableExists(table);
       expect(exists).toBe(true);
     }
@@ -55,7 +55,7 @@ describe('MigrationRunner', () => {
       "SELECT value FROM system_state WHERE key = 'schema_version'",
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0].value).toBe('1.9.0');
+    expect(rows[0].value).toBe('1.10.0');
   });
 
   it('should not re-run already applied migrations', async () => {
@@ -67,8 +67,8 @@ describe('MigrationRunner', () => {
     const rows = await executor.querySql!<{ version: string }>(
       'SELECT version FROM schema_migrations',
     );
-    // Should still have exactly ten migrations (001-010)
-    expect(rows).toHaveLength(10);
+    // Should still have exactly eleven migrations (001-011)
+    expect(rows).toHaveLength(11);
   });
 
   it('should report migration status', async () => {
@@ -93,10 +93,12 @@ describe('MigrationRunner', () => {
     await baselineAdapter.connect();
 
     const executor = baselineAdapter.getMigrationExecutor();
+    // Order by rowid so we read insertion order, not the lexicographic order
+    // SQLite would otherwise use from the unique index on `version`.
     const rows = await executor.querySql!<{ version: string }>(
-      'SELECT version FROM schema_migrations',
+      'SELECT version FROM schema_migrations ORDER BY rowid',
     );
-    expect(rows).toHaveLength(10);
+    expect(rows).toHaveLength(11);
     expect(rows[0].version).toBe('1.0.0');
     expect(rows[1].version).toBe('1.1.0');
     expect(rows[2].version).toBe('1.2.0');
@@ -107,6 +109,7 @@ describe('MigrationRunner', () => {
     expect(rows[7].version).toBe('1.7.0');
     expect(rows[8].version).toBe('1.8.0');
     expect(rows[9].version).toBe('1.9.0');
+    expect(rows[10].version).toBe('1.10.0');
 
     await baselineAdapter.disconnect();
     fs.rmSync(baselineDir, { recursive: true, force: true });

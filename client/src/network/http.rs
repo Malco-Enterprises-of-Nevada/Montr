@@ -384,6 +384,40 @@ impl HttpClient {
         }
     }
 
+    /// Upload a tail of the local log file to the server in response to a
+    /// `fetch_logs` command. The body is raw text/plain (no JSON wrapper) and
+    /// the request is correlated with the originating dashboard request via
+    /// the `X-Request-Id` header.
+    pub async fn upload_logs(
+        &self,
+        client_id: &str,
+        request_id: &str,
+        log_bytes: Vec<u8>,
+        api_key: Option<&str>,
+    ) -> Result<()> {
+        let url = format!("{}/api/clients/{}/logs/upload", self.server_url, client_id);
+
+        let mut req = self
+            .client
+            .post(&url)
+            .header("Content-Type", "text/plain; charset=utf-8")
+            .header("X-Request-Id", request_id)
+            .body(log_bytes);
+
+        if let Some(key) = api_key {
+            req = req.header("X-API-Key", key);
+        }
+
+        match req.timeout(Duration::from_secs(15)).send().await {
+            Ok(resp) if resp.status().is_success() => Ok(()),
+            Ok(resp) => Err(MontrError::HttpRequest(format!(
+                "Log upload returned {}",
+                resp.status()
+            ))),
+            Err(e) => Err(MontrError::HttpRequest(format!("Log upload failed: {}", e))),
+        }
+    }
+
     /// Report playback end to analytics API
     pub async fn report_playback_end(
         &self,

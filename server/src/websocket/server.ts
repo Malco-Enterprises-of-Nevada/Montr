@@ -9,7 +9,14 @@ import { getLogger } from '../utils/logger';
 import { config } from '../config/config';
 import { clientConnectionManager } from './client-manager';
 import { ExtendedWebSocket, parseClientMessage, ClientMessage } from './types';
-import { handleRegister, handleStatusUpdate, handleHeartbeat, handleError } from './handlers';
+import {
+  handleRegister,
+  handleStatusUpdate,
+  handleHeartbeat,
+  handleError,
+  handleTelemetry,
+  handleLogEvent,
+} from './handlers';
 
 const logger = getLogger();
 
@@ -188,6 +195,14 @@ export class MontrWebSocketServer {
 
       case 'error':
         await handleError(ws, message);
+        break;
+
+      case 'telemetry':
+        await handleTelemetry(ws, message);
+        break;
+
+      case 'log_event':
+        await handleLogEvent(ws, message);
         break;
 
       default:

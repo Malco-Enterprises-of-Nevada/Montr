@@ -96,15 +96,22 @@ export class AnalyticsService {
   }
 
   /**
-   * Cleans up old playback logs
+   * Cleans up old playback logs, client telemetry, and client log events.
+   * All three tables share the same retention policy.
    */
   async cleanupOldLogs(retentionDays: number = 90): Promise<number> {
     const db = await getDatabase();
-    const deleted = await db.deleteOldPlaybackLogs(retentionDays);
-    if (deleted > 0) {
-      logger.info(`Cleaned up ${deleted} playback logs older than ${retentionDays} days`);
+    const deletedPlayback = await db.deleteOldPlaybackLogs(retentionDays);
+    const deletedTelemetry = await db.deleteOldClientTelemetry(retentionDays);
+    const deletedLogEvents = await db.deleteOldClientLogEvents(retentionDays);
+    const total = deletedPlayback + deletedTelemetry + deletedLogEvents;
+    if (total > 0) {
+      logger.info(
+        `Cleaned up ${deletedPlayback} playback logs, ${deletedTelemetry} telemetry rows, ` +
+          `${deletedLogEvents} log events older than ${retentionDays} days`
+      );
     }
-    return deleted;
+    return total;
   }
 }
 

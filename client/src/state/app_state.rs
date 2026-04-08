@@ -7,6 +7,7 @@ use crate::error::Result;
 use crate::network::PlaylistItem;
 use crate::playback::queue::PlaylistQueue;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
 
 /// Saved playlist state for the interrupt stack
@@ -39,6 +40,14 @@ struct AppStateInner {
     last_error: Option<String>,
     /// Stack of interrupted playlists (supports nested interrupts)
     interrupt_stack: Vec<InterruptedPlaylist>,
+    /// Telemetry counters (incremented by various subsystems, read by TelemetryReporter).
+    /// `ws_reconnect_count` is read on demand from the WebSocketClient so we don't
+    /// duplicate state — the rest are owned here because no other subsystem tracks them.
+    last_ws_rtt_ms: Option<u32>,
+    bytes_downloaded_total: u64,
+    mpv_restart_count: u32,
+    /// When the client process started — used to compute uptime in telemetry samples
+    process_started_at: Instant,
 }
 
 /// Shared application state
@@ -63,11 +72,57 @@ impl AppState {
             is_playing: false,
             last_error: None,
             interrupt_stack: Vec::new(),
+            last_ws_rtt_ms: None,
+            bytes_downloaded_total: 0,
+            mpv_restart_count: 0,
+            process_started_at: Instant::now(),
         };
 
         Self {
             inner: Arc::new(RwLock::new(inner)),
         }
+    }
+
+    // ── Telemetry counters ──────────────────────────────────────────────────
+
+    /// Get the last measured WebSocket round-trip time, in milliseconds.
+    pub async fn last_ws_rtt_ms(&self) -> Option<u32> {
+        self.inner.read().await.last_ws_rtt_ms
+    }
+
+    /// Update the last measured WebSocket round-trip time.
+    pub async fn set_last_ws_rtt_ms(&self, rtt: Option<u32>) {
+        self.inner.write().await.last_ws_rtt_ms = rtt;
+    }
+
+    /// Get the cumulative bytes downloaded by the cache subsystem.
+    pub async fn bytes_downloaded_total(&self) -> u64 {
+        self.inner.read().await.bytes_downloaded_total
+    }
+
+    /// Add downloaded bytes to the running total. Called by `cache::downloader`.
+    pub async fn add_bytes_downloaded(&self, bytes: u64) {
+        self.inner.write().await.bytes_downloaded_total += bytes;
+    }
+
+    /// Get the number of mpv restarts since process start.
+    pub async fn mpv_restart_count(&self) -> u32 {
+        self.inner.read().await.mpv_restart_count
+    }
+
+    /// Increment the mpv restart counter. Called by `playback::engine` when respawning.
+    pub async fn increment_mpv_restart_count(&self) {
+        self.inner.write().await.mpv_restart_count += 1;
+    }
+
+    /// Get the elapsed seconds since the client process started.
+    pub async fn client_uptime_s(&self) -> u64 {
+        self.inner
+            .read()
+            .await
+            .process_started_at
+            .elapsed()
+            .as_secs()
     }
 
     // ========================================================================

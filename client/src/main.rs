@@ -83,6 +83,7 @@ async fn main() -> Result<()> {
 async fn run_client(config: config::Config) -> Result<()> {
     use montr_client::{
         cache::{CacheManager, LruCacheManager},
+        logging::take_log_event_receiver,
         network::{
             protocol::{ClientCapabilities, ClientMessage},
             websocket::WebSocketClient,
@@ -91,6 +92,7 @@ async fn run_client(config: config::Config) -> Result<()> {
         playback::engine::PlaybackEngine,
         state::{app_state::AppState, coordinator::StateCoordinator},
         status::StatusReporter,
+        telemetry::TelemetryReporter,
     };
     use std::sync::Arc;
     use tokio::sync::mpsc;
@@ -178,6 +180,12 @@ async fn run_client(config: config::Config) -> Result<()> {
         config.client.name.clone(),
     ));
 
+    // Now that AppState exists, give the cache manager a handle so it can
+    // bump the bytes-downloaded telemetry counter after each download. We
+    // rebuild it via clone-and-replace because CacheManager is held in an Arc.
+    let cache_manager =
+        Arc::new(CacheManager::clone(&cache_manager).with_app_state((*app_state).clone()));
+
     // ========================================================================
     // Initialize Playback Engine
     // ========================================================================
@@ -233,7 +241,8 @@ async fn run_client(config: config::Config) -> Result<()> {
         cancel_token.clone(),
         config.playback.preload_next_items,
         config.server.api_key.clone(),
-    );
+    )
+    .with_log_file(config.system.log_file.clone());
 
     let coordinator_tx = coordinator.message_sender();
 
@@ -332,6 +341,63 @@ async fn run_client(config: config::Config) -> Result<()> {
 
     // Start reporter tasks
     let (heartbeat_handle, status_handle) = status_reporter.start();
+
+    // ========================================================================
+    // Initialize Telemetry Reporter (60s system metrics)
+    // ========================================================================
+    tracing::info!("Initializing telemetry reporter");
+    let (telemetry_ws_tx, mut telemetry_ws_rx) = mpsc::unbounded_channel();
+
+    let telemetry_reporter = Arc::new(TelemetryReporter::new(
+        app_state.clone(),
+        telemetry_ws_tx,
+        ws_client.clone(),
+        playback_engine.clone(),
+        montr_client::telemetry::reporter::DEFAULT_TELEMETRY_INTERVAL_SECS,
+        cancel_token.clone(),
+    ));
+
+    let ws_client_for_telemetry = ws_client.clone();
+    let _telemetry_forward_handle = tokio::spawn(async move {
+        while let Some(msg) = telemetry_ws_rx.recv().await {
+            if let Err(e) = ws_client_for_telemetry.send(msg).await {
+                tracing::error!("Failed to forward telemetry message: {}", e);
+            }
+        }
+    });
+
+    let _telemetry_handle = telemetry_reporter.start();
+
+    // ========================================================================
+    // Log Event Forwarder (auto-pushed WARN/ERROR lines)
+    // ========================================================================
+    if let Some(mut log_rx) = take_log_event_receiver() {
+        let ws_client_for_logs = ws_client.clone();
+        let client_id_for_logs = config.client.id.clone();
+        let cancel_for_logs = cancel_token.clone();
+        let _log_forward_handle = tokio::spawn(async move {
+            tracing::info!("Log event forwarder started");
+            loop {
+                tokio::select! {
+                    _ = cancel_for_logs.cancelled() => break,
+                    Some(ev) = log_rx.recv() => {
+                        let msg = ClientMessage::log_event(
+                            client_id_for_logs.clone(),
+                            ev.level.to_string(),
+                            ev.target,
+                            ev.message,
+                        );
+                        if let Err(e) = ws_client_for_logs.send(msg).await {
+                            tracing::trace!("Failed to forward log event: {}", e);
+                        }
+                    }
+                    else => break,
+                }
+            }
+        });
+    } else {
+        tracing::warn!("Log event channel was not installed; logs will not be auto-pushed");
+    }
 
     // ========================================================================
     // Preview Screenshot Task

@@ -68,6 +68,9 @@ pub struct StateCoordinator {
     current_playback_log_id: Option<u64>,
     /// Time when current media started playing
     playback_start_time: Option<tokio::time::Instant>,
+    /// Path to the local log file — used by the `fetch_logs` command handler
+    /// to read a tail and upload it to the server.
+    log_file: Option<std::path::PathBuf>,
 }
 
 impl StateCoordinator {
@@ -97,7 +100,15 @@ impl StateCoordinator {
             api_key,
             current_playback_log_id: None,
             playback_start_time: None,
+            log_file: None,
         }
+    }
+
+    /// Set the path of the local log file. When configured, the coordinator
+    /// can answer `fetch_logs` commands by reading a tail and uploading it.
+    pub fn with_log_file(mut self, path: std::path::PathBuf) -> Self {
+        self.log_file = Some(path);
+        self
     }
 
     /// Get a message sender for other subsystems to send messages
@@ -319,6 +330,27 @@ impl StateCoordinator {
                                 })?;
                         }
                     }
+                    "fetch_logs" => {
+                        let max_bytes = cmd
+                            .args
+                            .as_ref()
+                            .and_then(|a| a.get("max_bytes"))
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(102_400) as usize;
+                        let request_id = cmd
+                            .args
+                            .as_ref()
+                            .and_then(|a| a.get("request_id"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let Some(request_id) = request_id else {
+                            tracing::warn!("fetch_logs command missing request_id");
+                            return Ok(());
+                        };
+                        if let Err(e) = self.handle_fetch_logs(&request_id, max_bytes).await {
+                            tracing::error!("fetch_logs handler failed: {}", e);
+                        }
+                    }
                     _ => {
                         tracing::warn!("Unknown command: {}", cmd.command);
                     }
@@ -531,6 +563,68 @@ impl StateCoordinator {
                 tracing::warn!("No media files available, playback not started");
             }
         }
+        Ok(())
+    }
+
+    /// Read the tail of the local log file and upload it to the server in
+    /// response to a `fetch_logs` command.
+    ///
+    /// Bounded by `max_bytes`. Returns Err on file/network failure but the
+    /// caller logs and swallows it — fetch_logs is best-effort.
+    async fn handle_fetch_logs(&self, request_id: &str, max_bytes: usize) -> Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+        let log_path = self
+            .log_file
+            .as_ref()
+            .ok_or_else(|| MontrError::Playback("fetch_logs: log_file not configured".into()))?;
+
+        let mut file =
+            tokio::fs::File::open(log_path)
+                .await
+                .map_err(|e| MontrError::FileAccess {
+                    path: log_path.clone(),
+                    source: e,
+                })?;
+
+        let len = file
+            .metadata()
+            .await
+            .map_err(|e| MontrError::FileAccess {
+                path: log_path.clone(),
+                source: e,
+            })?
+            .len() as usize;
+
+        let to_read = len.min(max_bytes);
+        let start = len.saturating_sub(to_read);
+
+        file.seek(std::io::SeekFrom::Start(start as u64))
+            .await
+            .map_err(|e| MontrError::FileAccess {
+                path: log_path.clone(),
+                source: e,
+            })?;
+
+        let mut buf = Vec::with_capacity(to_read);
+        file.read_to_end(&mut buf)
+            .await
+            .map_err(|e| MontrError::FileAccess {
+                path: log_path.clone(),
+                source: e,
+            })?;
+
+        let client_id = self.state.client_id().await;
+        let api_key = self.api_key.as_deref();
+        self.http_client
+            .upload_logs(&client_id, request_id, buf, api_key)
+            .await?;
+
+        tracing::info!(
+            "Uploaded {} bytes of logs (request_id={})",
+            to_read,
+            request_id
+        );
         Ok(())
     }
 

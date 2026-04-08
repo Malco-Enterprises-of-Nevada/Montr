@@ -15,6 +15,7 @@ import clientRoutes from './api/routes/client.routes';
 import groupRoutes from './api/routes/group.routes';
 import scheduleRoutes from './api/routes/schedule.routes';
 import analyticsRoutes from './api/routes/analytics.routes';
+import telemetryRoutes from './api/routes/telemetry.routes';
 import notificationRoutes from './api/routes/notification.routes';
 import authRoutes from './api/routes/auth.routes';
 import { requireAuth } from './api/middleware/jwt-auth';
@@ -144,6 +145,7 @@ class MontrServer {
     this.app.use('/api/groups', requireAuth(), groupRoutes);
     this.app.use('/api/schedules', requireAuth(), scheduleRoutes);
     this.app.use('/api/analytics', requireAuth(), analyticsRoutes);
+    this.app.use('/api/telemetry', requireAuth(), telemetryRoutes);
     this.app.use('/api/notifications', requireAuth(), notificationRoutes);
 
     // Auth routes (no API key required)

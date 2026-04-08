@@ -94,6 +94,16 @@ export const createMockDatabase = (): jest.Mocked<DatabaseAdapter> => ({
   getUptimeStats: jest.fn(),
   deleteOldPlaybackLogs: jest.fn(),
 
+  // Telemetry methods
+  recordClientTelemetry: jest.fn(),
+  getClientTelemetryRange: jest.fn().mockResolvedValue([]),
+  getClientTelemetryLatest: jest.fn().mockResolvedValue(null),
+  getAllClientTelemetryLatest: jest.fn().mockResolvedValue({}),
+  recordClientLogEvent: jest.fn(),
+  getClientLogEvents: jest.fn().mockResolvedValue([]),
+  deleteOldClientTelemetry: jest.fn().mockResolvedValue(0),
+  deleteOldClientLogEvents: jest.fn().mockResolvedValue(0),
+
   // Notification methods
   createNotificationRule: jest.fn(),
   getNotificationRuleById: jest.fn(),

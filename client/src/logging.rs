@@ -2,8 +2,91 @@ use crate::config::Config;
 use crate::error::{MontrError, Result};
 use std::fs;
 use std::path::Path;
-use tracing::Level;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use std::sync::OnceLock;
+use tokio::sync::mpsc;
+use tracing::field::{Field, Visit};
+use tracing::{Event, Level, Subscriber};
+use tracing_subscriber::layer::Context;
+use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+
+/// One-time channel created during logging init. The sender is held by
+/// `LogCapturingLayer`; the receiver is taken once by main.rs at startup so
+/// it can spawn the forwarder task that pushes events into the WS sender.
+static LOG_EVENT_RX: OnceLock<std::sync::Mutex<Option<mpsc::UnboundedReceiver<CapturedLogEvent>>>> =
+    OnceLock::new();
+
+/// A captured WARN/ERROR log line. Plain data so it can cross the channel
+/// without holding any tracing references.
+#[derive(Debug, Clone)]
+pub struct CapturedLogEvent {
+    pub level: &'static str,
+    pub target: String,
+    pub message: String,
+}
+
+/// Take ownership of the receiver side of the captured-log channel.
+///
+/// Returns `None` if the channel was never installed (e.g. logging didn't
+/// initialise the capturing layer) or if a previous caller already took it.
+pub fn take_log_event_receiver() -> Option<mpsc::UnboundedReceiver<CapturedLogEvent>> {
+    LOG_EVENT_RX
+        .get()
+        .and_then(|cell| cell.lock().ok().and_then(|mut g| g.take()))
+}
+
+/// tracing-subscriber layer that pushes WARN/ERROR events into an mpsc channel
+/// for shipping to the server.
+struct LogCapturingLayer {
+    tx: mpsc::UnboundedSender<CapturedLogEvent>,
+}
+
+#[derive(Default)]
+struct MessageVisitor {
+    message: String,
+}
+
+impl Visit for MessageVisitor {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.message = format!("{:?}", value);
+            // Strip the surrounding quotes that Debug adds for &str values.
+            if self.message.starts_with('"') && self.message.ends_with('"') {
+                self.message = self.message[1..self.message.len() - 1].to_string();
+            }
+        }
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "message" {
+            self.message = value.to_string();
+        }
+    }
+}
+
+impl<S> Layer<S> for LogCapturingLayer
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        let metadata = event.metadata();
+        let level = *metadata.level();
+        if level > Level::WARN {
+            return;
+        }
+        let mut visitor = MessageVisitor::default();
+        event.record(&mut visitor);
+        let _ = self.tx.send(CapturedLogEvent {
+            level: if level == Level::ERROR {
+                "error"
+            } else {
+                "warn"
+            },
+            target: metadata.target().to_string(),
+            message: visitor.message,
+        });
+    }
+}
 
 /// Initialize the logging system with dual output (console + file)
 ///
@@ -51,10 +134,17 @@ pub fn init_logging(config: &Config) -> Result<()> {
         .with_target(true)
         .with_line_number(true);
 
+    // Install the WARN/ERROR capturing layer. The receiver lives in a static
+    // OnceLock so main.rs can take ownership later, after the WS sender exists.
+    let (capture_tx, capture_rx) = mpsc::unbounded_channel::<CapturedLogEvent>();
+    let _ = LOG_EVENT_RX.set(std::sync::Mutex::new(Some(capture_rx)));
+    let capture_layer = LogCapturingLayer { tx: capture_tx };
+
     tracing_subscriber::registry()
         .with(env_filter)
         .with(console_layer)
         .with(file_layer)
+        .with(capture_layer)
         .init();
 
     tracing::info!(

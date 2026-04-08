@@ -2,13 +2,14 @@
  * Client API Routes
  */
 
-import { Router, Request, Response } from 'express';
+import express, { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { clientService } from '../../services/client.service';
 import { config } from '../../config/config';
 import { asyncHandler, successResponse, AppError, ErrorCode } from '../middleware/error-handler';
+import { pendingLogFetches } from './telemetry.routes';
 import {
   validateParams,
   validateBody,
@@ -458,6 +459,49 @@ router.get(
           '<text fill="#444" x="50%" y="60%" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">Client not streaming</text>' +
           '</svg>'
       );
+  })
+);
+
+/**
+ * POST /api/clients/:id/logs/upload
+ *
+ * Client-only endpoint: receives the log tail uploaded by a client in response
+ * to a fetch_logs WS command. The X-Request-Id header matches the upload back
+ * to the pending HTTP request that originated it (held open in telemetry.routes).
+ *
+ * Body is raw text/plain (the log file tail). Auth is the standard requireAuth()
+ * which falls through to API key for client → server traffic.
+ */
+router.post(
+  '/:id/logs/upload',
+  express.text({ type: 'text/plain', limit: '10mb' }),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const requestId = req.header('X-Request-Id');
+
+    if (!requestId) {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, 'X-Request-Id header is required', 400);
+    }
+
+    const pending = pendingLogFetches.get(requestId);
+    if (!pending) {
+      // Request is already resolved, timed out, or never existed.
+      // Acknowledge but log a warning.
+      res.status(204).end();
+      return;
+    }
+
+    if (pending.clientId !== id) {
+      throw new AppError(ErrorCode.FORBIDDEN, 'Client ID mismatch on log upload request', 403);
+    }
+
+    clearTimeout(pending.timer);
+    pendingLogFetches.delete(requestId);
+
+    const body = typeof req.body === 'string' ? req.body : '';
+    pending.resolve(body);
+
+    res.status(204).end();
   })
 );
 

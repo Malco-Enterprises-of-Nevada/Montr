@@ -49,6 +49,16 @@ import {
   MediaFilter,
   ClientFilter,
   PlaylistItemWithMedia,
+  ClientTelemetryRow,
+  CreateClientTelemetryInput,
+  ClientLogEventRow,
+  CreateClientLogEventInput,
+  ClientLogLevel,
+  TelemetryDiskSample,
+  TelemetryTempSample,
+  TelemetryNetSample,
+  TelemetryMpvSample,
+  TelemetryProcessSample,
 } from '../types';
 import { MigrationExecutor } from '../migrations/runner';
 
@@ -1177,5 +1187,156 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   async getUserCount(): Promise<number> {
     const row = await this.rawQueryOne<{ count: number }>('SELECT COUNT(*) as count FROM users');
     return row?.count || 0;
+  }
+
+  // ── Client telemetry operations ─────────────────────────────────────────
+
+  private hydrateTelemetryRow(
+    row: Record<string, unknown> & { id: number; client_id: string; recorded_at: string }
+  ): ClientTelemetryRow {
+    return {
+      id: row.id,
+      client_id: row.client_id,
+      cpu_pct: Number(row.cpu_pct),
+      mem_used_mb: Number(row.mem_used_mb),
+      mem_total_mb: Number(row.mem_total_mb),
+      disks: JSON.parse(String(row.disks_json)) as TelemetryDiskSample[],
+      temps: JSON.parse(String(row.temps_json)) as TelemetryTempSample[],
+      net: JSON.parse(String(row.net_json)) as TelemetryNetSample,
+      mpv: JSON.parse(String(row.mpv_json)) as TelemetryMpvSample,
+      process: JSON.parse(String(row.process_json)) as TelemetryProcessSample,
+      recorded_at: row.recorded_at,
+    };
+  }
+
+  async recordClientTelemetry(input: CreateClientTelemetryInput): Promise<ClientTelemetryRow> {
+    const p = this.placeholder;
+    const result = await this.rawExecute(
+      `INSERT INTO client_telemetry (
+        client_id, cpu_pct, mem_used_mb, mem_total_mb,
+        disks_json, temps_json, net_json, mpv_json, process_json
+      ) VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)})`,
+      [
+        input.client_id,
+        input.cpu_pct,
+        input.mem_used_mb,
+        input.mem_total_mb,
+        JSON.stringify(input.disks),
+        JSON.stringify(input.temps),
+        JSON.stringify(input.net),
+        JSON.stringify(input.mpv),
+        JSON.stringify(input.process),
+      ]
+    );
+    const row = await this.rawQueryOne<
+      Record<string, unknown> & { id: number; client_id: string; recorded_at: string }
+    >(`SELECT * FROM client_telemetry WHERE id = ${p(1)}`, [result.lastInsertId]);
+    if (!row) throw new Error('Failed to retrieve created telemetry row');
+    return this.hydrateTelemetryRow(row);
+  }
+
+  async getClientTelemetryRange(
+    clientId: string,
+    fromMs: number,
+    toMs: number,
+    limit: number = 1000
+  ): Promise<ClientTelemetryRow[]> {
+    const p = this.placeholder;
+    const fromIso = new Date(fromMs).toISOString();
+    const toIso = new Date(toMs).toISOString();
+    const rows = await this.rawQuery<
+      Record<string, unknown> & { id: number; client_id: string; recorded_at: string }
+    >(
+      `SELECT * FROM client_telemetry
+       WHERE client_id = ${p(1)} AND recorded_at >= ${p(2)} AND recorded_at <= ${p(3)}
+       ORDER BY recorded_at ASC
+       LIMIT ${limit}`,
+      [clientId, fromIso, toIso]
+    );
+    return rows.map((r) => this.hydrateTelemetryRow(r));
+  }
+
+  async getClientTelemetryLatest(clientId: string): Promise<ClientTelemetryRow | null> {
+    const row = await this.rawQueryOne<
+      Record<string, unknown> & { id: number; client_id: string; recorded_at: string }
+    >(
+      `SELECT * FROM client_telemetry
+       WHERE client_id = ${this.placeholder(1)}
+       ORDER BY recorded_at DESC
+       LIMIT 1`,
+      [clientId]
+    );
+    return row ? this.hydrateTelemetryRow(row) : null;
+  }
+
+  async getAllClientTelemetryLatest(): Promise<Record<string, ClientTelemetryRow>> {
+    const rows = await this.rawQuery<
+      Record<string, unknown> & { id: number; client_id: string; recorded_at: string; rn: number }
+    >(
+      `SELECT * FROM (
+        SELECT t.*, ROW_NUMBER() OVER (PARTITION BY client_id ORDER BY recorded_at DESC) AS rn
+        FROM client_telemetry t
+      ) ranked WHERE rn = 1`
+    );
+    const out: Record<string, ClientTelemetryRow> = {};
+    for (const row of rows) {
+      out[row.client_id] = this.hydrateTelemetryRow(row);
+    }
+    return out;
+  }
+
+  async recordClientLogEvent(input: CreateClientLogEventInput): Promise<ClientLogEventRow> {
+    const p = this.placeholder;
+    const result = await this.rawExecute(
+      `INSERT INTO client_log_events (client_id, level, target, message)
+       VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)})`,
+      [input.client_id, input.level, input.target, input.message]
+    );
+    const row = await this.rawQueryOne<ClientLogEventRow>(
+      `SELECT * FROM client_log_events WHERE id = ${p(1)}`,
+      [result.lastInsertId]
+    );
+    if (!row) throw new Error('Failed to retrieve created log event');
+    return row;
+  }
+
+  async getClientLogEvents(
+    clientId: string,
+    level?: ClientLogLevel,
+    limit: number = 100
+  ): Promise<ClientLogEventRow[]> {
+    const conditions: string[] = [`client_id = ${this.placeholder(1)}`];
+    const values: unknown[] = [clientId];
+    if (level) {
+      conditions.push(`level = ${this.placeholder(2)}`);
+      values.push(level);
+    }
+    return this.rawQuery<ClientLogEventRow>(
+      `SELECT * FROM client_log_events
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY recorded_at DESC
+       LIMIT ${limit}`,
+      values
+    );
+  }
+
+  async deleteOldClientTelemetry(olderThanDays: number): Promise<number> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - olderThanDays);
+    const result = await this.rawExecute(
+      `DELETE FROM client_telemetry WHERE recorded_at < ${this.placeholder(1)}`,
+      [cutoff.toISOString()]
+    );
+    return result.affectedRows;
+  }
+
+  async deleteOldClientLogEvents(olderThanDays: number): Promise<number> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - olderThanDays);
+    const result = await this.rawExecute(
+      `DELETE FROM client_log_events WHERE recorded_at < ${this.placeholder(1)}`,
+      [cutoff.toISOString()]
+    );
+    return result.affectedRows;
   }
 }

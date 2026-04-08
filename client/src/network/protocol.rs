@@ -23,6 +23,10 @@ pub enum ClientMessage {
     Heartbeat(HeartbeatMessage),
     /// Report an error
     Error(ErrorMessage),
+    /// Periodic system telemetry (60s cadence)
+    Telemetry(TelemetryMessage),
+    /// Auto-pushed log event (warn/error only)
+    LogEvent(LogEventMessage),
 }
 
 /// Client registration message
@@ -120,6 +124,75 @@ pub struct ErrorMessage {
     pub context: Option<HashMap<String, serde_json::Value>>,
 
     /// Timestamp (Unix epoch milliseconds)
+    pub timestamp: u64,
+}
+
+/// Per-disk sample within a TelemetryMessage
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryDiskSample {
+    pub mount: String,
+    pub used_bytes: u64,
+    pub total_bytes: u64,
+}
+
+/// Per-temperature-sensor sample within a TelemetryMessage
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryTempSample {
+    pub label: String,
+    pub celsius: f32,
+}
+
+/// Network sub-sample within a TelemetryMessage
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryNetSample {
+    pub ws_reconnects: u32,
+    pub last_rtt_ms: Option<u32>,
+    pub bytes_dl_total: u64,
+}
+
+/// mpv health sub-sample within a TelemetryMessage
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryMpvSample {
+    pub alive: bool,
+    pub dropped_frames: u64,
+    pub last_decoder_error: Option<String>,
+}
+
+/// Process-level sub-sample within a TelemetryMessage
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryProcessSample {
+    pub client_uptime_s: u64,
+    pub mpv_uptime_s: u64,
+    pub restart_count: u32,
+}
+
+/// Periodic system telemetry message
+///
+/// Sent every 60 seconds with sysinfo + mpv health snapshots. Field names use
+/// snake_case so they line up with the server-side ClientTelemetryRow shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryMessage {
+    #[serde(rename = "clientId")]
+    pub client_id: String,
+    pub cpu_pct: f32,
+    pub mem_used_mb: u64,
+    pub mem_total_mb: u64,
+    pub disks: Vec<TelemetryDiskSample>,
+    pub temps: Vec<TelemetryTempSample>,
+    pub net: TelemetryNetSample,
+    pub mpv: TelemetryMpvSample,
+    pub process: TelemetryProcessSample,
+    pub timestamp: u64,
+}
+
+/// Auto-pushed log event message (WARN or ERROR only)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEventMessage {
+    #[serde(rename = "clientId")]
+    pub client_id: String,
+    pub level: String,
+    pub target: String,
+    pub message: String,
     pub timestamp: u64,
 }
 
@@ -396,6 +469,50 @@ impl ClientMessage {
         })
     }
 
+    /// Create a telemetry message
+    #[allow(clippy::too_many_arguments)]
+    pub fn telemetry(
+        client_id: String,
+        cpu_pct: f32,
+        mem_used_mb: u64,
+        mem_total_mb: u64,
+        disks: Vec<TelemetryDiskSample>,
+        temps: Vec<TelemetryTempSample>,
+        net: TelemetryNetSample,
+        mpv: TelemetryMpvSample,
+        process: TelemetryProcessSample,
+    ) -> Self {
+        Self::Telemetry(TelemetryMessage {
+            client_id,
+            cpu_pct,
+            mem_used_mb,
+            mem_total_mb,
+            disks,
+            temps,
+            net,
+            mpv,
+            process,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        })
+    }
+
+    /// Create a log event message
+    pub fn log_event(client_id: String, level: String, target: String, message: String) -> Self {
+        Self::LogEvent(LogEventMessage {
+            client_id,
+            level,
+            target,
+            message,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        })
+    }
+
     /// Serialize message to JSON
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
@@ -495,6 +612,80 @@ mod tests {
         assert!(json.contains(r#""type":"error"#));
         assert!(json.contains(r#""error":"Playback failed"#));
         assert!(json.contains(r#""context":{"#));
+    }
+
+    #[test]
+    fn test_telemetry_message_round_trip() {
+        let msg = ClientMessage::telemetry(
+            "test-id".to_string(),
+            42.5,
+            512,
+            8192,
+            vec![TelemetryDiskSample {
+                mount: "/".to_string(),
+                used_bytes: 1_000_000,
+                total_bytes: 5_000_000,
+            }],
+            vec![TelemetryTempSample {
+                label: "cpu".to_string(),
+                celsius: 65.3,
+            }],
+            TelemetryNetSample {
+                ws_reconnects: 3,
+                last_rtt_ms: Some(42),
+                bytes_dl_total: 100_000,
+            },
+            TelemetryMpvSample {
+                alive: true,
+                dropped_frames: 7,
+                last_decoder_error: None,
+            },
+            TelemetryProcessSample {
+                client_uptime_s: 1234,
+                mpv_uptime_s: 1100,
+                restart_count: 2,
+            },
+        );
+
+        let json = msg.to_json().unwrap();
+        assert!(json.contains(r#""type":"telemetry"#));
+        assert!(json.contains(r#""cpu_pct":42.5"#));
+
+        let parsed: ClientMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ClientMessage::Telemetry(t) => {
+                assert_eq!(t.client_id, "test-id");
+                assert_eq!(t.disks.len(), 1);
+                assert_eq!(t.disks[0].mount, "/");
+                assert_eq!(t.temps[0].celsius, 65.3);
+                assert_eq!(t.net.ws_reconnects, 3);
+                assert_eq!(t.mpv.dropped_frames, 7);
+                assert_eq!(t.process.restart_count, 2);
+            }
+            _ => panic!("Expected Telemetry variant"),
+        }
+    }
+
+    #[test]
+    fn test_log_event_message_round_trip() {
+        let msg = ClientMessage::log_event(
+            "test-id".to_string(),
+            "error".to_string(),
+            "montr_client::cache".to_string(),
+            "checksum mismatch".to_string(),
+        );
+        let json = msg.to_json().unwrap();
+        assert!(json.contains(r#""type":"log_event"#));
+        assert!(json.contains(r#""level":"error"#));
+
+        let parsed: ClientMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ClientMessage::LogEvent(ev) => {
+                assert_eq!(ev.target, "montr_client::cache");
+                assert_eq!(ev.message, "checksum mismatch");
+            }
+            _ => panic!("Expected LogEvent variant"),
+        }
     }
 
     #[test]
