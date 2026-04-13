@@ -17,6 +17,7 @@ import {
 } from '../database/types';
 import { getLogger } from '../utils/logger';
 import { AppError, ErrorCode } from '../api/middleware/error-handler';
+import { clientConnectionManager } from '../websocket/client-manager';
 
 const logger = getLogger();
 
@@ -111,6 +112,16 @@ export class ClientService {
   async unregisterClient(id: string): Promise<void> {
     // Verify client exists
     await this.getClientById(id);
+
+    // Disconnect the client's WebSocket if connected
+    clientConnectionManager.removeConnection(id);
+
+    // Notify admin browsers so they refresh
+    clientConnectionManager.broadcastToAdmins({
+      type: 'client_state_change',
+      clientId: id,
+      status: 'offline',
+    });
 
     const db = await getDatabase();
     await db.deleteClient(id);

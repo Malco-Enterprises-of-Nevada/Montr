@@ -961,7 +961,16 @@
             <div class="modal-body">
                 <div id="clientDetailSummary"></div>
                 <hr style="margin: 16px 0;"/>
-                <h4>System Telemetry (last hour)</h4>
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                    <h4 style="margin: 0;">System Telemetry</h4>
+                    <div class="view-toggle" id="telemetryRangeSelector">
+                        <button class="btn btn-sm active" data-range="3600000">1h</button>
+                        <button class="btn btn-sm" data-range="21600000">6h</button>
+                        <button class="btn btn-sm" data-range="86400000">24h</button>
+                        <button class="btn btn-sm" data-range="604800000">7d</button>
+                        <button class="btn btn-sm" data-range="2592000000">30d</button>
+                    </div>
+                </div>
                 <div id="clientDetailChartsEmpty" class="empty-state" style="display: none;">
                     <p>No telemetry yet. Charts will appear once the client reports data.</p>
                 </div>

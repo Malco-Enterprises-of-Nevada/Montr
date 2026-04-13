@@ -342,6 +342,10 @@ const clientAPI = {
             method: 'PUT',
             body: JSON.stringify({ assigned_playlist_id: playlistId })
         });
+    },
+
+    async remove(id) {
+        return await apiCall(`/clients/${id}`, { method: 'DELETE' });
     }
 };
 
@@ -1381,6 +1385,9 @@ function renderClientsGrid(clients) {
                     <button class="btn btn-sm btn-primary client-assign-btn" data-client-id="${client.id}" data-client-name="${client.name || client.id}">
                         Assign Playlist
                     </button>
+                    ${auth.user?.role !== 'viewer' ? `<button class="btn btn-sm btn-danger client-remove-btn" data-client-id="${client.id}" data-client-name="${client.name || client.id}">
+                        Remove
+                    </button>` : ''}
                 </div>
             </div>
         `;
@@ -1398,11 +1405,27 @@ function renderClientsGrid(clients) {
     gridEl.querySelectorAll('.client-name.clickable').forEach(el => {
         el.addEventListener('click', () => openClientDetailModal(el.dataset.clientId, el.dataset.clientName));
     });
+    gridEl.querySelectorAll('.client-remove-btn').forEach(btn => {
+        btn.addEventListener('click', () => handleClientRemove(btn.dataset.clientId, btn.dataset.clientName));
+    });
 }
 
 function initRefreshClients() {
     const refreshBtn = document.getElementById('refreshClientsBtn');
     refreshBtn.addEventListener('click', loadClients);
+}
+
+async function handleClientRemove(clientId, clientName) {
+    if (!confirm(`Are you sure you want to remove "${clientName}"? The client will need to re-register to connect again.`)) return;
+
+    try {
+        await clientAPI.remove(clientId);
+        showToast('Client removed successfully', 'success');
+        loadClients();
+    } catch (error) {
+        console.error('Failed to remove client:', error);
+        showToast('Failed to remove client', 'error');
+    }
 }
 
 function openAssignPlaylistModal(clientId, clientName) {
@@ -1462,6 +1485,7 @@ const clientDetailState = {
     clientId: null,
     clientName: null,
     charts: {},  // canvasId -> Chart instance
+    selectedRangeMs: 3600000,  // default 1h
 };
 
 function destroyDetailCharts() {
@@ -1480,7 +1504,15 @@ function makeLineChart(canvasId, label, points, color) {
     clientDetailState.charts[canvasId] = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: points.map(p => new Date(p.x).toLocaleTimeString()),
+            labels: points.map(p => {
+                const d = new Date(p.x);
+                const rangeMs = clientDetailState.selectedRangeMs || 3600000;
+                if (rangeMs <= 86400000) {
+                    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                }
+                return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
+                       d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            }),
             datasets: [{
                 label,
                 data: points.map(p => p.y),
@@ -1498,15 +1530,38 @@ function makeLineChart(canvasId, label, points, color) {
             plugins: { legend: { display: true, position: 'top' } },
             scales: {
                 y: { beginAtZero: true },
-                x: { ticks: { maxTicksLimit: 6 } },
+                x: { ticks: { maxTicksLimit: (clientDetailState.selectedRangeMs || 3600000) > 86400000 ? 8 : 6 } },
             },
         },
     });
 }
 
+async function loadTelemetryForRange(rangeMs) {
+    const clientId = clientDetailState.clientId;
+    if (!clientId) return;
+
+    clientDetailState.selectedRangeMs = rangeMs;
+    destroyDetailCharts();
+
+    const fromMs = Date.now() - rangeMs;
+    const toMs = Date.now();
+    const limit = rangeMs <= 86400000 ? 2000 : 3000;
+
+    try {
+        const rangeRows = await apiCall(
+            `/telemetry/clients/${clientId}/range?from=${fromMs}&to=${toMs}&limit=${limit}`
+        ).catch(() => []);
+        renderTelemetryCharts(rangeRows || []);
+    } catch (err) {
+        console.error('Failed to load client telemetry:', err);
+        showToast('Failed to load telemetry', 'error');
+    }
+}
+
 async function openClientDetailModal(clientId, clientName) {
     clientDetailState.clientId = clientId;
     clientDetailState.clientName = clientName;
+    clientDetailState.selectedRangeMs = 3600000;
 
     document.getElementById('clientDetailTitle').textContent = `${clientName} – telemetry`;
 
@@ -1518,18 +1573,19 @@ async function openClientDetailModal(clientId, clientName) {
     openModal('clientDetailModal');
     destroyDetailCharts();
 
-    // Load 1h of time-series in parallel with the recent log events.
-    const fromMs = Date.now() - 3600 * 1000;
-    const toMs = Date.now();
+    // Reset range selector to 1h
+    document.querySelectorAll('#telemetryRangeSelector .btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.range === '3600000');
+    });
 
+    // Load telemetry and logs in parallel.
     try {
-        const [rangeRows, logEvents] = await Promise.all([
-            apiCall(`/telemetry/clients/${clientId}/range?from=${fromMs}&to=${toMs}&limit=2000`).catch(() => []),
+        const [_, logEvents] = await Promise.all([
+            loadTelemetryForRange(3600000),
             // Logs endpoint is admin-only; viewers will get a 403 — render empty in that case.
             apiCall(`/telemetry/clients/${clientId}/logs?limit=50`).catch(() => []),
         ]);
 
-        renderTelemetryCharts(rangeRows || []);
         renderRecentLogEvents(logEvents || []);
     } catch (err) {
         console.error('Failed to load client telemetry:', err);
@@ -1649,6 +1705,13 @@ function initClientDetailModal() {
     document.getElementById('openFetchLogsBtn').addEventListener('click', () => {
         document.getElementById('logTailViewer').textContent = '';
         openModal('fetchLogsModal');
+    });
+    document.querySelectorAll('#telemetryRangeSelector .btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('#telemetryRangeSelector .btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            loadTelemetryForRange(parseInt(btn.dataset.range, 10));
+        });
     });
 }
 
