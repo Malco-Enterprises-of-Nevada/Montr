@@ -5,6 +5,7 @@
 import { PlaylistService } from '../../../src/services/playlist.service';
 import { getDatabase } from '../../../src/database/connection';
 import { AppError, ErrorCode } from '../../../src/api/middleware/error-handler';
+import { config } from '../../../src/config/config';
 import { createMockDatabase } from '../../utils/database.mock';
 import {
   mockPlaylist,
@@ -294,6 +295,93 @@ describe('PlaylistService', () => {
       mockDb.getPlaylistItems.mockResolvedValue([]);
 
       await expect(playlistService.addPlaylistItems(1, [1, 999])).rejects.toThrow(AppError);
+    });
+  });
+
+  describe('approval enforcement', () => {
+    const approvedVideo = { ...mockVideoFile, approval_status: 'approved' as const };
+    const rejectedVideo = { ...mockVideoFile, approval_status: 'rejected' as const };
+
+    beforeEach(() => {
+      config.content.requireMediaApproval = true;
+    });
+
+    afterEach(() => {
+      config.content.requireMediaApproval = false;
+    });
+
+    it('addPlaylistItem rejects pending media when enforcement enabled', async () => {
+      mockDb.getPlaylistById.mockResolvedValue(mockPlaylist);
+      mockDb.getMediaById.mockResolvedValue(mockVideoFile); // pending
+
+      await expect(
+        playlistService.addPlaylistItem({
+          playlist_id: 1,
+          media_id: 1,
+          order_index: 0,
+          image_duration: 5,
+        })
+      ).rejects.toMatchObject({ code: ErrorCode.BAD_REQUEST, statusCode: 400 });
+      expect(mockDb.addPlaylistItem).not.toHaveBeenCalled();
+    });
+
+    it('addPlaylistItem rejects rejected media when enforcement enabled', async () => {
+      mockDb.getPlaylistById.mockResolvedValue(mockPlaylist);
+      mockDb.getMediaById.mockResolvedValue(rejectedVideo);
+
+      await expect(
+        playlistService.addPlaylistItem({
+          playlist_id: 1,
+          media_id: 1,
+          order_index: 0,
+          image_duration: 5,
+        })
+      ).rejects.toMatchObject({ code: ErrorCode.BAD_REQUEST });
+    });
+
+    it('addPlaylistItem allows approved media when enforcement enabled', async () => {
+      mockDb.getPlaylistById.mockResolvedValue(mockPlaylist);
+      mockDb.getMediaById.mockResolvedValue(approvedVideo);
+      mockDb.getPlaylistItems.mockResolvedValue([]);
+      mockDb.addPlaylistItem.mockResolvedValue(mockPlaylistItem1);
+
+      const result = await playlistService.addPlaylistItem({
+        playlist_id: 1,
+        media_id: 1,
+        order_index: 0,
+        image_duration: 5,
+      });
+
+      expect(result).toEqual(mockPlaylistItem1);
+    });
+
+    it('addPlaylistItems rejects batch if any media is not approved', async () => {
+      mockDb.getPlaylistById.mockResolvedValue(mockPlaylist);
+      mockDb.getPlaylistItems.mockResolvedValue([]);
+      mockDb.getMediaById
+        .mockResolvedValueOnce(approvedVideo)
+        .mockResolvedValueOnce(mockImageFile); // pending
+
+      await expect(playlistService.addPlaylistItems(1, [1, 2])).rejects.toMatchObject({
+        code: ErrorCode.BAD_REQUEST,
+      });
+    });
+
+    it('skips enforcement when requireMediaApproval is false', async () => {
+      config.content.requireMediaApproval = false;
+      mockDb.getPlaylistById.mockResolvedValue(mockPlaylist);
+      mockDb.getMediaById.mockResolvedValue(mockVideoFile); // pending
+      mockDb.getPlaylistItems.mockResolvedValue([]);
+      mockDb.addPlaylistItem.mockResolvedValue(mockPlaylistItem1);
+
+      const result = await playlistService.addPlaylistItem({
+        playlist_id: 1,
+        media_id: 1,
+        order_index: 0,
+        image_duration: 5,
+      });
+
+      expect(result).toEqual(mockPlaylistItem1);
     });
   });
 

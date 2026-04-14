@@ -126,6 +126,7 @@ export const createMockDatabase = (): jest.Mocked<DatabaseAdapter> => ({
   getUserByEmail: jest.fn(),
   getAllUsers: jest.fn(),
   deleteUser: jest.fn(),
+  updateUser: jest.fn(),
   updateUserPassword: jest.fn(),
   getUserCount: jest.fn().mockResolvedValue(0),
 

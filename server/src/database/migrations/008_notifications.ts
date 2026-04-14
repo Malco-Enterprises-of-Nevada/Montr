@@ -9,7 +9,7 @@ const SQLITE_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS notification_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    event_type TEXT NOT NULL CHECK(event_type IN ('client_offline', 'client_error', 'playlist_empty', 'storage_full')),
+    event_type TEXT NOT NULL CHECK(event_type IN ('client_offline', 'client_error', 'playlist_empty', 'storage_full', 'media_approval_needed')),
     channel TEXT NOT NULL CHECK(channel IN ('email', 'webhook')),
     destination TEXT NOT NULL,
     enabled INTEGER DEFAULT 1,

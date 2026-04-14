@@ -10,6 +10,7 @@ import sharp from 'sharp';
 import { getDatabase } from '../database/connection';
 import { config } from '../config/config';
 import { storageService, StorageFileInfo } from './storage.service';
+import { notificationService } from './notification.service';
 import {
   MediaFile,
   CreateMediaInput,
@@ -208,6 +209,8 @@ export class MediaService {
       // Generate thumbnail asynchronously (don't wait for it)
       this.generateThumbnailAsync(media.id, fullPath, storageInfo.filename, mediaType);
 
+      this.fireApprovalNeededIfPending(media);
+
       logger.info(`Media created: ${media.id} - ${media.filename}`);
       return media;
     } catch (error) {
@@ -288,8 +291,26 @@ export class MediaService {
       this.generateThumbnailAsync(media.id, localPath, storageInfo.filename, mediaType);
     }
 
+    this.fireApprovalNeededIfPending(media);
+
     logger.info(`Media created from chunked upload: ${media.id} - ${media.filename}`);
     return media;
+  }
+
+  private fireApprovalNeededIfPending(media: MediaFile): void {
+    if (media.approval_status !== 'pending') return;
+    notificationService
+      .fireEvent('media_approval_needed', {
+        media_id: media.id,
+        filename: media.original_filename || media.filename,
+        type: media.type,
+        file_size: media.file_size,
+      })
+      .catch((err) => {
+        logger.warn(
+          `Failed to fire media_approval_needed for media ${media.id}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
   }
 
   /**

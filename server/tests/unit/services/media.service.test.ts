@@ -4,6 +4,7 @@
 
 import { MediaService } from '../../../src/services/media.service';
 import { storageService } from '../../../src/services/storage.service';
+import { notificationService } from '../../../src/services/notification.service';
 import { getDatabase } from '../../../src/database/connection';
 import { AppError, ErrorCode } from '../../../src/api/middleware/error-handler';
 import { createMockDatabase, createPaginatedResult } from '../../utils/database.mock';
@@ -20,6 +21,11 @@ import sharp from 'sharp';
 // Mock dependencies
 jest.mock('../../../src/database/connection');
 jest.mock('../../../src/services/storage.service');
+jest.mock('../../../src/services/notification.service', () => ({
+  notificationService: {
+    fireEvent: jest.fn().mockResolvedValue(0),
+  },
+}));
 jest.mock('sharp');
 
 // Mock util.promisify to return a mock exec function
@@ -44,6 +50,7 @@ describe('MediaService', () => {
     jest.clearAllMocks();
     mockDb = createMockDatabase();
     (getDatabase as jest.Mock).mockResolvedValue(mockDb);
+    (notificationService.fireEvent as jest.Mock).mockResolvedValue(0);
 
     // Setup storage service mocks
     (storageService.saveUploadedFile as jest.Mock) = jest.fn().mockResolvedValue({
@@ -153,6 +160,44 @@ describe('MediaService', () => {
       // Should still create media even if metadata extraction fails
       expect(result).toEqual(mockVideoFile);
       expect(mockDb.createMedia).toHaveBeenCalled();
+    });
+
+    it('fires media_approval_needed when upload lands as pending', async () => {
+      const mockFile = createMockMulterFile({ mimetype: 'video/mp4' });
+      mockDb.createMedia.mockResolvedValue(mockVideoFile); // approval_status='pending'
+      mockDb.getMediaByChecksum.mockResolvedValue(null);
+
+      await mediaService.createMedia(mockFile);
+
+      expect(notificationService.fireEvent).toHaveBeenCalledWith(
+        'media_approval_needed',
+        expect.objectContaining({
+          media_id: mockVideoFile.id,
+          filename: mockVideoFile.original_filename,
+          type: mockVideoFile.type,
+        })
+      );
+    });
+
+    it('does not fire media_approval_needed when upload is auto-approved', async () => {
+      const mockFile = createMockMulterFile({ mimetype: 'video/mp4' });
+      mockDb.createMedia.mockResolvedValue({ ...mockVideoFile, approval_status: 'approved' });
+      mockDb.getMediaByChecksum.mockResolvedValue(null);
+
+      await mediaService.createMedia(mockFile);
+
+      expect(notificationService.fireEvent).not.toHaveBeenCalled();
+    });
+
+    it('swallows notification dispatch failures', async () => {
+      const mockFile = createMockMulterFile({ mimetype: 'video/mp4' });
+      mockDb.createMedia.mockResolvedValue(mockVideoFile);
+      mockDb.getMediaByChecksum.mockResolvedValue(null);
+      (notificationService.fireEvent as jest.Mock).mockRejectedValueOnce(new Error('boom'));
+
+      const result = await mediaService.createMedia(mockFile);
+
+      expect(result).toEqual(mockVideoFile);
     });
   });
 

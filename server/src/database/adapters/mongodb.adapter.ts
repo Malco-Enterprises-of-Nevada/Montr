@@ -44,6 +44,7 @@ import {
   ApprovalLog,
   User,
   CreateUserInput,
+  UpdateUserInput,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -1021,6 +1022,18 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
   async updateUserPassword(id: number, passwordHash: string): Promise<void> {
     await this.col('users').updateOne({ id }, { $set: { password_hash: passwordHash } });
+  }
+
+  async updateUser(id: number, input: UpdateUserInput): Promise<User> {
+    const set: Record<string, unknown> = {};
+    if (input.email !== undefined) set.email = input.email;
+    if (input.role !== undefined) set.role = input.role;
+    if (Object.keys(set).length > 0) {
+      await this.col('users').updateOne({ id }, { $set: set });
+    }
+    const user = await this.getUserById(id);
+    if (!user) throw new Error(`User ${id} not found after update`);
+    return user;
   }
 
   async getUserCount(): Promise<number> {

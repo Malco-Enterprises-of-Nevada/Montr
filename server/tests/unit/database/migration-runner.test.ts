@@ -55,7 +55,7 @@ describe('MigrationRunner', () => {
       "SELECT value FROM system_state WHERE key = 'schema_version'",
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0].value).toBe('1.10.0');
+    expect(rows[0].value).toBe('1.11.0');
   });
 
   it('should not re-run already applied migrations', async () => {
@@ -67,8 +67,8 @@ describe('MigrationRunner', () => {
     const rows = await executor.querySql!<{ version: string }>(
       'SELECT version FROM schema_migrations',
     );
-    // Should still have exactly eleven migrations (001-011)
-    expect(rows).toHaveLength(11);
+    // Should still have exactly twelve migrations (001-012)
+    expect(rows).toHaveLength(12);
   });
 
   it('should report migration status', async () => {
@@ -98,7 +98,7 @@ describe('MigrationRunner', () => {
     const rows = await executor.querySql!<{ version: string }>(
       'SELECT version FROM schema_migrations ORDER BY rowid',
     );
-    expect(rows).toHaveLength(11);
+    expect(rows).toHaveLength(12);
     expect(rows[0].version).toBe('1.0.0');
     expect(rows[1].version).toBe('1.1.0');
     expect(rows[2].version).toBe('1.2.0');
@@ -110,6 +110,7 @@ describe('MigrationRunner', () => {
     expect(rows[8].version).toBe('1.8.0');
     expect(rows[9].version).toBe('1.9.0');
     expect(rows[10].version).toBe('1.10.0');
+    expect(rows[11].version).toBe('1.11.0');
 
     await baselineAdapter.disconnect();
     fs.rmSync(baselineDir, { recursive: true, force: true });

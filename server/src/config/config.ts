@@ -87,6 +87,11 @@ export interface Config {
     staleTimeout: number;
     heartbeatTimeout: number;
   };
+
+  // Content configuration
+  content: {
+    requireMediaApproval: boolean;
+  };
 }
 
 /**
@@ -187,6 +192,10 @@ function loadConfig(): Config {
       healthCheckInterval: parseInt(process.env.WS_HEALTH_CHECK_INTERVAL || '30000', 10),
       staleTimeout: parseInt(process.env.WS_STALE_TIMEOUT || '300000', 10),
       heartbeatTimeout: parseInt(process.env.WS_HEARTBEAT_TIMEOUT || '60000', 10),
+    },
+
+    content: {
+      requireMediaApproval: process.env.REQUIRE_MEDIA_APPROVAL === 'true',
     },
   };
 

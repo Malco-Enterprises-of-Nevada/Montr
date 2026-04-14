@@ -42,6 +42,7 @@ import {
   ApprovalLog,
   User,
   CreateUserInput,
+  UpdateUserInput,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -197,6 +198,7 @@ export interface DatabaseAdapter {
   getUserByEmail(email: string): Promise<User | null>;
   getAllUsers(): Promise<User[]>;
   deleteUser(id: number): Promise<void>;
+  updateUser(id: number, input: UpdateUserInput): Promise<User>;
   updateUserPassword(id: number, passwordHash: string): Promise<void>;
   getUserCount(): Promise<number>;
 }

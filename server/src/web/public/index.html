@@ -400,6 +400,22 @@
                 </select>
             </div>
 
+            <div id="approvalsToolbar" style="display:flex; gap:0.75rem; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap;">
+                <label style="display:flex; align-items:center; gap:0.4rem;">
+                    <input type="checkbox" id="approvalSelectAll"> Select all on page
+                </label>
+                <span id="approvalSelectedCount" class="text-muted" style="font-size:0.9rem;">0 selected</span>
+                <div style="display:flex; gap:0.5rem;" class="admin-only">
+                    <button class="btn btn-sm btn-success" id="bulkApproveBtn" disabled>Bulk Approve</button>
+                    <button class="btn btn-sm btn-danger" id="bulkRejectBtn" disabled>Bulk Reject</button>
+                </div>
+                <div style="margin-left:auto; display:flex; gap:0.5rem; align-items:center;">
+                    <button class="btn btn-sm btn-secondary" id="approvalPrevPageBtn" disabled>Prev</button>
+                    <span id="approvalPageIndicator" class="text-muted" style="font-size:0.9rem;">Page 1</span>
+                    <button class="btn btn-sm btn-secondary" id="approvalNextPageBtn" disabled>Next</button>
+                </div>
+            </div>
+
             <div id="approvalsGrid" class="grid"></div>
 
             <div id="approvalsEmpty" class="empty-state" style="display: none;">
@@ -517,6 +533,74 @@
         </div>
     </div>
 
+    <!-- Edit User Modal -->
+    <div id="editUserModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Edit User</h3>
+                <button class="modal-close" id="closeEditUserModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="editUserForm">
+                    <input type="hidden" id="editUserId">
+                    <div class="form-group">
+                        <label>Username</label>
+                        <input type="text" id="editUserUsername" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label for="editUserEmail">Email</label>
+                        <input type="email" id="editUserEmail" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editUserRole">Role</label>
+                        <select id="editUserRole" class="form-select">
+                            <option value="viewer">Viewer (read-only)</option>
+                            <option value="editor">Editor (manage content)</option>
+                            <option value="admin">Admin (full access)</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelEditUserModal">Cancel</button>
+                <button class="btn btn-primary" id="saveEditUserBtn">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Admin Reset Password Modal -->
+    <div id="adminResetPasswordModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Reset User Password</h3>
+                <button class="modal-close" id="closeAdminResetPasswordModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="adminResetPasswordForm">
+                    <input type="hidden" id="adminResetUserId">
+                    <p class="text-muted">Resetting password for <strong id="adminResetUsername"></strong>.</p>
+                    <div class="form-group">
+                        <label for="adminResetNewPassword">New Password</label>
+                        <input type="password" id="adminResetNewPassword" required minlength="8" autocomplete="new-password">
+                    </div>
+                    <div class="form-group">
+                        <label for="adminResetConfirmNewPassword">Confirm New Password</label>
+                        <input type="password" id="adminResetConfirmNewPassword" required minlength="8" autocomplete="new-password">
+                    </div>
+                    <div class="form-group">
+                        <label for="adminResetAdminPassword">Your Admin Password</label>
+                        <input type="password" id="adminResetAdminPassword" required autocomplete="current-password">
+                        <small class="text-muted">Confirm your own password to authorize this reset.</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelAdminResetPassword">Cancel</button>
+                <button class="btn btn-primary" id="saveAdminResetPassword">Reset Password</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Change Password Modal -->
     <div id="changePasswordModal" class="modal">
         <div class="modal-content">
@@ -568,6 +652,7 @@
                                 <option value="client_error">Client Error</option>
                                 <option value="playlist_empty">Playlist Empty</option>
                                 <option value="storage_full">Storage Full</option>
+                                <option value="media_approval_needed">Media Approval Needed</option>
                             </select>
                         </div>
                         <div class="form-group">
