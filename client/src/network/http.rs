@@ -529,6 +529,80 @@ mod tests {
         assert_eq!(client.server_url, server_url);
     }
 
-    // Integration tests with mockito would go here
-    // These require the mockito feature and would test actual download behavior
+    #[tokio::test]
+    async fn test_report_playback_start_returns_log_id() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/analytics/playback/start")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"success":true,"data":{"id":7}}"#)
+            .create_async()
+            .await;
+
+        let client = HttpClient::new(server.url(), None, false).unwrap();
+        let result = client.report_playback_start("client-abc", 42, None).await;
+
+        assert_eq!(result.unwrap(), Some(7));
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_report_playback_start_handles_error_response() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/analytics/playback/start")
+            .with_status(500)
+            .with_body("boom")
+            .create_async()
+            .await;
+
+        let client = HttpClient::new(server.url(), None, false).unwrap();
+        let result = client.report_playback_start("client-abc", 42, None).await;
+
+        // Errors are swallowed — returns Ok(None) so analytics never fails playback
+        assert_eq!(result.unwrap(), None);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_report_playback_end_posts_duration_and_completed() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/analytics/playback/7/end")
+            .match_body(mockito::Matcher::PartialJsonString(
+                r#"{"durationWatched":12.5,"completed":true}"#.to_string(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"success":true}"#)
+            .create_async()
+            .await;
+
+        let client = HttpClient::new(server.url(), None, false).unwrap();
+        client
+            .report_playback_end(7, 12.5, true, None)
+            .await
+            .unwrap();
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_report_playback_start_attaches_api_key() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/analytics/playback/start")
+            .match_header("x-api-key", "secret-key")
+            .with_status(200)
+            .with_body(r#"{"success":true,"data":{"id":1}}"#)
+            .create_async()
+            .await;
+
+        let client = HttpClient::new(server.url(), None, false).unwrap();
+        let _ = client
+            .report_playback_start("c", 1, Some("secret-key"))
+            .await;
+
+        mock.assert_async().await;
+    }
 }

@@ -279,6 +279,7 @@ mod tests {
             client: crate::config::ClientConfig {
                 id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
                 name: "Test Client".to_string(),
+                preview_interval_secs: 10,
             },
             playback: crate::config::PlaybackConfig {
                 default_image_duration: 5,

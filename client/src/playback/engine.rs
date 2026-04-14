@@ -16,6 +16,24 @@ use tokio_util::sync::CancellationToken;
 #[cfg(test)]
 use mockall::automock;
 
+/// Clamp a volume level to mpv's 0-100 range. NaN maps to 0.
+pub(crate) fn clamp_volume(level: f64) -> f64 {
+    if level.is_nan() {
+        0.0
+    } else {
+        level.clamp(0.0, 100.0)
+    }
+}
+
+/// Clamp a seek position to a non-negative value. NaN maps to 0.
+pub(crate) fn clamp_seek(position: f64) -> f64 {
+    if position.is_nan() {
+        0.0
+    } else {
+        position.max(0.0)
+    }
+}
+
 /// Commands that can be sent to the playback engine
 #[derive(Debug, Clone)]
 pub enum PlaybackCommand {
@@ -551,25 +569,33 @@ impl PlaybackEngine {
 
     /// Seek to position
     pub async fn seek(&self, position: f64) -> Result<()> {
+        let clamped = clamp_seek(position);
+        if clamped != position {
+            tracing::trace!("Seek position clamped from {} to {}", position, clamped);
+        }
         self.send_command(&[
             serde_json::json!("seek"),
-            serde_json::json!(position),
+            serde_json::json!(clamped),
             serde_json::json!("absolute"),
         ])
         .await?;
 
         let mut state = self.state.write().await;
-        state.position = Some(position);
+        state.position = Some(clamped);
         Ok(())
     }
 
     /// Set volume level (0-100)
     pub async fn volume(&self, level: f64) -> Result<()> {
-        tracing::info!("Setting volume to {}", level);
+        let clamped = clamp_volume(level);
+        if clamped != level {
+            tracing::warn!("Volume level {} clamped to {}", level, clamped);
+        }
+        tracing::info!("Setting volume to {}", clamped);
         self.send_command(&[
             serde_json::json!("set_property"),
             serde_json::json!("volume"),
-            serde_json::json!(level),
+            serde_json::json!(clamped),
         ])
         .await?;
         Ok(())
@@ -672,5 +698,47 @@ mod tests {
         };
 
         assert_eq!(state1, state2);
+    }
+
+    #[test]
+    fn clamp_volume_in_range_is_unchanged() {
+        assert_eq!(clamp_volume(0.0), 0.0);
+        assert_eq!(clamp_volume(50.0), 50.0);
+        assert_eq!(clamp_volume(100.0), 100.0);
+    }
+
+    #[test]
+    fn clamp_volume_above_100_is_capped() {
+        assert_eq!(clamp_volume(150.0), 100.0);
+        assert_eq!(clamp_volume(f64::INFINITY), 100.0);
+    }
+
+    #[test]
+    fn clamp_volume_below_0_is_floored() {
+        assert_eq!(clamp_volume(-5.0), 0.0);
+        assert_eq!(clamp_volume(f64::NEG_INFINITY), 0.0);
+    }
+
+    #[test]
+    fn clamp_volume_nan_becomes_zero() {
+        assert_eq!(clamp_volume(f64::NAN), 0.0);
+    }
+
+    #[test]
+    fn clamp_seek_non_negative_is_unchanged() {
+        assert_eq!(clamp_seek(0.0), 0.0);
+        assert_eq!(clamp_seek(42.5), 42.5);
+        assert_eq!(clamp_seek(10_000.0), 10_000.0);
+    }
+
+    #[test]
+    fn clamp_seek_negative_is_floored_to_zero() {
+        assert_eq!(clamp_seek(-1.0), 0.0);
+        assert_eq!(clamp_seek(f64::NEG_INFINITY), 0.0);
+    }
+
+    #[test]
+    fn clamp_seek_nan_becomes_zero() {
+        assert_eq!(clamp_seek(f64::NAN), 0.0);
     }
 }
