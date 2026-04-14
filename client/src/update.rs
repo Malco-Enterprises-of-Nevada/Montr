@@ -26,23 +26,59 @@ enum UpdateStrategy {
     Stage { staging_path: PathBuf },
 }
 
-/// Determine whether we can replace the binary directly or must stage for systemd.
-fn determine_strategy(current_exe: &Path) -> UpdateStrategy {
-    let parent = current_exe.parent().unwrap_or(Path::new("/"));
-    let probe = parent.join(".montr-update-probe");
-
-    // Try to create a temp file in the binary's directory
-    match std::fs::File::create(&probe) {
+/// Check whether a directory allows creation of new files by the current user.
+///
+/// Uses `create_new` (`O_EXCL`) so a stale probe file cannot trick us into
+/// thinking the directory is writable — the previous `File::create` check was
+/// fooled by leftovers because truncating an existing file needs only write
+/// permission on the file itself, not on its parent.
+fn is_dir_writable(dir: &Path) -> bool {
+    if !dir.is_dir() {
+        return false;
+    }
+    let probe = dir.join(format!(".montr-probe-{}", std::process::id()));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
         Ok(_) => {
             let _ = std::fs::remove_file(&probe);
-            UpdateStrategy::DirectReplace {
-                temp_path: current_exe.with_extension("new"),
-            }
+            true
         }
-        Err(_) => {
-            let staging_path = PathBuf::from(STAGING_DIR).join("montr-client.staged");
-            UpdateStrategy::Stage { staging_path }
-        }
+        Err(_) => false,
+    }
+}
+
+/// Determine whether we can replace the binary directly or must stage for systemd.
+fn determine_strategy(current_exe: &Path) -> UpdateStrategy {
+    determine_strategy_with(current_exe, Path::new(STAGING_DIR))
+}
+
+fn determine_strategy_with(current_exe: &Path, staging_dir: &Path) -> UpdateStrategy {
+    // Prefer staging when the systemd deployment's cache dir is usable. This is
+    // the supported Linux path: the unprivileged montr user writes into
+    // /var/cache/montr-client and a root-owned path unit promotes the binary.
+    if is_dir_writable(staging_dir) {
+        return UpdateStrategy::Stage {
+            staging_path: staging_dir.join("montr-client.staged"),
+        };
+    }
+
+    // Fall back to in-place replacement when the binary's directory is writable
+    // (macOS installs and dev builds running from target/).
+    let parent = current_exe.parent().unwrap_or(Path::new("/"));
+    if is_dir_writable(parent) {
+        return UpdateStrategy::DirectReplace {
+            temp_path: current_exe.with_extension("new"),
+        };
+    }
+
+    // Neither destination is writable. Route to Stage so the error message
+    // points at the staging path — more actionable for operators than a
+    // cryptic EACCES on /usr/bin/montr-client.new.
+    UpdateStrategy::Stage {
+        staging_path: staging_dir.join("montr-client.staged"),
     }
 }
 
@@ -343,55 +379,118 @@ mod tests {
     use super::*;
 
     #[test]
-    fn determine_strategy_direct_replace_when_parent_writable() {
+    fn determine_strategy_direct_replace_when_staging_unavailable() {
         let tmp = tempfile::tempdir().unwrap();
         let fake_exe = tmp.path().join("montr-client");
         std::fs::write(&fake_exe, b"").unwrap();
+        let missing_staging = tmp.path().join("does-not-exist");
 
-        match determine_strategy(&fake_exe) {
+        match determine_strategy_with(&fake_exe, &missing_staging) {
             UpdateStrategy::DirectReplace { temp_path } => {
                 assert_eq!(temp_path, fake_exe.with_extension("new"));
             }
             UpdateStrategy::Stage { .. } => {
-                panic!("expected DirectReplace when parent dir is writable");
+                panic!("expected DirectReplace when staging dir is unavailable");
+            }
+        }
+    }
+
+    #[test]
+    fn determine_strategy_stages_when_staging_available() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fake_exe = tmp.path().join("montr-client");
+        std::fs::write(&fake_exe, b"").unwrap();
+        let staging = tmp.path().join("staging");
+        std::fs::create_dir(&staging).unwrap();
+
+        match determine_strategy_with(&fake_exe, &staging) {
+            UpdateStrategy::Stage { staging_path } => {
+                assert_eq!(staging_path, staging.join("montr-client.staged"));
+            }
+            UpdateStrategy::DirectReplace { .. } => {
+                panic!("expected Stage when staging dir is writable");
             }
         }
     }
 
     #[cfg(unix)]
     #[test]
-    fn determine_strategy_stages_when_parent_unwritable() {
+    fn determine_strategy_stages_when_binary_dir_unwritable() {
         use std::os::unix::fs::PermissionsExt;
 
         let tmp = tempfile::tempdir().unwrap();
-        let fake_exe = tmp.path().join("montr-client");
+        let bin_dir = tmp.path().join("bin");
+        std::fs::create_dir(&bin_dir).unwrap();
+        let fake_exe = bin_dir.join("montr-client");
         std::fs::write(&fake_exe, b"").unwrap();
 
-        // Make parent dir read+execute only. Note: this check is bypassed when
-        // running as root (CAP_DAC_OVERRIDE), so this test is skipped in that
-        // case to avoid a spurious failure in CI containers.
-        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
-        let probe_writable = std::fs::File::create(tmp.path().join(".root-check")).is_ok();
-        if probe_writable {
-            // Running as root — chmod doesn't restrict us. Restore and skip.
-            std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Staging dir deliberately absent; binary dir made read-only. Under
+        // these conditions the strategy should still return Stage (so the
+        // eventual error points at the staging path, not /usr/bin).
+        let missing_staging = tmp.path().join("does-not-exist");
+        std::fs::set_permissions(&bin_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let root_check = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(bin_dir.join(".root-check"))
+            .is_ok();
+        if root_check {
+            std::fs::set_permissions(&bin_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
             eprintln!("skipping: running as root, chmod 0o555 is advisory");
             return;
         }
 
-        let result = determine_strategy(&fake_exe);
+        let result = determine_strategy_with(&fake_exe, &missing_staging);
 
         // Restore permissions so TempDir can clean up
-        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&bin_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         match result {
             UpdateStrategy::Stage { staging_path } => {
-                assert!(staging_path.ends_with("montr-client.staged"));
-                assert!(staging_path.starts_with(STAGING_DIR));
+                assert_eq!(staging_path, missing_staging.join("montr-client.staged"));
             }
             UpdateStrategy::DirectReplace { .. } => {
-                panic!("expected Stage when parent dir is unwritable");
+                panic!("expected Stage when neither location is writable");
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn is_dir_writable_rejects_read_only_dir() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("ro");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let root_check = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dir.join(".root-check"))
+            .is_ok();
+        if root_check {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+            eprintln!("skipping: running as root, chmod 0o555 is advisory");
+            return;
+        }
+
+        let writable = is_dir_writable(&dir);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(!writable);
+    }
+
+    #[test]
+    fn is_dir_writable_accepts_writable_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(is_dir_writable(tmp.path()));
+    }
+
+    #[test]
+    fn is_dir_writable_rejects_missing_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        assert!(!is_dir_writable(&missing));
     }
 }
