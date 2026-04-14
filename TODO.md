@@ -170,14 +170,14 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Server API**: `POST /api/clients/:id/command` — send command (pause, resume, skip, previous, volume, seek, reload_playlist)
 - [x] **Server API**: `POST /api/groups/:id/command` — send command to group
 - [x] **WebSocket**: Extended `command` message type with `CommandType` union and `args` object (volume: 0-100, position: seconds)
-- [ ] **Client**: Handle volume command via mpv `volume` property (deferred — server-side ready)
-- [ ] **Client**: Handle seek command via mpv `seek` property (deferred — server-side ready)
+- [x] **Client**: Handle volume command via mpv `volume` property — `coordinator.rs` + `engine.rs::volume()` with `clamp_volume` helper
+- [x] **Client**: Handle seek command via mpv `seek` property — `coordinator.rs` + `engine.rs::seek()` with `clamp_seek` helper
 - [x] **Web UI**: Client detail panel with playback controls (play/pause, skip, previous, volume slider, seek bar), playlist assignments view
 - [ ] **Web UI**: Real-time playback position updates via WebSocket (deferred)
 - [x] **Tests**: All 680 existing tests pass with extended command types
 
 ### Live Preview of Client Screens
-- [ ] **Client**: Periodic screenshot capture via mpv `screenshot-to-file` command (every 10s or on-demand) — deferred (server-side ready)
+- [x] **Client**: Periodic screenshot capture via mpv `screenshot-to-file` command — `main.rs` preview task (configurable `client.preview_interval_secs`, 5MB size guard)
 - [x] **Server API**: `GET /api/clients/:id/preview` — serve latest screenshot
 - [x] **Server API**: `POST /api/clients/:id/preview` — upload screenshot (JPEG/PNG, max 5MB)
 - [x] **Server storage**: Store latest preview per client in `previews/` dir (overwrites previous)
@@ -194,7 +194,7 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Server API**: `GET /api/analytics/media-popularity` — most-played media ranking
 - [x] **Server API**: `POST /api/analytics/playback/start` and `POST /api/analytics/playback/:id/end` — log recording
 - [x] **Server API**: `POST /api/analytics/cleanup` — configurable data retention cleanup
-- [ ] **Client**: Report media start/end events with timestamps (deferred — server-side ready)
+- [x] **Client**: Report media start/end events with timestamps — `coordinator.rs::start_analytics_session`/`end_analytics_session` (with double-start guard)
 - [x] **Web UI**: Analytics dashboard with tables for playback summary, media popularity, client uptime, recent playback
   - [x] Playback hours per client (table)
   - [x] Media popularity ranking (table)

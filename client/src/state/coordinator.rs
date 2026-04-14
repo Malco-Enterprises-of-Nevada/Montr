@@ -630,6 +630,15 @@ impl StateCoordinator {
 
     /// Report playback start to analytics
     async fn start_analytics_session(&mut self, media_id: u32) {
+        // Close any in-flight session first to avoid orphaning a server-side row
+        // if MediaFinished never arrived for the previous media.
+        if self.current_playback_log_id.is_some() {
+            tracing::trace!(
+                "Analytics: previous session still open, ending it before starting a new one"
+            );
+            self.end_analytics_session(false).await;
+        }
+
         let client_id = self.state.client_id().await;
         let api_key = self.api_key.as_deref();
         match self
@@ -766,6 +775,18 @@ mod tests {
         mock.expect_command_sender().returning(move || tx.clone());
 
         mock
+    }
+
+    /// Test helper that returns a mock engine + the receiver end of the command
+    /// channel, so tests can assert which PlaybackCommand the coordinator sent.
+    fn create_observable_playback_engine() -> (
+        MockPlaybackEngineOps,
+        mpsc::UnboundedReceiver<PlaybackCommand>,
+    ) {
+        let mut mock = MockPlaybackEngineOps::new();
+        let (tx, rx) = mpsc::unbounded_channel::<PlaybackCommand>();
+        mock.expect_command_sender().returning(move || tx.clone());
+        (mock, rx)
     }
 
     #[tokio::test]
@@ -1357,5 +1378,129 @@ mod tests {
             result.unwrap().is_ok(),
             "run() should return Ok on cancellation"
         );
+    }
+
+    #[tokio::test]
+    async fn test_command_volume_dispatches_playback_command() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let http_client =
+            Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client.clone(),
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+
+        let (playback_engine, mut playback_rx) = create_observable_playback_engine();
+        let mut coordinator = StateCoordinator::new(
+            state,
+            cache_manager,
+            http_client,
+            &playback_engine,
+            cancel_token,
+            2,
+            None,
+        );
+
+        let mut args = std::collections::HashMap::new();
+        args.insert("level".to_string(), serde_json::json!(42.0));
+        let cmd = ServerMessage::Command(crate::network::CommandMessage {
+            command: "volume".to_string(),
+            args: Some(args),
+        });
+        coordinator.handle_server_message(cmd).await.unwrap();
+
+        match playback_rx.try_recv() {
+            Ok(PlaybackCommand::Volume { level }) => assert_eq!(level, 42.0),
+            other => panic!("expected Volume command, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_command_volume_missing_args_is_noop() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let http_client =
+            Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client.clone(),
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+
+        let (playback_engine, mut playback_rx) = create_observable_playback_engine();
+        let mut coordinator = StateCoordinator::new(
+            state,
+            cache_manager,
+            http_client,
+            &playback_engine,
+            cancel_token,
+            2,
+            None,
+        );
+
+        let cmd = ServerMessage::Command(crate::network::CommandMessage {
+            command: "volume".to_string(),
+            args: None,
+        });
+        coordinator.handle_server_message(cmd).await.unwrap();
+
+        assert!(
+            matches!(
+                playback_rx.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ),
+            "volume without args should not dispatch a playback command"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_command_seek_dispatches_playback_command() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let http_client =
+            Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client.clone(),
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+
+        let (playback_engine, mut playback_rx) = create_observable_playback_engine();
+        let mut coordinator = StateCoordinator::new(
+            state,
+            cache_manager,
+            http_client,
+            &playback_engine,
+            cancel_token,
+            2,
+            None,
+        );
+
+        let mut args = std::collections::HashMap::new();
+        args.insert("position".to_string(), serde_json::json!(30.0));
+        let cmd = ServerMessage::Command(crate::network::CommandMessage {
+            command: "seek".to_string(),
+            args: Some(args),
+        });
+        coordinator.handle_server_message(cmd).await.unwrap();
+
+        match playback_rx.try_recv() {
+            Ok(PlaybackCommand::Seek { position }) => assert_eq!(position, 30.0),
+            other => panic!("expected Seek command, got {:?}", other),
+        }
     }
 }

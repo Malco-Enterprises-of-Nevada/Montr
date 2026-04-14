@@ -402,72 +402,106 @@ async fn run_client(config: config::Config) -> Result<()> {
     // ========================================================================
     // Preview Screenshot Task
     // ========================================================================
-    let preview_engine = playback_engine.clone();
-    let preview_cancel = cancel_token.clone();
-    let preview_server_url = config.server.url.clone();
-    let preview_client_id = config.client.id.clone();
-    let preview_api_key = config.server.api_key.clone();
-    let preview_handle = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
-        let screenshot_path = std::env::temp_dir()
-            .join(format!("montr-preview-{}.jpg", std::process::id()))
-            .to_string_lossy()
-            .to_string();
-        let client = reqwest::Client::new();
+    const PREVIEW_MAX_BYTES: usize = 5 * 1024 * 1024; // matches server /api/clients/:id/preview limit
+    let preview_interval_secs = config.client.preview_interval_secs;
+    let preview_handle = if preview_interval_secs == 0 {
+        tracing::info!("Preview capture disabled (preview_interval_secs = 0)");
+        tokio::spawn(async {})
+    } else {
+        let preview_engine = playback_engine.clone();
+        let preview_cancel = cancel_token.clone();
+        let preview_server_url = config.server.url.clone();
+        let preview_client_id = config.client.id.clone();
+        let preview_api_key = config.server.api_key.clone();
+        tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_secs(preview_interval_secs));
+            let screenshot_path = std::env::temp_dir()
+                .join(format!("montr-preview-{}.jpg", std::process::id()))
+                .to_string_lossy()
+                .to_string();
+            let client = reqwest::Client::new();
 
-        tracing::info!("Preview capture task started (interval: 10s)");
+            tracing::info!(
+                "Preview capture task started (interval: {}s)",
+                preview_interval_secs
+            );
 
-        loop {
-            tokio::select! {
-                _ = preview_cancel.cancelled() => {
-                    tracing::info!("Preview capture task shutting down");
-                    let _ = std::fs::remove_file(&screenshot_path);
-                    break;
-                }
-                _ = interval.tick() => {
-                    // Take screenshot via mpv IPC
-                    if let Err(e) = preview_engine.screenshot(&screenshot_path).await {
-                        tracing::trace!("Screenshot capture skipped: {}", e);
-                        continue;
+            loop {
+                tokio::select! {
+                    _ = preview_cancel.cancelled() => {
+                        tracing::info!("Preview capture task shutting down");
+                        let _ = std::fs::remove_file(&screenshot_path);
+                        break;
                     }
+                    _ = interval.tick() => {
+                        // Remove any stale capture so we never upload a previous frame
+                        // if the upcoming screenshot call silently fails.
+                        let _ = std::fs::remove_file(&screenshot_path);
 
-                    // Wait briefly for file to be written
-                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                        // Take screenshot via mpv IPC
+                        if let Err(e) = preview_engine.screenshot(&screenshot_path).await {
+                            tracing::trace!("Screenshot capture skipped: {}", e);
+                            continue;
+                        }
 
-                    // Read and upload
-                    match tokio::fs::read(&screenshot_path).await {
-                        Ok(data) => {
-                            let part = reqwest::multipart::Part::bytes(data)
-                                .file_name("preview.jpg")
-                                .mime_str("image/jpeg")
-                                .unwrap();
-                            let form = reqwest::multipart::Form::new().part("preview", part);
+                        // Wait briefly for file to be written
+                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
-                            let url = format!("{}/api/clients/{}/preview", preview_server_url, preview_client_id);
-                            let mut req = client.post(&url).multipart(form);
-                            if let Some(ref key) = preview_api_key {
-                                req = req.header("X-API-Key", key);
+                        let data = match tokio::fs::read(&screenshot_path).await {
+                            Ok(d) => d,
+                            Err(_) => continue, // file not ready or missing
+                        };
+
+                        if data.len() > PREVIEW_MAX_BYTES {
+                            tracing::warn!(
+                                "Preview {} bytes exceeds server limit ({} bytes), skipping",
+                                data.len(),
+                                PREVIEW_MAX_BYTES
+                            );
+                            let _ = std::fs::remove_file(&screenshot_path);
+                            continue;
+                        }
+
+                        let part = match reqwest::multipart::Part::bytes(data)
+                            .file_name("preview.jpg")
+                            .mime_str("image/jpeg")
+                        {
+                            Ok(p) => p,
+                            Err(e) => {
+                                tracing::error!("Failed to build preview mime part: {}", e);
+                                continue;
                             }
-                            match req.send().await {
-                                Ok(resp) if resp.status().is_success() => {
-                                    tracing::trace!("Preview uploaded");
-                                }
-                                Ok(resp) => {
-                                    tracing::trace!("Preview upload rejected: {}", resp.status());
-                                }
-                                Err(e) => {
-                                    tracing::trace!("Preview upload failed: {}", e);
-                                }
+                        };
+                        let form = reqwest::multipart::Form::new().part("preview", part);
+
+                        let url = format!(
+                            "{}/api/clients/{}/preview",
+                            preview_server_url, preview_client_id
+                        );
+                        let mut req = client.post(&url).multipart(form);
+                        if let Some(ref key) = preview_api_key {
+                            req = req.header("X-API-Key", key);
+                        }
+                        match req.send().await {
+                            Ok(resp) if resp.status().is_success() => {
+                                tracing::trace!("Preview uploaded");
+                            }
+                            Ok(resp) => {
+                                tracing::trace!("Preview upload rejected: {}", resp.status());
+                            }
+                            Err(e) => {
+                                tracing::trace!("Preview upload failed: {}", e);
                             }
                         }
-                        Err(_) => {
-                            // Screenshot file not ready yet, skip
-                        }
+
+                        // Delete after attempt (success or failure) so next tick starts clean
+                        let _ = std::fs::remove_file(&screenshot_path);
                     }
                 }
             }
-        }
-    });
+        })
+    };
 
     // ========================================================================
     // Periodic Update Check (every 24 hours)

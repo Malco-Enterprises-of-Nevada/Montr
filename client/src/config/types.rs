@@ -55,6 +55,11 @@ pub struct ClientConfig {
     /// Human-readable client name (defaults to hostname if empty)
     #[serde(default)]
     pub name: String,
+
+    /// Interval in seconds between preview screenshot captures.
+    /// Set to 0 to disable preview capture entirely.
+    #[serde(default = "default_preview_interval_secs")]
+    pub preview_interval_secs: u64,
 }
 
 /// Media playback configuration
@@ -150,6 +155,10 @@ fn default_max_cache_size() -> u64 {
 
 fn default_preload_next_items() -> usize {
     2
+}
+
+fn default_preview_interval_secs() -> u64 {
+    10
 }
 
 fn default_auto_update() -> bool {
@@ -286,6 +295,7 @@ mod tests {
             client: ClientConfig {
                 id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
                 name: "Test Client".to_string(),
+                preview_interval_secs: 10,
             },
             playback: PlaybackConfig {
                 default_image_duration: 5,
