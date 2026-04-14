@@ -12,13 +12,26 @@ import {
   PlaylistItem,
   AddPlaylistItemInput,
   UpdatePlaylistItemInput,
+  MediaFile,
 } from '../database/types';
 import { getLogger } from '../utils/logger';
 import { AppError, ErrorCode } from '../api/middleware/error-handler';
+import { config } from '../config/config';
 
 const logger = getLogger();
 
 export class PlaylistService {
+  private assertMediaApproved(media: MediaFile): void {
+    if (!config.content.requireMediaApproval) return;
+    if (media.approval_status !== 'approved') {
+      throw new AppError(
+        ErrorCode.BAD_REQUEST,
+        `Media "${media.original_filename || media.filename}" is not approved (status: ${media.approval_status})`,
+        400
+      );
+    }
+  }
+
   /**
    * Creates a new playlist
    */
@@ -111,6 +124,8 @@ export class PlaylistService {
       );
     }
 
+    this.assertMediaApproved(media);
+
     // If order_index not provided, add to end
     let orderIndex = input.order_index;
     if (orderIndex === undefined) {
@@ -147,6 +162,8 @@ export class PlaylistService {
       if (!media) {
         throw new AppError(ErrorCode.MEDIA_NOT_FOUND, `Media with ID ${mediaId} not found`, 404);
       }
+
+      this.assertMediaApproved(media);
 
       const item = await db.addPlaylistItem({
         playlist_id: playlistId,

@@ -32,6 +32,20 @@ const createUserSchema = z.object({
   role: z.enum(['admin', 'editor', 'viewer']).optional(),
 });
 
+const updateUserSchema = z
+  .object({
+    email: z.string().email().optional(),
+    role: z.enum(['admin', 'editor', 'viewer']).optional(),
+  })
+  .refine((v) => v.email !== undefined || v.role !== undefined, {
+    message: 'At least one of email or role must be provided',
+  });
+
+const adminResetPasswordSchema = z.object({
+  newPassword: z.string().min(8, 'Password must be at least 8 characters'),
+  adminPassword: z.string().min(1, 'Admin password confirmation required'),
+});
+
 function toPublicUser(user: {
   id: number;
   username: string;
@@ -242,6 +256,92 @@ router.delete(
     await db.deleteUser(params.id);
     logger.info(`User deleted: ${user.username}`);
     res.json(successResponse({ message: 'User deleted', id: params.id }));
+  })
+);
+
+/**
+ * PUT /api/users/:id
+ * Update a user's email or role (admin only)
+ */
+router.put(
+  '/:id',
+  requireAuth(),
+  requireRole('admin'),
+  validateParams(idParamSchema),
+  validateBody(updateUserSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const params = req.params as unknown as { id: number };
+    const jwtUser = (req as Request & { user?: JwtPayload }).user;
+    const { email, role } = req.body as { email?: string; role?: UserRole };
+
+    const db = await getDatabase();
+    const user = await db.getUserById(params.id);
+    if (!user) {
+      throw new AppError(ErrorCode.RESOURCE_NOT_FOUND, 'User not found', 404);
+    }
+
+    if (jwtUser && jwtUser.userId === params.id && role !== undefined && role !== 'admin') {
+      throw new AppError(ErrorCode.BAD_REQUEST, 'Cannot demote your own admin role', 400);
+    }
+
+    if (email !== undefined && email !== user.email) {
+      const existing = await db.getUserByEmail(email);
+      if (existing && existing.id !== params.id) {
+        throw new AppError(ErrorCode.RESOURCE_ALREADY_EXISTS, 'Email already registered', 409);
+      }
+    }
+
+    const updated = await db.updateUser(params.id, { email, role });
+    logger.info(`User updated: ${updated.username} (role=${updated.role})`);
+    res.json(successResponse(toPublicUser(updated)));
+  })
+);
+
+/**
+ * POST /api/users/:id/reset-password
+ * Reset another user's password (admin only). Requires the admin's own password as confirmation.
+ */
+router.post(
+  '/:id/reset-password',
+  requireAuth(),
+  requireRole('admin'),
+  validateParams(idParamSchema),
+  validateBody(adminResetPasswordSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const params = req.params as unknown as { id: number };
+    const jwtUser = (req as Request & { user?: JwtPayload }).user;
+    if (!jwtUser) {
+      throw new AppError(ErrorCode.UNAUTHORIZED, 'Authentication required', 401);
+    }
+    if (jwtUser.userId === params.id) {
+      throw new AppError(
+        ErrorCode.BAD_REQUEST,
+        'Use PUT /api/auth/password to change your own password',
+        400
+      );
+    }
+
+    const { newPassword, adminPassword } = req.body as {
+      newPassword: string;
+      adminPassword: string;
+    };
+
+    const db = await getDatabase();
+    const admin = await db.getUserById(jwtUser.userId);
+    if (!admin || !(await bcrypt.compare(adminPassword, admin.password_hash))) {
+      throw new AppError(ErrorCode.UNAUTHORIZED, 'Admin password is incorrect', 401);
+    }
+
+    const target = await db.getUserById(params.id);
+    if (!target) {
+      throw new AppError(ErrorCode.RESOURCE_NOT_FOUND, 'User not found', 404);
+    }
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    await db.updateUserPassword(params.id, hash);
+
+    logger.info(`Password reset by admin ${admin.username} for user ${target.username}`);
+    res.json(successResponse({ message: 'Password reset', id: params.id }));
   })
 );
 

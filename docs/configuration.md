@@ -94,6 +94,12 @@ When `API_KEY_REQUIRED=true` but `API_KEY` is empty, the server logs a warning a
 | `UI_DASHBOARD_REFRESH_MS` | `30000` | No | Dashboard auto-refresh interval (ms) |
 | `UI_TOAST_DURATION_MS` | `3000` | No | Toast notification display duration (ms) |
 
+### Content
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `REQUIRE_MEDIA_APPROVAL` | `false` | No | When `true`, only media with `approval_status='approved'` can be added to playlists. Uploads still land as `pending` and must be approved via the Approvals page or API. |
+
 ---
 
 ## Client Configuration

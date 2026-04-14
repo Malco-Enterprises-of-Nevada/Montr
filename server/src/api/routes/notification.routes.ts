@@ -13,7 +13,13 @@ const router = Router();
 
 const createRuleSchema = z.object({
   name: z.string().min(1).max(255).trim(),
-  event_type: z.enum(['client_offline', 'client_error', 'playlist_empty', 'storage_full']),
+  event_type: z.enum([
+    'client_offline',
+    'client_error',
+    'playlist_empty',
+    'storage_full',
+    'media_approval_needed',
+  ]),
   channel: z.enum(['email', 'webhook']),
   destination: z.string().min(1, 'Destination is required').trim(),
   enabled: z.boolean().optional(),

@@ -44,6 +44,7 @@ import {
   ApprovalLog,
   User,
   CreateUserInput,
+  UpdateUserInput,
   PaginationParams,
   PaginatedResult,
   MediaFilter,
@@ -1182,6 +1183,29 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
       `UPDATE users SET password_hash = ${this.placeholder(1)} WHERE id = ${this.placeholder(2)}`,
       [passwordHash, id]
     );
+  }
+
+  async updateUser(id: number, input: UpdateUserInput): Promise<User> {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    if (input.email !== undefined) {
+      fields.push(`email = ${this.placeholder(fields.length + 1)}`);
+      values.push(input.email);
+    }
+    if (input.role !== undefined) {
+      fields.push(`role = ${this.placeholder(fields.length + 1)}`);
+      values.push(input.role);
+    }
+    if (fields.length > 0) {
+      values.push(id);
+      await this.rawExecute(
+        `UPDATE users SET ${fields.join(', ')} WHERE id = ${this.placeholder(values.length)}`,
+        values
+      );
+    }
+    const user = await this.getUserById(id);
+    if (!user) throw new Error(`User ${id} not found after update`);
+    return user;
   }
 
   async getUserCount(): Promise<number> {

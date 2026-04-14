@@ -3001,6 +3001,18 @@ const usersAPI = {
             body: JSON.stringify(data)
         });
     },
+    async update(id, data) {
+        return await apiCall(`/users/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+    },
+    async resetPassword(id, data) {
+        return await apiCall(`/users/${id}/reset-password`, {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+    },
     async delete(id) {
         return await apiCall(`/users/${id}`, { method: 'DELETE' });
     }
@@ -3009,12 +3021,18 @@ const usersAPI = {
 // ===== Approvals View =====
 
 let _rejectMediaId = null;
+const APPROVAL_PAGE_SIZE = 50;
+let _approvalCurrentItems = [];
+let _approvalPage = 0;
+const _approvalSelection = new Set();
 
 async function loadApprovals() {
     const grid = document.getElementById('approvalsGrid');
     const empty = document.getElementById('approvalsEmpty');
     grid.innerHTML = '<div class="loading">Loading approvals...</div>';
     empty.style.display = 'none';
+    _approvalSelection.clear();
+    _approvalPage = 0;
 
     try {
         const filter = document.getElementById('approvalStatusFilter').value;
@@ -3026,17 +3044,62 @@ async function loadApprovals() {
             media = filter === 'all' ? all : all.filter(m => m.approval_status === filter);
         }
 
-        if (!media || media.length === 0) {
-            grid.innerHTML = '';
-            empty.style.display = '';
-            return;
-        }
-
-        grid.innerHTML = media.map(m => renderApprovalCard(m)).join('');
-        attachApprovalHandlers();
+        _approvalCurrentItems = media || [];
+        renderApprovalPage();
     } catch (error) {
         console.error('Failed to load approvals:', error);
         grid.innerHTML = '<div class="empty-state"><p>Failed to load approvals</p></div>';
+    }
+}
+
+function renderApprovalPage() {
+    const grid = document.getElementById('approvalsGrid');
+    const empty = document.getElementById('approvalsEmpty');
+    const items = _approvalCurrentItems;
+
+    if (!items.length) {
+        grid.innerHTML = '';
+        empty.style.display = '';
+        updateApprovalToolbar();
+        return;
+    }
+    empty.style.display = 'none';
+
+    const totalPages = Math.max(1, Math.ceil(items.length / APPROVAL_PAGE_SIZE));
+    if (_approvalPage >= totalPages) _approvalPage = totalPages - 1;
+    const start = _approvalPage * APPROVAL_PAGE_SIZE;
+    const pageItems = items.slice(start, start + APPROVAL_PAGE_SIZE);
+
+    grid.innerHTML = pageItems.map(m => renderApprovalCard(m)).join('');
+    attachApprovalHandlers();
+    updateApprovalToolbar();
+}
+
+function updateApprovalToolbar() {
+    const items = _approvalCurrentItems;
+    const totalPages = Math.max(1, Math.ceil(items.length / APPROVAL_PAGE_SIZE));
+    const prevBtn = document.getElementById('approvalPrevPageBtn');
+    const nextBtn = document.getElementById('approvalNextPageBtn');
+    const indicator = document.getElementById('approvalPageIndicator');
+    const countEl = document.getElementById('approvalSelectedCount');
+    const bulkApprove = document.getElementById('bulkApproveBtn');
+    const bulkReject = document.getElementById('bulkRejectBtn');
+    const selectAll = document.getElementById('approvalSelectAll');
+
+    if (indicator) indicator.textContent = `Page ${_approvalPage + 1} of ${totalPages} (${items.length} total)`;
+    if (prevBtn) prevBtn.disabled = _approvalPage <= 0;
+    if (nextBtn) nextBtn.disabled = _approvalPage >= totalPages - 1;
+
+    const selectedCount = _approvalSelection.size;
+    if (countEl) countEl.textContent = `${selectedCount} selected`;
+    if (bulkApprove) bulkApprove.disabled = selectedCount === 0;
+    if (bulkReject) bulkReject.disabled = selectedCount === 0;
+
+    if (selectAll) {
+        const start = _approvalPage * APPROVAL_PAGE_SIZE;
+        const pageItems = items.slice(start, start + APPROVAL_PAGE_SIZE);
+        const pageIds = pageItems.map(m => m.id);
+        selectAll.checked = pageIds.length > 0 && pageIds.every(id => _approvalSelection.has(id));
     }
 }
 
@@ -3054,10 +3117,12 @@ function renderApprovalCard(media) {
     const size = media.file_size ? formatFileSize(media.file_size) : 'Unknown size';
     const date = formatDate(media.created_at);
     const isPending = media.approval_status === 'pending';
+    const checked = _approvalSelection.has(media.id) ? 'checked' : '';
 
     return `
         <div class="card approval-card">
             <div class="card-body" style="display:flex; align-items:center; gap:1rem;">
+                <input type="checkbox" class="approval-select" data-id="${media.id}" ${checked}>
                 <div style="flex:1; min-width:0;">
                     <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.25rem;">
                         <strong style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${media.original_filename || media.filename}</strong>
@@ -3111,6 +3176,32 @@ function attachApprovalHandlers() {
             }
         });
     });
+
+    document.querySelectorAll('.approval-select').forEach(cb => {
+        cb.addEventListener('change', () => {
+            const id = parseInt(cb.dataset.id);
+            if (cb.checked) _approvalSelection.add(id);
+            else _approvalSelection.delete(id);
+            updateApprovalToolbar();
+        });
+    });
+}
+
+async function bulkApprovalAction(action, comment) {
+    const ids = Array.from(_approvalSelection);
+    if (!ids.length) return;
+    let ok = 0, fail = 0;
+    for (const id of ids) {
+        try {
+            if (action === 'approve') await approvalsAPI.approve(id);
+            else await approvalsAPI.reject(id, comment);
+            ok++;
+        } catch (e) {
+            fail++;
+        }
+    }
+    showToast(`Bulk ${action}: ${ok} succeeded${fail ? `, ${fail} failed` : ''}`, fail ? 'error' : 'success');
+    loadApprovals();
 }
 
 function renderApprovalHistory(logs) {
@@ -3166,6 +3257,46 @@ function initApprovals() {
     // History modal
     document.getElementById('closeApprovalHistoryModal').addEventListener('click', () => closeModal('approvalHistoryModal'));
     document.getElementById('closeApprovalHistoryBtn').addEventListener('click', () => closeModal('approvalHistoryModal'));
+
+    // Pagination
+    document.getElementById('approvalPrevPageBtn')?.addEventListener('click', () => {
+        if (_approvalPage > 0) {
+            _approvalPage--;
+            renderApprovalPage();
+        }
+    });
+    document.getElementById('approvalNextPageBtn')?.addEventListener('click', () => {
+        const totalPages = Math.ceil(_approvalCurrentItems.length / APPROVAL_PAGE_SIZE);
+        if (_approvalPage < totalPages - 1) {
+            _approvalPage++;
+            renderApprovalPage();
+        }
+    });
+
+    // Select-all on page
+    document.getElementById('approvalSelectAll')?.addEventListener('change', (e) => {
+        const start = _approvalPage * APPROVAL_PAGE_SIZE;
+        const pageItems = _approvalCurrentItems.slice(start, start + APPROVAL_PAGE_SIZE);
+        if (e.target.checked) {
+            pageItems.forEach(m => _approvalSelection.add(m.id));
+        } else {
+            pageItems.forEach(m => _approvalSelection.delete(m.id));
+        }
+        renderApprovalPage();
+    });
+
+    // Bulk actions
+    document.getElementById('bulkApproveBtn')?.addEventListener('click', async () => {
+        if (_approvalSelection.size === 0) return;
+        if (!confirm(`Approve ${_approvalSelection.size} selected file(s)?`)) return;
+        await bulkApprovalAction('approve');
+    });
+    document.getElementById('bulkRejectBtn')?.addEventListener('click', async () => {
+        if (_approvalSelection.size === 0) return;
+        const comment = prompt(`Reject ${_approvalSelection.size} selected file(s). Optional comment:`);
+        if (comment === null) return; // cancelled
+        await bulkApprovalAction('reject', comment);
+    });
 }
 
 // ===== User Management =====
@@ -3209,9 +3340,11 @@ function renderUsersGrid(users) {
                         <td>${user.email}</td>
                         <td><span class="badge badge-${user.role === 'admin' ? 'danger' : user.role === 'editor' ? 'warning' : 'info'}">${user.role}</span></td>
                         <td>${formatDate(user.created_at)}</td>
-                        <td>
+                        <td style="display:flex; gap:0.25rem; flex-wrap:wrap;">
+                            <button class="btn btn-sm btn-secondary edit-user-btn" data-id="${user.id}" data-username="${user.username}" data-email="${user.email}" data-role="${user.role}">Edit</button>
                             ${user.id !== auth.user?.id
-                                ? `<button class="btn btn-sm btn-danger delete-user-btn" data-id="${user.id}" data-username="${user.username}">Delete</button>`
+                                ? `<button class="btn btn-sm btn-secondary reset-user-pw-btn" data-id="${user.id}" data-username="${user.username}">Reset Password</button>
+                                   <button class="btn btn-sm btn-danger delete-user-btn" data-id="${user.id}" data-username="${user.username}">Delete</button>`
                                 : ''}
                         </td>
                     </tr>
@@ -3231,6 +3364,26 @@ function renderUsersGrid(users) {
             } catch (error) {
                 showToast(error.message || 'Failed to delete user', 'error');
             }
+        });
+    });
+
+    grid.querySelectorAll('.edit-user-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.getElementById('editUserId').value = btn.dataset.id;
+            document.getElementById('editUserUsername').value = btn.dataset.username;
+            document.getElementById('editUserEmail').value = btn.dataset.email;
+            document.getElementById('editUserRole').value = btn.dataset.role;
+            openModal('editUserModal');
+        });
+    });
+
+    grid.querySelectorAll('.reset-user-pw-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.getElementById('adminResetUserId').value = btn.dataset.id;
+            document.getElementById('adminResetUsername').textContent = btn.dataset.username;
+            document.getElementById('adminResetPasswordForm').reset();
+            document.getElementById('adminResetUserId').value = btn.dataset.id;
+            openModal('adminResetPasswordModal');
         });
     });
 }
@@ -3264,6 +3417,75 @@ function initCreateUserModal() {
             loadUsers();
         } catch (error) {
             showToast(error.message || 'Failed to create user', 'error');
+        }
+    });
+}
+
+function initEditUserModal() {
+    const closeBtn = document.getElementById('closeEditUserModal');
+    const cancelBtn = document.getElementById('cancelEditUserModal');
+    const saveBtn = document.getElementById('saveEditUserBtn');
+    if (!saveBtn) return;
+
+    closeBtn.addEventListener('click', () => closeModal('editUserModal'));
+    cancelBtn.addEventListener('click', () => closeModal('editUserModal'));
+
+    saveBtn.addEventListener('click', async () => {
+        const id = parseInt(document.getElementById('editUserId').value);
+        const email = document.getElementById('editUserEmail').value.trim();
+        const role = document.getElementById('editUserRole').value;
+
+        if (!email) {
+            showToast('Email is required', 'error');
+            return;
+        }
+
+        try {
+            await usersAPI.update(id, { email, role });
+            showToast('User updated', 'success');
+            closeModal('editUserModal');
+            loadUsers();
+        } catch (error) {
+            showToast(error.message || 'Failed to update user', 'error');
+        }
+    });
+}
+
+function initAdminResetPasswordModal() {
+    const closeBtn = document.getElementById('closeAdminResetPasswordModal');
+    const cancelBtn = document.getElementById('cancelAdminResetPassword');
+    const saveBtn = document.getElementById('saveAdminResetPassword');
+    if (!saveBtn) return;
+
+    closeBtn.addEventListener('click', () => closeModal('adminResetPasswordModal'));
+    cancelBtn.addEventListener('click', () => closeModal('adminResetPasswordModal'));
+
+    saveBtn.addEventListener('click', async () => {
+        const id = parseInt(document.getElementById('adminResetUserId').value);
+        const newPassword = document.getElementById('adminResetNewPassword').value;
+        const confirmPw = document.getElementById('adminResetConfirmNewPassword').value;
+        const adminPassword = document.getElementById('adminResetAdminPassword').value;
+
+        if (newPassword.length < 8) {
+            showToast('New password must be at least 8 characters', 'error');
+            return;
+        }
+        if (newPassword !== confirmPw) {
+            showToast('Passwords do not match', 'error');
+            return;
+        }
+        if (!adminPassword) {
+            showToast('Confirm your admin password', 'error');
+            return;
+        }
+
+        try {
+            await usersAPI.resetPassword(id, { newPassword, adminPassword });
+            showToast('Password reset', 'success');
+            closeModal('adminResetPasswordModal');
+            document.getElementById('adminResetPasswordForm').reset();
+        } catch (error) {
+            showToast(error.message || 'Failed to reset password', 'error');
         }
     });
 }
@@ -3343,6 +3565,8 @@ function initApp() {
 
     // Initialize user management (admin only)
     initCreateUserModal();
+    initEditUserModal();
+    initAdminResetPasswordModal();
 
     // Wire up empty state buttons
     document.getElementById('emptyUploadBtn')?.addEventListener('click', () => {

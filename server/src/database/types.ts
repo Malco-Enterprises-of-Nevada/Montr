@@ -310,6 +310,11 @@ export interface CreateUserInput {
   role?: UserRole;
 }
 
+export interface UpdateUserInput {
+  email?: string;
+  role?: UserRole;
+}
+
 export interface UserPublic {
   id: number;
   username: string;
@@ -334,7 +339,8 @@ export type NotificationEventType =
   | 'client_offline'
   | 'client_error'
   | 'playlist_empty'
-  | 'storage_full';
+  | 'storage_full'
+  | 'media_approval_needed';
 export type NotificationChannel = 'email' | 'webhook';
 
 export interface NotificationRule {
