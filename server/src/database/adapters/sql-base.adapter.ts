@@ -1215,6 +1215,20 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
 
   // ── Client telemetry operations ─────────────────────────────────────────
 
+  /**
+   * Format an epoch-ms timestamp as `"YYYY-MM-DD HH:MM:SS"` (UTC).
+   *
+   * The `recorded_at` column is `DATETIME DEFAULT CURRENT_TIMESTAMP`, which in
+   * SQLite stores TEXT with a space separator (no `T`, no `Z`). SQLite compares
+   * those TEXT values lexicographically, so an ISO-`T`-`Z` filter string would
+   * sort above stored values on the same calendar day and filter out real rows.
+   * This format matches what `CURRENT_TIMESTAMP` emits and is also accepted by
+   * MySQL and MSSQL as a DATETIME literal.
+   */
+  private toSqlDateTime(ms: number): string {
+    return new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
+  }
+
   private hydrateTelemetryRow(
     row: Record<string, unknown> & { id: number; client_id: string; recorded_at: string }
   ): ClientTelemetryRow {
@@ -1266,8 +1280,8 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     limit: number = 1000
   ): Promise<ClientTelemetryRow[]> {
     const p = this.placeholder;
-    const fromIso = new Date(fromMs).toISOString();
-    const toIso = new Date(toMs).toISOString();
+    const fromStr = this.toSqlDateTime(fromMs);
+    const toStr = this.toSqlDateTime(toMs);
     const rows = await this.rawQuery<
       Record<string, unknown> & { id: number; client_id: string; recorded_at: string }
     >(
@@ -1275,7 +1289,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
        WHERE client_id = ${p(1)} AND recorded_at >= ${p(2)} AND recorded_at <= ${p(3)}
        ORDER BY recorded_at ASC
        LIMIT ${limit}`,
-      [clientId, fromIso, toIso]
+      [clientId, fromStr, toStr]
     );
     return rows.map((r) => this.hydrateTelemetryRow(r));
   }
@@ -1349,7 +1363,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     cutoff.setDate(cutoff.getDate() - olderThanDays);
     const result = await this.rawExecute(
       `DELETE FROM client_telemetry WHERE recorded_at < ${this.placeholder(1)}`,
-      [cutoff.toISOString()]
+      [this.toSqlDateTime(cutoff.getTime())]
     );
     return result.affectedRows;
   }
@@ -1359,7 +1373,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     cutoff.setDate(cutoff.getDate() - olderThanDays);
     const result = await this.rawExecute(
       `DELETE FROM client_log_events WHERE recorded_at < ${this.placeholder(1)}`,
-      [cutoff.toISOString()]
+      [this.toSqlDateTime(cutoff.getTime())]
     );
     return result.affectedRows;
   }
