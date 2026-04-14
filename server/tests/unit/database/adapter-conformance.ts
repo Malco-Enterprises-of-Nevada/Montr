@@ -11,6 +11,7 @@ import {
   AddPlaylistItemInput,
   CreateClientInput,
   CreateClientStatusInput,
+  CreateClientTelemetryInput,
 } from '../../../src/database/types';
 
 const sampleMedia: CreateMediaInput = {
@@ -419,6 +420,42 @@ export function runAdapterConformanceTests(
       it('should return null for non-existent client with status', async () => {
         const result = await adapter.getClientWithStatus('nonexistent');
         expect(result).toBeNull();
+      });
+    });
+
+    // ── Client Telemetry ─────────────────────────────────────────────────
+
+    describe('Client telemetry operations', () => {
+      const sampleTelemetry: CreateClientTelemetryInput = {
+        client_id: 'test-client-001',
+        cpu_pct: 12.5,
+        mem_used_mb: 512,
+        mem_total_mb: 2048,
+        disks: [{ mount: '/', used_bytes: 1000, total_bytes: 10000 }],
+        temps: [{ label: 'cpu', celsius: 45 }],
+        net: { ws_reconnects: 0, last_rtt_ms: 12, bytes_dl_total: 1024 },
+        mpv: { alive: true, dropped_frames: 0, last_decoder_error: null },
+        process: { client_uptime_s: 60, mpv_uptime_s: 30, restart_count: 0 },
+      };
+
+      beforeEach(async () => {
+        await adapter.createClient(sampleClient);
+      });
+
+      it('should return rows recorded within the same calendar day for a 1h range', async () => {
+        // Regression: SQLite's CURRENT_TIMESTAMP writes "YYYY-MM-DD HH:MM:SS".
+        // Filtering with `new Date().toISOString()` (with `T`/`Z`) sorts above
+        // same-day stored values lexicographically and returns zero rows.
+        await adapter.recordClientTelemetry(sampleTelemetry);
+
+        const now = Date.now();
+        const rows = await adapter.getClientTelemetryRange(
+          'test-client-001',
+          now - 3_600_000,
+          now + 60_000,
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0].cpu_pct).toBe(12.5);
       });
     });
   });
