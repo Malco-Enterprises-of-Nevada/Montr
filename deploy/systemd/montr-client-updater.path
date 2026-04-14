@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for montr-client staged updates
+Documentation=https://github.com/montr/montr
+
+[Path]
+PathExists=/var/cache/montr-client/montr-client.staged
+
+[Install]
+WantedBy=multi-user.target

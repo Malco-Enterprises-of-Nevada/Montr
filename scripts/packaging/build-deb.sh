@@ -65,6 +65,13 @@ case "$COMPONENT" in
         # Systemd
         mkdir -p "$BUILD_DIR/lib/systemd/system"
         cp "$PROJECT_ROOT/deploy/systemd/montr-client.service" "$BUILD_DIR/lib/systemd/system/"
+        cp "$PROJECT_ROOT/deploy/systemd/montr-client-updater.path" "$BUILD_DIR/lib/systemd/system/"
+        cp "$PROJECT_ROOT/deploy/systemd/montr-client-updater.service" "$BUILD_DIR/lib/systemd/system/"
+
+        # Update apply script
+        mkdir -p "$BUILD_DIR/usr/lib/montr-client"
+        cp "$PROJECT_ROOT/deploy/scripts/apply-update.sh" "$BUILD_DIR/usr/lib/montr-client/"
+        chmod 755 "$BUILD_DIR/usr/lib/montr-client/apply-update.sh"
         ;;
 
     *)
