@@ -126,9 +126,9 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Server service**: `ScheduleService` — evaluate active schedules, trigger playlist switches at configured times
 - [x] **Server cron**: Background task evaluates schedules every 60 seconds, triggers at start_time
 - [x] **WebSocket**: Uses existing `playlist_assigned` message — schedule triggers `sendPlaylistToClient`/`sendPlaylistToGroup`
-- [ ] **Client**: Handle `playlist_switch` in coordinator — download new playlist, transition playback (deferred — client already handles `playlist_assigned`)
+- [x] **Client**: Handle `playlist_switch` in coordinator — client handles `playlist_assigned`; playlist stack added in coordinator (0abc9da)
 - [x] **Web UI**: Schedule management page — create/edit with time picker, day selector, target selection (all/client/group)
-- [ ] **Web UI**: Calendar/timeline view showing scheduled playlists per client (deferred)
+- [x] **Web UI**: Calendar/timeline view showing scheduled playlists per client — weekly calendar view with Cards/Calendar toggle (0abc9da)
 - [x] **Tests**: Schedule service unit tests (13 tests including isScheduleActive logic)
 
 ### Multiple Playlists Per Client
@@ -138,7 +138,7 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Server API**: `PUT /api/clients/:id/playlists/:playlistId` — update priority
 - [x] **Server API**: `DELETE /api/clients/:id/playlists/:playlistId` — remove playlist assignment
 - [x] **Server service**: Priority resolution — highest priority playlist automatically becomes `assigned_playlist_id`
-- [ ] **Client**: Support playlist stack — maintain multiple playlists, switch based on server commands (deferred — client already handles `playlist_assigned`)
+- [x] **Client**: Support playlist stack — Vec stack in `AppState` with push/pop/clear supporting nested interrupts (0abc9da)
 
 ### Client Grouping
 - [x] **Schema**: Add `client_groups` table (id, name, description, created_at) — migration 003
@@ -159,7 +159,7 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Server service**: `interruptWithPlaylist()` saves current playlist, switches to interrupt playlist. `resumeFromInterrupt()` restores previous.
 - [x] **Server API**: `POST /api/clients/:id/interrupt` and `POST /api/clients/:id/resume`
 - [x] **WebSocket**: `playlist_interrupt` and `playlist_resume` message types with full playlist data
-- [ ] **Client**: Playlist stack in coordinator — push interrupt playlist, pop to resume previous (deferred — client already handles playlist_assigned)
+- [x] **Client**: Playlist stack in coordinator — push/pop for nested interrupts, PlaylistInterrupt/Resume handlers wired to stack (0abc9da)
 - [x] **Tests**: Interrupt/resume unit tests (5 tests)
 
 ---
@@ -173,7 +173,7 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Client**: Handle volume command via mpv `volume` property — `coordinator.rs` + `engine.rs::volume()` with `clamp_volume` helper
 - [x] **Client**: Handle seek command via mpv `seek` property — `coordinator.rs` + `engine.rs::seek()` with `clamp_seek` helper
 - [x] **Web UI**: Client detail panel with playback controls (play/pause, skip, previous, volume slider, seek bar), playlist assignments view
-- [ ] **Web UI**: Real-time playback position updates via WebSocket (deferred)
+- [x] **Web UI**: Real-time playback position updates via WebSocket — admin WebSocket broadcasts `client_status_update`; cards/detail modal update in-place (39dcfb2)
 - [x] **Tests**: All 680 existing tests pass with extended command types
 
 ### Live Preview of Client Screens
@@ -238,9 +238,9 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Server API**: `POST /api/media/:id/reject` — reject media with optional comment
 - [x] **Server API**: `GET /api/media/pending` — list media pending approval
 - [x] **Server API**: `GET /api/media/:id/approval-logs` — approval history
-- [ ] **Server service**: Only approved media can be added to playlists (enforcement deferred — API ready)
-- [ ] **Web UI**: Approval queue page (deferred — API endpoints ready)
-- [ ] **Notifications**: Alert when new media needs approval (can use existing notification system)
+- [x] **Server service**: Only approved media can be added to playlists — gated by `REQUIRE_MEDIA_APPROVAL` config in `PlaylistService` (ea5f445)
+- [x] **Web UI**: Approval queue page — pending/approved/rejected filter, bulk approve/reject, reject modal with comment, approval history, pagination (0abc9da, ea5f445)
+- [x] **Notifications**: Alert when new media needs approval — `media_approval_needed` event fired by `MediaService` on pending uploads (ea5f445)
 - [x] **Tests**: All 680 existing tests pass with approval additions
 
 ### User Roles & Permissions
@@ -252,8 +252,8 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Server API**: `POST /api/auth/login` — login with username/password, returns JWT
 - [x] **Server API**: `POST /api/auth/setup` — create first admin user (one-time bootstrap)
 - [x] **Server API**: `GET /api/auth/me` — get current user info
-- [x] **Server API**: CRUD for `/api/users` (admin only) — GET list, POST create, DELETE
-- [ ] **Web UI**: Login page, user management page (deferred — API endpoints ready)
+- [x] **Server API**: CRUD for `/api/users` (admin only) — GET list, POST create, PUT edit, DELETE, POST reset-password (ea5f445)
+- [x] **Web UI**: Login page and user management page — login form, admin-only Users nav with Edit/Reset Password actions (ea5f445)
 - [x] **Tests**: All 680 existing tests pass (bootstrap mode ensures backward compatibility)
 
 ### HTTPS/TLS Support
@@ -264,6 +264,12 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Config**: `TLS_ENABLED`, `TLS_CERT_PATH`, `TLS_KEY_PATH`, `TLS_HTTP_PORT` env vars added to .env.example
 - [ ] **Docs**: Certificate generation guide (deferred)
 - [x] **Tests**: All 680 existing tests pass (TLS is opt-in, no impact on HTTP mode)
+
+### Additional v1.3 Deliverables (beyond original scope)
+- [x] **Client auto-updater**: Split-privilege Linux auto-update via systemd path unit (7723e2f)
+- [x] **Telemetry**: Per-client system metrics (CPU, memory, disk, network), log shipping, dashboard charts (15c2632)
+- [x] **Dashboard**: Historical telemetry range selector and client removal (bc0ca1b)
+- [x] **Release pipeline**: Linux arm64 client build (6affb89); macOS builds on self-hosted Apple Silicon runner (a5ec2ab)
 
 ---
 
