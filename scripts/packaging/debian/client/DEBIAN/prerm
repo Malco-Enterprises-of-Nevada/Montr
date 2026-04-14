@@ -3,6 +3,9 @@ set -e
 
 case "$1" in
     remove|upgrade)
+        if systemctl is-active --quiet montr-client-updater.path; then
+            systemctl stop montr-client-updater.path
+        fi
         if systemctl is-active --quiet montr-client.service; then
             systemctl stop montr-client.service
         fi

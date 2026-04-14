@@ -13,6 +13,7 @@ case "$1" in
 
         systemctl daemon-reload
         systemctl enable montr-client.service
+        systemctl enable --now montr-client-updater.path
         ;;
 esac
 

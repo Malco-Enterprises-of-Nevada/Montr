@@ -122,6 +122,19 @@ sudo systemctl status montr-client
 sudo journalctl -u montr-client -f
 ```
 
+### Client Auto-Update
+
+The client checks for new releases against a manifest hosted on DigitalOcean Spaces and applies them without manual intervention. The flow is split by platform:
+
+- **macOS**: the client writes directly to its binary directory, replaces itself in place, and restarts.
+- **Linux** (packaged install): the client runs as the unprivileged `montr` user and cannot write `/usr/bin/montr-client`. Instead it downloads the new binary, verifies the SHA-256 against the manifest, and atomically renames it into `/var/cache/montr-client/montr-client.staged`. A systemd path unit (`montr-client-updater.path`) watches that location and triggers a root-only oneshot service (`montr-client-updater.service`) which runs `/usr/lib/montr-client/apply-update.sh` to promote the staged file into `/usr/bin/montr-client` and restart `montr-client.service`.
+
+Both units are enabled automatically by `postinst` and disabled on uninstall. Updater logs appear under the `montr-client-updater` syslog tag:
+
+```bash
+sudo journalctl -t montr-client-updater -f
+```
+
 ## Managing Services
 
 ```bash

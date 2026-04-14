@@ -1,0 +1,28 @@
+[Unit]
+Description=Apply montr-client staged update
+Documentation=https://github.com/montr/montr
+
+[Service]
+Type=oneshot
+
+# Runs as root by design: must write /usr/bin/montr-client and restart
+# montr-client.service. The bulk of the update work (download, checksum
+# verification, atomic staging) happens in the unprivileged montr-client
+# process before this service fires; this unit only promotes a pre-verified
+# staged binary into place.
+User=root
+Group=root
+
+ExecStart=/usr/lib/montr-client/apply-update.sh
+
+# Limited hardening — the service intentionally needs write access to
+# /usr/bin and the ability to call systemctl, so sandboxing is shallow.
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=montr-client-updater
