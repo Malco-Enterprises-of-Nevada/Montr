@@ -395,6 +395,18 @@ const groupsAPI = {
     }
 };
 
+const scheduleTemplatesAPI = {
+    async list() {
+        return await apiCall('/schedule-templates');
+    },
+    async instantiate(id, body) {
+        return await apiCall(`/schedule-templates/${id}/instantiate`, {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
+    },
+};
+
 const schedulesAPI = {
     async list() {
         return await apiCall('/schedules');
@@ -416,6 +428,22 @@ const schedulesAPI = {
             method: 'PUT',
             body: JSON.stringify(data)
         });
+    },
+
+    async simulate(id, from, to) {
+        const q = new URLSearchParams();
+        if (from) q.set('from', from);
+        if (to) q.set('to', to);
+        return await apiCall(`/schedules/${id}/simulate?${q.toString()}`, { method: 'POST' });
+    },
+
+    async simulateAll(from, to, client_id, group_id) {
+        const q = new URLSearchParams();
+        if (from) q.set('from', from);
+        if (to) q.set('to', to);
+        if (client_id) q.set('client_id', client_id);
+        if (group_id) q.set('group_id', String(group_id));
+        return await apiCall(`/schedules/simulate?${q.toString()}`);
     },
 
     async delete(id) {
@@ -2097,6 +2125,77 @@ async function loadSchedules() {
     }
 }
 
+function getScheduleMode() {
+    const checked = document.querySelector('input[name="scheduleMode"]:checked');
+    return checked ? checked.value : 'simple';
+}
+
+function setScheduleMode(mode) {
+    document.querySelectorAll('input[name="scheduleMode"]').forEach(r => { r.checked = r.value === mode; });
+    document.getElementById('scheduleSimpleFields').style.display = mode === 'simple' ? '' : 'none';
+    document.getElementById('scheduleAdvancedFields').style.display = mode === 'advanced' ? '' : 'none';
+    document.getElementById('scheduleEventFields').style.display = mode === 'event' ? '' : 'none';
+}
+
+function collectScheduleConditions(mode) {
+    const country = document.getElementById('scheduleHolidayCountry').value.trim();
+    const match = document.getElementById('scheduleHolidayMatch').value;
+    const datesRaw = document.getElementById('scheduleSpecialDates').value.trim();
+
+    const conditions = {};
+    if (country && match) {
+        conditions.holidays = { country: country.toUpperCase(), match };
+    }
+    if (datesRaw) {
+        const dates = datesRaw.split(',').map(d => d.trim()).filter(Boolean);
+        if (dates.length > 0) conditions.special_dates = dates;
+    }
+    if (mode === 'event') {
+        conditions.event_trigger = { event_type: document.getElementById('scheduleEventType').value };
+    }
+    return Object.keys(conditions).length > 0 ? conditions : null;
+}
+
+function buildSchedulePayload() {
+    const mode = getScheduleMode();
+    const name = document.getElementById('scheduleName').value.trim();
+    const playlist_id = parseInt(document.getElementById('schedulePlaylist').value);
+    const priority = parseInt(document.getElementById('schedulePriority').value) || 50;
+    const enabled = document.getElementById('scheduleEnabled').checked;
+
+    const targetSelect = document.getElementById('scheduleTarget');
+    const target = targetSelect.value;
+    let client_id, group_id;
+    if (target === 'client') client_id = document.getElementById('scheduleTargetId').value || undefined;
+    if (target === 'group') group_id = parseInt(document.getElementById('scheduleTargetId').value) || undefined;
+
+    const payload = { name, playlist_id, client_id, group_id, priority, enabled };
+
+    if (mode === 'simple') {
+        payload.start_time = document.getElementById('scheduleStartTime').value;
+        payload.end_time = document.getElementById('scheduleEndTime').value || undefined;
+        const dayCheckboxes = document.querySelectorAll('#daysPicker input[type="checkbox"]:checked');
+        payload.days_of_week = Array.from(dayCheckboxes).map(cb => cb.value).join(',');
+        payload.interrupt_mode = 'assign';
+    } else if (mode === 'advanced') {
+        payload.cron_expression = document.getElementById('scheduleCronExpression').value.trim();
+        const tz = document.getElementById('scheduleTimezone').value.trim();
+        if (tz) payload.timezone = tz;
+        const dur = parseInt(document.getElementById('scheduleDurationSeconds').value);
+        if (dur > 0) payload.duration_seconds = dur;
+        payload.interrupt_mode = document.getElementById('scheduleInterruptMode').value;
+    } else if (mode === 'event') {
+        const dur = parseInt(document.getElementById('scheduleEventDuration').value) || 60;
+        payload.duration_seconds = dur;
+        payload.interrupt_mode = document.getElementById('scheduleEventInterruptMode').value;
+    }
+
+    const conditions = collectScheduleConditions(mode);
+    if (conditions) payload.conditions = conditions;
+
+    return { payload, mode };
+}
+
 function initScheduleModal() {
     const modal = document.getElementById('scheduleModal');
     const targetSelect = document.getElementById('scheduleTarget');
@@ -2118,36 +2217,36 @@ function initScheduleModal() {
         populateTargetSelect(targetSelect.value);
     });
 
+    document.querySelectorAll('input[name="scheduleMode"]').forEach(r => {
+        r.addEventListener('change', () => setScheduleMode(r.value));
+    });
+
+    document.getElementById('fromTemplateBtn').addEventListener('click', openTemplatePicker);
+    document.getElementById('previewScheduleBtn').addEventListener('click', previewCurrentSchedule);
+
     document.getElementById('saveScheduleBtn').addEventListener('click', async () => {
         const editId = document.getElementById('scheduleEditId').value;
-        const name = document.getElementById('scheduleName').value.trim();
-        const playlist_id = parseInt(document.getElementById('schedulePlaylist').value);
-        const start_time = document.getElementById('scheduleStartTime').value;
-        const end_time = document.getElementById('scheduleEndTime').value || undefined;
-        const priority = parseInt(document.getElementById('schedulePriority').value) || 50;
-        const enabled = document.getElementById('scheduleEnabled').checked;
+        const { payload, mode } = buildSchedulePayload();
 
-        const dayCheckboxes = document.querySelectorAll('#daysPicker input[type="checkbox"]:checked');
-        const days_of_week = Array.from(dayCheckboxes).map(cb => cb.value).join(',');
-
-        const target = targetSelect.value;
-        let client_id = undefined;
-        let group_id = undefined;
-        if (target === 'client') client_id = document.getElementById('scheduleTargetId').value || undefined;
-        if (target === 'group') group_id = parseInt(document.getElementById('scheduleTargetId').value) || undefined;
-
-        if (!name || !playlist_id || !start_time) {
-            showToast('Name, playlist, and start time are required', 'error');
+        if (!payload.name || !payload.playlist_id) {
+            showToast('Name and playlist are required', 'error');
+            return;
+        }
+        if (mode === 'simple' && !payload.start_time) {
+            showToast('Start time is required for simple schedules', 'error');
+            return;
+        }
+        if (mode === 'advanced' && !payload.cron_expression) {
+            showToast('Cron expression is required for advanced schedules', 'error');
             return;
         }
 
         try {
-            const data = { name, playlist_id, client_id, group_id, start_time, end_time, days_of_week, priority, enabled };
             if (editId) {
-                await schedulesAPI.update(parseInt(editId), data);
+                await schedulesAPI.update(parseInt(editId), payload);
                 showToast('Schedule updated', 'success');
             } else {
-                await schedulesAPI.create(data);
+                await schedulesAPI.create(payload);
                 showToast('Schedule created', 'success');
             }
             modal.style.display = 'none';
@@ -2168,6 +2267,17 @@ function resetScheduleForm() {
     document.getElementById('scheduleTarget').value = 'all';
     document.getElementById('scheduleClientGroup').style.display = 'none';
     document.querySelectorAll('#daysPicker input[type="checkbox"]').forEach(cb => { cb.checked = true; });
+    document.getElementById('scheduleCronExpression').value = '';
+    document.getElementById('scheduleTimezone').value = '';
+    document.getElementById('scheduleDurationSeconds').value = '';
+    document.getElementById('scheduleInterruptMode').value = 'assign';
+    document.getElementById('scheduleEventType').value = 'client_offline';
+    document.getElementById('scheduleEventDuration').value = '60';
+    document.getElementById('scheduleEventInterruptMode').value = 'interrupt';
+    document.getElementById('scheduleHolidayCountry').value = '';
+    document.getElementById('scheduleHolidayMatch').value = '';
+    document.getElementById('scheduleSpecialDates').value = '';
+    setScheduleMode('simple');
 }
 
 async function populateScheduleSelects() {
@@ -2200,22 +2310,47 @@ async function populateTargetSelect(type) {
 
 async function openEditSchedule(id) {
     try {
+        resetScheduleForm();
         const schedule = await schedulesAPI.get(id);
         await populateScheduleSelects();
 
         document.getElementById('scheduleEditId').value = id;
         document.getElementById('scheduleName').value = schedule.name;
         document.getElementById('schedulePlaylist').value = schedule.playlist_id;
-        document.getElementById('scheduleStartTime').value = schedule.start_time;
-        document.getElementById('scheduleEndTime').value = schedule.end_time || '';
         document.getElementById('schedulePriority').value = schedule.priority;
         document.getElementById('scheduleEnabled').checked = schedule.enabled;
 
-        // Set days
-        const activeDays = new Set(schedule.days_of_week.split(','));
-        document.querySelectorAll('#daysPicker input[type="checkbox"]').forEach(cb => {
-            cb.checked = activeDays.has(cb.value);
-        });
+        // Determine mode
+        const isEvent = !!(schedule.conditions && schedule.conditions.event_trigger);
+        const mode = isEvent ? 'event' : (schedule.cron_expression ? 'advanced' : 'simple');
+        setScheduleMode(mode);
+
+        if (mode === 'simple') {
+            document.getElementById('scheduleStartTime').value = schedule.start_time || '';
+            document.getElementById('scheduleEndTime').value = schedule.end_time || '';
+            const activeDays = new Set((schedule.days_of_week || '').split(','));
+            document.querySelectorAll('#daysPicker input[type="checkbox"]').forEach(cb => {
+                cb.checked = activeDays.has(cb.value);
+            });
+        } else if (mode === 'advanced') {
+            document.getElementById('scheduleCronExpression').value = schedule.cron_expression || '';
+            document.getElementById('scheduleTimezone').value = schedule.timezone || '';
+            document.getElementById('scheduleDurationSeconds').value = schedule.duration_seconds || '';
+            document.getElementById('scheduleInterruptMode').value = schedule.interrupt_mode || 'assign';
+        } else if (mode === 'event') {
+            document.getElementById('scheduleEventType').value = schedule.conditions.event_trigger.event_type;
+            document.getElementById('scheduleEventDuration').value = schedule.duration_seconds || 60;
+            document.getElementById('scheduleEventInterruptMode').value = schedule.interrupt_mode || 'interrupt';
+        }
+
+        // Conditions — holidays, special dates
+        if (schedule.conditions && schedule.conditions.holidays) {
+            document.getElementById('scheduleHolidayCountry').value = schedule.conditions.holidays.country || '';
+            document.getElementById('scheduleHolidayMatch').value = schedule.conditions.holidays.match || '';
+        }
+        if (schedule.conditions && Array.isArray(schedule.conditions.special_dates)) {
+            document.getElementById('scheduleSpecialDates').value = schedule.conditions.special_dates.join(', ');
+        }
 
         // Set target
         const targetSelect = document.getElementById('scheduleTarget');
@@ -2240,6 +2375,139 @@ async function openEditSchedule(id) {
     } catch (error) {
         showToast('Failed to load schedule', 'error');
     }
+}
+
+// ===== Template Picker & Preview =====
+
+async function openTemplatePicker() {
+    const modal = document.getElementById('templatePickerModal');
+    const list = document.getElementById('templatePickerList');
+    list.innerHTML = 'Loading templates…';
+    modal.style.display = 'flex';
+    try {
+        const templates = await scheduleTemplatesAPI.list();
+        if (!templates || templates.length === 0) {
+            list.innerHTML = '<p class="text-muted">No templates available.</p>';
+            return;
+        }
+        list.innerHTML = templates.map(t => {
+            const def = t.definition || {};
+            const summary = def.mode === 'advanced'
+                ? `cron <code>${escapeHtml(def.cron_expression || '')}</code>`
+                : def.mode === 'simple'
+                    ? `${escapeHtml(def.start_time || '')} – ${escapeHtml(def.end_time || '')}`
+                    : 'event-triggered';
+            return `<div class="template-row" data-id="${t.id}">
+                <div>
+                    <strong>${escapeHtml(t.name)}</strong> ${t.is_builtin ? '<span class="badge">built-in</span>' : ''}
+                    <div class="text-muted">${escapeHtml(t.description || '')}</div>
+                    <div class="text-muted">${summary}</div>
+                </div>
+                <button class="btn btn-primary template-apply-btn" data-id="${t.id}">Apply</button>
+            </div>`;
+        }).join('');
+        list.querySelectorAll('.template-apply-btn').forEach(btn => {
+            btn.addEventListener('click', () => applyTemplateToForm(parseInt(btn.dataset.id), templates));
+        });
+    } catch (err) {
+        list.innerHTML = '<p class="error">Failed to load templates</p>';
+    }
+}
+
+function applyTemplateToForm(id, templates) {
+    const tpl = templates.find(t => t.id === id);
+    if (!tpl) return;
+    const def = tpl.definition || {};
+
+    // Mode
+    const mode = def.conditions && def.conditions.event_trigger
+        ? 'event'
+        : def.mode || 'simple';
+    setScheduleMode(mode);
+
+    if (mode === 'simple') {
+        if (def.start_time) document.getElementById('scheduleStartTime').value = def.start_time;
+        if (def.end_time) document.getElementById('scheduleEndTime').value = def.end_time;
+        if (def.days_of_week) {
+            const active = new Set(def.days_of_week.split(','));
+            document.querySelectorAll('#daysPicker input[type="checkbox"]').forEach(cb => {
+                cb.checked = active.has(cb.value);
+            });
+        }
+    } else if (mode === 'advanced') {
+        if (def.cron_expression) document.getElementById('scheduleCronExpression').value = def.cron_expression;
+        if (def.timezone) document.getElementById('scheduleTimezone').value = def.timezone;
+        if (def.duration_seconds) document.getElementById('scheduleDurationSeconds').value = def.duration_seconds;
+        if (def.interrupt_mode) document.getElementById('scheduleInterruptMode').value = def.interrupt_mode;
+    } else if (mode === 'event') {
+        if (def.conditions?.event_trigger?.event_type) {
+            document.getElementById('scheduleEventType').value = def.conditions.event_trigger.event_type;
+        }
+        if (def.duration_seconds) document.getElementById('scheduleEventDuration').value = def.duration_seconds;
+        if (def.interrupt_mode) document.getElementById('scheduleEventInterruptMode').value = def.interrupt_mode;
+    }
+
+    if (def.conditions && def.conditions.holidays) {
+        document.getElementById('scheduleHolidayCountry').value = def.conditions.holidays.country || '';
+        document.getElementById('scheduleHolidayMatch').value = def.conditions.holidays.match || '';
+    }
+    if (def.conditions && Array.isArray(def.conditions.special_dates)) {
+        document.getElementById('scheduleSpecialDates').value = def.conditions.special_dates.join(', ');
+    }
+    if (def.priority) document.getElementById('schedulePriority').value = def.priority;
+
+    document.getElementById('templatePickerModal').style.display = 'none';
+    showToast(`Applied template "${tpl.name}"`, 'success');
+}
+
+async function previewCurrentSchedule() {
+    const modal = document.getElementById('schedulePreviewModal');
+    const body = document.getElementById('schedulePreviewBody');
+    body.innerHTML = 'Loading…';
+    modal.style.display = 'flex';
+
+    try {
+        const editId = document.getElementById('scheduleEditId').value;
+        const from = new Date().toISOString();
+        const to = new Date(Date.now() + 7 * 86400 * 1000).toISOString();
+        let occurrences = [];
+
+        if (editId) {
+            const res = await schedulesAPI.simulate(parseInt(editId), from, to);
+            occurrences = res.occurrences || [];
+        } else {
+            // Preview an unsaved schedule by first creating a temp sim: just call /schedules/simulate
+            // with no target — not helpful for unsaved. Instead, require save.
+            body.innerHTML = '<p class="text-muted">Save the schedule first to preview its upcoming occurrences.</p>';
+            return;
+        }
+
+        if (occurrences.length === 0) {
+            body.innerHTML = '<p class="text-muted">No occurrences in the next 7 days.</p>';
+            return;
+        }
+
+        body.innerHTML = '<ul class="preview-list">' +
+            occurrences.map(iso => `<li>${new Date(iso).toLocaleString()}</li>`).join('') +
+            '</ul>';
+    } catch (err) {
+        body.innerHTML = `<p class="error">Preview failed: ${escapeHtml(err.message || String(err))}</p>`;
+    }
+}
+
+function initTemplateAndPreviewModals() {
+    document.getElementById('closeTemplatePickerModal').addEventListener('click', () => {
+        document.getElementById('templatePickerModal').style.display = 'none';
+    });
+    document.getElementById('cancelTemplatePickerModal').addEventListener('click', () => {
+        document.getElementById('templatePickerModal').style.display = 'none';
+    });
+    document.getElementById('closeSchedulePreviewModal').addEventListener('click', () => {
+        document.getElementById('schedulePreviewModal').style.display = 'none';
+    });
+    document.getElementById('cancelSchedulePreviewModal').addEventListener('click', () => {
+        document.getElementById('schedulePreviewModal').style.display = 'none';
+    });
 }
 
 // ===== Schedule Calendar =====
@@ -2304,6 +2572,9 @@ function renderScheduleCalendar(schedules) {
     }
 
     schedules.forEach(schedule => {
+        // Calendar view only visualizes HH:MM schedules. Cron/event rows would need
+        // occurrence simulation; for now we show a small footer note below the grid.
+        if (!schedule.start_time) return;
         const startMin = parseTime(schedule.start_time);
         const endMin = schedule.end_time ? parseTime(schedule.end_time) : startMin + 60;
         const duration = Math.max(endMin - startMin, 1);
@@ -3550,6 +3821,7 @@ function initApp() {
     // Initialize schedule functionality
     initScheduleModal();
     initScheduleCalendarView();
+    initTemplateAndPreviewModals();
 
     // Initialize client control modal
     initClientControlModal();

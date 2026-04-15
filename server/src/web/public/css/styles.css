@@ -1855,3 +1855,48 @@ body.auth-active .container {
 .client-card .client-name.clickable:hover {
     text-decoration-color: currentColor;
 }
+
+/* Advanced scheduling — form accordion, templates, preview */
+.form-accordion {
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    margin: 0.5rem 0;
+    background: var(--surface-alt, #f9fafb);
+}
+.form-accordion summary {
+    cursor: pointer;
+    font-weight: 500;
+    padding: 0.25rem 0;
+}
+.form-accordion[open] {
+    padding-bottom: 0.75rem;
+}
+
+.template-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+}
+.template-row code {
+    background: rgba(0, 0, 0, 0.04);
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: 0.85em;
+}
+
+.preview-list {
+    list-style: disc;
+    padding-left: 1.5rem;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+.preview-list li {
+    padding: 2px 0;
+    font-variant-numeric: tabular-nums;
+}

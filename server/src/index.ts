@@ -14,6 +14,7 @@ import playlistRoutes from './api/routes/playlist.routes';
 import clientRoutes from './api/routes/client.routes';
 import groupRoutes from './api/routes/group.routes';
 import scheduleRoutes from './api/routes/schedule.routes';
+import scheduleTemplateRoutes from './api/routes/schedule-template.routes';
 import analyticsRoutes from './api/routes/analytics.routes';
 import telemetryRoutes from './api/routes/telemetry.routes';
 import notificationRoutes from './api/routes/notification.routes';
@@ -144,6 +145,7 @@ class MontrServer {
     this.app.use('/api/clients', requireAuth(), clientRoutes);
     this.app.use('/api/groups', requireAuth(), groupRoutes);
     this.app.use('/api/schedules', requireAuth(), scheduleRoutes);
+    this.app.use('/api/schedule-templates', requireAuth(), scheduleTemplateRoutes);
     this.app.use('/api/analytics', requireAuth(), analyticsRoutes);
     this.app.use('/api/telemetry', requireAuth(), telemetryRoutes);
     this.app.use('/api/notifications', requireAuth(), notificationRoutes);

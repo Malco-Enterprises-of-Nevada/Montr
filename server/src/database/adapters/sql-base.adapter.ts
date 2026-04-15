@@ -29,6 +29,10 @@ import {
   Schedule,
   CreateScheduleInput,
   UpdateScheduleInput,
+  ScheduleConditions,
+  ScheduleTemplate,
+  ScheduleTemplateDefinition,
+  CreateScheduleTemplateInput,
   ClientPlaylist,
   ClientPlaylistWithDetails,
   PlaybackLog,
@@ -718,21 +722,63 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
 
   // ── Schedule operations ─────────────────────────────────────────────────
 
+  private scheduleRowToObj(row: Record<string, unknown> & { enabled: number | boolean }): Schedule {
+    let conditions: ScheduleConditions | null = null;
+    const raw = row.conditions as string | null | undefined;
+    if (raw) {
+      try {
+        conditions = JSON.parse(raw) as ScheduleConditions;
+      } catch {
+        conditions = null;
+      }
+    }
+    return {
+      id: row.id as number,
+      name: row.name as string,
+      playlist_id: row.playlist_id as number,
+      client_id: (row.client_id as string) ?? null,
+      group_id: (row.group_id as number) ?? null,
+      start_time: (row.start_time as string) ?? null,
+      end_time: (row.end_time as string) ?? null,
+      days_of_week: (row.days_of_week as string) ?? '0,1,2,3,4,5,6',
+      priority: (row.priority as number) ?? 50,
+      enabled: Boolean(row.enabled),
+      cron_expression: (row.cron_expression as string) ?? null,
+      duration_seconds: (row.duration_seconds as number) ?? null,
+      timezone: (row.timezone as string) ?? null,
+      conditions,
+      interrupt_mode:
+        ((row.interrupt_mode as string) ?? 'assign') === 'interrupt' ? 'interrupt' : 'assign',
+      template_id: (row.template_id as number) ?? null,
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string,
+    };
+  }
+
   async createSchedule(input: CreateScheduleInput): Promise<Schedule> {
     const p = this.placeholder;
     const result = await this.rawExecute(
-      `INSERT INTO schedules (name, playlist_id, client_id, group_id, start_time, end_time, days_of_week, priority, enabled)
-       VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)})`,
+      `INSERT INTO schedules (
+         name, playlist_id, client_id, group_id, start_time, end_time, days_of_week,
+         priority, enabled, cron_expression, duration_seconds, timezone, conditions,
+         interrupt_mode, template_id
+       ) VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)}, ${p(10)}, ${p(11)}, ${p(12)}, ${p(13)}, ${p(14)}, ${p(15)})`,
       [
         input.name,
         input.playlist_id,
         input.client_id || null,
         input.group_id || null,
-        input.start_time,
+        input.start_time || null,
         input.end_time || null,
         input.days_of_week || '0,1,2,3,4,5,6',
         input.priority ?? 50,
         input.enabled !== false ? 1 : 0,
+        input.cron_expression || null,
+        input.duration_seconds ?? null,
+        input.timezone || null,
+        input.conditions ? JSON.stringify(input.conditions) : null,
+        input.interrupt_mode || 'assign',
+        input.template_id ?? null,
       ]
     );
     const schedule = await this.getScheduleById(result.lastInsertId);
@@ -741,19 +787,19 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   }
 
   async getScheduleById(id: number): Promise<Schedule | null> {
-    const row = await this.rawQueryOne<Omit<Schedule, 'enabled'> & { enabled: number }>(
+    const row = await this.rawQueryOne<Record<string, unknown> & { enabled: number }>(
       `SELECT * FROM schedules WHERE id = ${this.placeholder(1)}`,
       [id]
     );
     if (!row) return null;
-    return { ...row, enabled: Boolean(row.enabled) };
+    return this.scheduleRowToObj(row);
   }
 
   async getAllSchedules(): Promise<Schedule[]> {
-    const rows = await this.rawQuery<Omit<Schedule, 'enabled'> & { enabled: number }>(
+    const rows = await this.rawQuery<Record<string, unknown> & { enabled: number }>(
       'SELECT * FROM schedules ORDER BY priority DESC, name ASC'
     );
-    return rows.map((r) => ({ ...r, enabled: Boolean(r.enabled) }));
+    return rows.map((r) => this.scheduleRowToObj(r));
   }
 
   async updateSchedule(id: number, input: UpdateScheduleInput): Promise<Schedule> {
@@ -771,6 +817,14 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     if (input.days_of_week !== undefined) updatable.days_of_week = input.days_of_week;
     if (input.priority !== undefined) updatable.priority = input.priority;
     if (input.enabled !== undefined) updatable.enabled = input.enabled ? 1 : 0;
+    if (input.cron_expression !== undefined) updatable.cron_expression = input.cron_expression;
+    if (input.duration_seconds !== undefined) updatable.duration_seconds = input.duration_seconds;
+    if (input.timezone !== undefined) updatable.timezone = input.timezone;
+    if (input.conditions !== undefined) {
+      updatable.conditions = input.conditions ? JSON.stringify(input.conditions) : null;
+    }
+    if (input.interrupt_mode !== undefined) updatable.interrupt_mode = input.interrupt_mode;
+    if (input.template_id !== undefined) updatable.template_id = input.template_id;
 
     for (const [key, value] of Object.entries(updatable)) {
       fields.push(`${key} = ${this.placeholder(paramIndex++)}`);
@@ -795,10 +849,66 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   }
 
   async getEnabledSchedules(): Promise<Schedule[]> {
-    const rows = await this.rawQuery<Omit<Schedule, 'enabled'> & { enabled: number }>(
+    const rows = await this.rawQuery<Record<string, unknown> & { enabled: number }>(
       `SELECT * FROM schedules WHERE enabled = 1 ORDER BY priority DESC`
     );
-    return rows.map((r) => ({ ...r, enabled: Boolean(r.enabled) }));
+    return rows.map((r) => this.scheduleRowToObj(r));
+  }
+
+  // ── Schedule template operations ────────────────────────────────────────
+
+  private scheduleTemplateRowToObj(
+    row: Record<string, unknown> & { is_builtin: number | boolean }
+  ): ScheduleTemplate {
+    let definition: ScheduleTemplateDefinition = { mode: 'simple' };
+    const raw = row.definition_json as string | null | undefined;
+    if (raw) {
+      try {
+        definition = JSON.parse(raw) as ScheduleTemplateDefinition;
+      } catch {
+        // keep default
+      }
+    }
+    return {
+      id: row.id as number,
+      name: row.name as string,
+      description: (row.description as string) ?? null,
+      definition,
+      is_builtin: Boolean(row.is_builtin),
+      created_at: row.created_at as string,
+    };
+  }
+
+  async createScheduleTemplate(input: CreateScheduleTemplateInput): Promise<ScheduleTemplate> {
+    const p = this.placeholder;
+    const result = await this.rawExecute(
+      `INSERT INTO schedule_templates (name, description, definition_json, is_builtin)
+       VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)})`,
+      [input.name, input.description || null, JSON.stringify(input.definition), 0]
+    );
+    const template = await this.getScheduleTemplateById(result.lastInsertId);
+    if (!template) throw new Error('Failed to retrieve created template');
+    return template;
+  }
+
+  async getScheduleTemplateById(id: number): Promise<ScheduleTemplate | null> {
+    const row = await this.rawQueryOne<Record<string, unknown> & { is_builtin: number }>(
+      `SELECT * FROM schedule_templates WHERE id = ${this.placeholder(1)}`,
+      [id]
+    );
+    if (!row) return null;
+    return this.scheduleTemplateRowToObj(row);
+  }
+
+  async getAllScheduleTemplates(): Promise<ScheduleTemplate[]> {
+    const rows = await this.rawQuery<Record<string, unknown> & { is_builtin: number }>(
+      `SELECT * FROM schedule_templates ORDER BY is_builtin DESC, name ASC`
+    );
+    return rows.map((r) => this.scheduleTemplateRowToObj(r));
+  }
+
+  async deleteScheduleTemplate(id: number): Promise<void> {
+    await this.rawExecute(`DELETE FROM schedule_templates WHERE id = ${this.placeholder(1)}`, [id]);
   }
 
   // ── Client playlist operations ──────────────────────────────────────────

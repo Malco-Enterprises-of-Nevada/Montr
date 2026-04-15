@@ -361,33 +361,78 @@ export const groupMemberParamsSchema = z.object({
 
 const timeRegex = /^([01]\d|2[0-3]):[0-5]\d$/;
 const daysOfWeekRegex = /^[0-6](,[0-6])*$/;
+const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+const notificationEventEnum = z.enum([
+  'client_offline',
+  'client_error',
+  'playlist_empty',
+  'storage_full',
+  'media_approval_needed',
+]);
+
+const interruptModeEnum = z.enum(['assign', 'interrupt']);
+
+const scheduleConditionsSchema = z.object({
+  holidays: z
+    .object({
+      country: z.string().min(2).max(8),
+      regions: z.array(z.string().min(1).max(16)).optional(),
+      match: z.enum(['on', 'not_on']),
+    })
+    .optional(),
+  special_dates: z
+    .array(z.string().regex(isoDateRegex, 'special_dates must be YYYY-MM-DD'))
+    .max(366)
+    .optional(),
+  event_trigger: z
+    .object({
+      event_type: notificationEventEnum,
+    })
+    .optional(),
+});
 
 /**
  * Request body for creating a schedule
  */
-export const createScheduleSchema = z.object({
-  name: z
-    .string()
-    .min(1, 'Schedule name is required')
-    .max(255, 'Schedule name must not exceed 255 characters')
-    .trim(),
-  playlist_id: z.number().int().positive('Playlist ID must be a positive integer'),
-  client_id: z.string().uuid('Client ID must be a valid UUID').optional(),
-  group_id: z.number().int().positive('Group ID must be a positive integer').optional(),
-  start_time: z.string().regex(timeRegex, 'Start time must be in HH:MM format'),
-  end_time: z.string().regex(timeRegex, 'End time must be in HH:MM format').optional(),
-  days_of_week: z
-    .string()
-    .regex(daysOfWeekRegex, 'Days of week must be comma-separated digits 0-6 (0=Sunday)')
-    .optional(),
-  priority: z
-    .number()
-    .int()
-    .min(1, 'Priority must be at least 1')
-    .max(100, 'Priority must not exceed 100')
-    .optional(),
-  enabled: z.boolean().optional(),
-});
+export const createScheduleSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1, 'Schedule name is required')
+      .max(255, 'Schedule name must not exceed 255 characters')
+      .trim(),
+    playlist_id: z.number().int().positive('Playlist ID must be a positive integer'),
+    client_id: z.string().uuid('Client ID must be a valid UUID').optional(),
+    group_id: z.number().int().positive('Group ID must be a positive integer').optional(),
+    start_time: z.string().regex(timeRegex, 'Start time must be in HH:MM format').optional(),
+    end_time: z.string().regex(timeRegex, 'End time must be in HH:MM format').optional(),
+    days_of_week: z
+      .string()
+      .regex(daysOfWeekRegex, 'Days of week must be comma-separated digits 0-6 (0=Sunday)')
+      .optional(),
+    priority: z
+      .number()
+      .int()
+      .min(1, 'Priority must be at least 1')
+      .max(100, 'Priority must not exceed 100')
+      .optional(),
+    enabled: z.boolean().optional(),
+    cron_expression: z.string().min(1).max(128).optional(),
+    duration_seconds: z
+      .number()
+      .int()
+      .positive()
+      .max(7 * 24 * 3600)
+      .optional(),
+    timezone: z.string().max(64).optional(),
+    conditions: scheduleConditionsSchema.optional(),
+    interrupt_mode: interruptModeEnum.optional(),
+    template_id: z.number().int().positive().optional(),
+  })
+  .refine((d) => d.cron_expression || d.start_time || d.conditions?.event_trigger, {
+    message: 'Must specify cron_expression, start_time, or conditions.event_trigger',
+  });
 
 /**
  * Request body for updating a schedule
@@ -398,15 +443,70 @@ export const updateScheduleSchema = z
     playlist_id: z.number().int().positive().optional(),
     client_id: z.string().uuid().nullable().optional(),
     group_id: z.number().int().positive().nullable().optional(),
-    start_time: z.string().regex(timeRegex, 'Start time must be in HH:MM format').optional(),
+    start_time: z
+      .string()
+      .regex(timeRegex, 'Start time must be in HH:MM format')
+      .nullable()
+      .optional(),
     end_time: z.string().regex(timeRegex, 'End time must be in HH:MM format').nullable().optional(),
     days_of_week: z.string().regex(daysOfWeekRegex).optional(),
     priority: z.number().int().min(1).max(100).optional(),
     enabled: z.boolean().optional(),
+    cron_expression: z.string().min(1).max(128).nullable().optional(),
+    duration_seconds: z
+      .number()
+      .int()
+      .positive()
+      .max(7 * 24 * 3600)
+      .nullable()
+      .optional(),
+    timezone: z.string().max(64).nullable().optional(),
+    conditions: scheduleConditionsSchema.nullable().optional(),
+    interrupt_mode: interruptModeEnum.optional(),
+    template_id: z.number().int().positive().nullable().optional(),
   })
   .refine((data) => Object.values(data).some((v) => v !== undefined), {
     message: 'At least one field must be provided',
   });
+
+/**
+ * Query parameters for simulation endpoints
+ */
+export const simulateQuerySchema = z.object({
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  client_id: z.string().uuid().optional(),
+  group_id: z.string().regex(/^\d+$/).transform(Number).optional(),
+});
+
+// Schedule template schemas
+
+const templateDefinitionSchema = z.object({
+  mode: z.enum(['simple', 'advanced']),
+  start_time: z.string().regex(timeRegex).optional(),
+  end_time: z.string().regex(timeRegex).optional(),
+  days_of_week: z.string().regex(daysOfWeekRegex).optional(),
+  cron_expression: z.string().min(1).max(128).optional(),
+  duration_seconds: z.number().int().positive().optional(),
+  timezone: z.string().max(64).optional(),
+  conditions: scheduleConditionsSchema.optional(),
+  interrupt_mode: interruptModeEnum.optional(),
+  priority: z.number().int().min(1).max(100).optional(),
+});
+
+export const createScheduleTemplateSchema = z.object({
+  name: z.string().min(1).max(255).trim(),
+  description: z.string().max(1000).trim().optional(),
+  definition: templateDefinitionSchema,
+});
+
+export const instantiateScheduleTemplateSchema = z.object({
+  name: z.string().min(1).max(255).trim(),
+  playlist_id: z.number().int().positive(),
+  client_id: z.string().uuid().optional(),
+  group_id: z.number().int().positive().optional(),
+  overrides: z.record(z.string(), z.unknown()).optional(),
+});
 
 // Client playlist assignment schemas
 
