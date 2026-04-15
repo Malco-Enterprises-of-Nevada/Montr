@@ -13,6 +13,7 @@ import {
 } from '../database/types';
 import { getLogger } from '../utils/logger';
 import { AppError, ErrorCode } from '../api/middleware/error-handler';
+import { scheduleService } from './schedule.service';
 
 const logger = getLogger();
 
@@ -99,6 +100,14 @@ export class NotificationService {
 
     if (rules.length > 0) {
       logger.info(`Event '${eventType}': dispatched to ${sentCount}/${rules.length} rules`);
+    }
+
+    // Fan out to event-triggered schedules. Run async but await so callers
+    // can assert on side effects in tests.
+    try {
+      await scheduleService.onEvent(eventType, payload);
+    } catch (err) {
+      logger.error('Schedule onEvent dispatch failed:', err);
     }
 
     return sentCount;

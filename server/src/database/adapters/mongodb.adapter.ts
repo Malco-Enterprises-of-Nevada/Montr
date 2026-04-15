@@ -29,6 +29,10 @@ import {
   Schedule,
   CreateScheduleInput,
   UpdateScheduleInput,
+  ScheduleTemplate,
+  ScheduleTemplateDefinition,
+  CreateScheduleTemplateInput,
+  ScheduleConditions,
   ClientPlaylist,
   ClientPlaylistWithDetails,
   PlaybackLog,
@@ -604,6 +608,30 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
   // ── Schedule operations ──────────────────────────────────────────────────
 
+  private scheduleDocToObj(doc: Record<string, unknown> | null): Schedule | null {
+    if (!doc) return null;
+    return {
+      id: doc.id as number,
+      name: doc.name as string,
+      playlist_id: doc.playlist_id as number,
+      client_id: (doc.client_id as string) ?? null,
+      group_id: (doc.group_id as number) ?? null,
+      start_time: (doc.start_time as string) ?? null,
+      end_time: (doc.end_time as string) ?? null,
+      days_of_week: (doc.days_of_week as string) ?? '0,1,2,3,4,5,6',
+      priority: (doc.priority as number) ?? 50,
+      enabled: Boolean(doc.enabled),
+      cron_expression: (doc.cron_expression as string) ?? null,
+      duration_seconds: (doc.duration_seconds as number) ?? null,
+      timezone: (doc.timezone as string) ?? null,
+      conditions: (doc.conditions as ScheduleConditions) ?? null,
+      interrupt_mode: doc.interrupt_mode === 'interrupt' ? 'interrupt' : 'assign',
+      template_id: (doc.template_id as number) ?? null,
+      created_at: doc.created_at as string,
+      updated_at: doc.updated_at as string,
+    };
+  }
+
   async createSchedule(input: CreateScheduleInput): Promise<Schedule> {
     const id = await this.nextId('schedules');
     const now = new Date().toISOString();
@@ -613,26 +641,32 @@ export class MongoDBAdapter implements DatabaseAdapter {
       playlist_id: input.playlist_id,
       client_id: input.client_id || null,
       group_id: input.group_id || null,
-      start_time: input.start_time,
+      start_time: input.start_time || null,
       end_time: input.end_time || null,
       days_of_week: input.days_of_week || '0,1,2,3,4,5,6',
       priority: input.priority ?? 50,
       enabled: input.enabled !== false,
+      cron_expression: input.cron_expression || null,
+      duration_seconds: input.duration_seconds ?? null,
+      timezone: input.timezone || null,
+      conditions: input.conditions ?? null,
+      interrupt_mode: input.interrupt_mode || 'assign',
+      template_id: input.template_id ?? null,
       created_at: now,
       updated_at: now,
     };
     await this.col('schedules').insertOne(doc);
-    return doc as Schedule;
+    return this.scheduleDocToObj(doc)!;
   }
 
   async getScheduleById(id: number): Promise<Schedule | null> {
     const doc = await this.col('schedules').findOne({ id });
-    return this.docToObj<Schedule>(doc);
+    return this.scheduleDocToObj(doc as Record<string, unknown> | null);
   }
 
   async getAllSchedules(): Promise<Schedule[]> {
     const docs = await this.col('schedules').find().sort({ priority: -1, name: 1 }).toArray();
-    return docs.map((d) => this.docToObj<Schedule>(d)!);
+    return docs.map((d) => this.scheduleDocToObj(d as Record<string, unknown>)!);
   }
 
   async updateSchedule(id: number, input: UpdateScheduleInput): Promise<Schedule> {
@@ -646,6 +680,12 @@ export class MongoDBAdapter implements DatabaseAdapter {
     if (input.days_of_week !== undefined) setFields.days_of_week = input.days_of_week;
     if (input.priority !== undefined) setFields.priority = input.priority;
     if (input.enabled !== undefined) setFields.enabled = input.enabled;
+    if (input.cron_expression !== undefined) setFields.cron_expression = input.cron_expression;
+    if (input.duration_seconds !== undefined) setFields.duration_seconds = input.duration_seconds;
+    if (input.timezone !== undefined) setFields.timezone = input.timezone;
+    if (input.conditions !== undefined) setFields.conditions = input.conditions;
+    if (input.interrupt_mode !== undefined) setFields.interrupt_mode = input.interrupt_mode;
+    if (input.template_id !== undefined) setFields.template_id = input.template_id;
 
     await this.col('schedules').updateOne({ id }, { $set: setFields });
     const schedule = await this.getScheduleById(id);
@@ -662,7 +702,63 @@ export class MongoDBAdapter implements DatabaseAdapter {
       .find({ enabled: true })
       .sort({ priority: -1 })
       .toArray();
-    return docs.map((d) => this.docToObj<Schedule>(d)!);
+    return docs.map((d) => this.scheduleDocToObj(d as Record<string, unknown>)!);
+  }
+
+  // ── Schedule template operations ────────────────────────────────────────
+
+  private templateDocToObj(doc: Record<string, unknown> | null): ScheduleTemplate | null {
+    if (!doc) return null;
+    let definition: ScheduleTemplateDefinition = { mode: 'simple' };
+    const raw = doc.definition_json;
+    if (typeof raw === 'string') {
+      try {
+        definition = JSON.parse(raw) as ScheduleTemplateDefinition;
+      } catch {
+        // keep default
+      }
+    } else if (raw && typeof raw === 'object') {
+      definition = raw as ScheduleTemplateDefinition;
+    }
+    return {
+      id: doc.id as number,
+      name: doc.name as string,
+      description: (doc.description as string) ?? null,
+      definition,
+      is_builtin: Boolean(doc.is_builtin),
+      created_at: doc.created_at as string,
+    };
+  }
+
+  async createScheduleTemplate(input: CreateScheduleTemplateInput): Promise<ScheduleTemplate> {
+    const id = await this.nextId('schedule_templates');
+    const doc = {
+      id,
+      name: input.name,
+      description: input.description || null,
+      definition_json: JSON.stringify(input.definition),
+      is_builtin: false,
+      created_at: new Date().toISOString(),
+    };
+    await this.col('schedule_templates').insertOne(doc);
+    return this.templateDocToObj(doc)!;
+  }
+
+  async getScheduleTemplateById(id: number): Promise<ScheduleTemplate | null> {
+    const doc = await this.col('schedule_templates').findOne({ id });
+    return this.templateDocToObj(doc as Record<string, unknown> | null);
+  }
+
+  async getAllScheduleTemplates(): Promise<ScheduleTemplate[]> {
+    const docs = await this.col('schedule_templates')
+      .find()
+      .sort({ is_builtin: -1, name: 1 })
+      .toArray();
+    return docs.map((d) => this.templateDocToObj(d as Record<string, unknown>)!);
+  }
+
+  async deleteScheduleTemplate(id: number): Promise<void> {
+    await this.col('schedule_templates').deleteOne({ id });
   }
 
   // ── Migration executor ───────────────────────────────────────────────────

@@ -27,6 +27,8 @@ import {
   Schedule,
   CreateScheduleInput,
   UpdateScheduleInput,
+  ScheduleTemplate,
+  CreateScheduleTemplateInput,
   ClientPlaylist,
   ClientPlaylistWithDetails,
   PlaybackLog,
@@ -118,6 +120,12 @@ export interface DatabaseAdapter {
   updateSchedule(id: number, input: UpdateScheduleInput): Promise<Schedule>;
   deleteSchedule(id: number): Promise<void>;
   getEnabledSchedules(): Promise<Schedule[]>;
+
+  // Schedule template operations
+  createScheduleTemplate(input: CreateScheduleTemplateInput): Promise<ScheduleTemplate>;
+  getScheduleTemplateById(id: number): Promise<ScheduleTemplate | null>;
+  getAllScheduleTemplates(): Promise<ScheduleTemplate[]>;
+  deleteScheduleTemplate(id: number): Promise<void>;
 
   // Client playlist operations
   addClientPlaylist(

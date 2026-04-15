@@ -295,13 +295,13 @@ Phases 1-4 are complete. This file tracks what remains.
 - [ ] **Tests**: Mobile E2E tests (Detox or similar)
 
 ### Advanced Scheduling
-- [ ] **Complex rules**: Cron-like expressions for schedule triggers
-- [ ] **Conditional rules**: Weather-based, date-based (holidays), event-triggered playlists
-- [ ] **Schedule templates**: Pre-built templates (business hours, weekday/weekend, seasonal)
-- [ ] **Conflict resolution**: When multiple rules match, configurable resolution strategy
-- [ ] **Preview**: Calendar view showing what will play when, with simulation mode
-- [ ] **Web UI**: Visual rule builder with condition chains
-- [ ] **Tests**: Complex rule evaluation tests, conflict resolution tests
+- [x] **Complex rules**: Cron-like expressions for schedule triggers — `cron_expression` column + `services/scheduling/cron-matcher.ts` (cron-parser)
+- [x] **Conditional rules**: Holiday (offline `date-holidays`) and special-date rules; weather deferred; event-triggered rules reuse notification events via `scheduleService.onEvent` hook in `NotificationService.fireEvent`
+- [x] **Schedule templates**: `schedule_templates` table + CRUD + instantiate endpoint; 5 built-ins seeded in migration 013 (business hours, weekends, holiday hours, evenings & weekends, offline emergency)
+- [x] **Conflict resolution**: `services/scheduling/conflict-resolver.ts` — priority DESC, id ASC tiebreak; applied in `evaluateSchedules`
+- [x] **Preview**: `GET /api/schedules/simulate` (timeline, conflict-aware) + `POST /api/schedules/:id/simulate` (single-schedule)
+- [x] **Web UI**: Mode toggle (simple/advanced/event), conditions accordion, template picker modal, preview modal, save-from-template flow
+- [x] **Tests**: 32 new unit tests across `cron-matcher`, `condition-evaluator`, `conflict-resolver`; extended `schedule.service.test.ts` for cron, conflict resolution, conditions, simulation, event triggers
 
 ### A/B Testing for Content
 - [ ] **Schema**: Add `experiments` table (id, name, playlist_a_id, playlist_b_id, split_ratio, start_date, end_date, status)

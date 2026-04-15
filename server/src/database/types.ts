@@ -194,17 +194,44 @@ export interface UpdateClientGroupInput {
 }
 
 // Schedule types
+export type ScheduleInterruptMode = 'assign' | 'interrupt';
+
+export interface ScheduleHolidayCondition {
+  country: string;
+  regions?: string[];
+  /** 'on' = fires when today IS a holiday; 'not_on' = fires when today is NOT a holiday */
+  match: 'on' | 'not_on';
+}
+
+export interface ScheduleEventCondition {
+  event_type: NotificationEventType;
+}
+
+export interface ScheduleConditions {
+  holidays?: ScheduleHolidayCondition;
+  /** ISO yyyy-mm-dd strings. Fires only when today matches one of these. */
+  special_dates?: string[];
+  /** Rule fires when a matching NotificationEvent is emitted (not on the 60s tick). */
+  event_trigger?: ScheduleEventCondition;
+}
+
 export interface Schedule {
   id: number;
   name: string;
   playlist_id: number;
   client_id: string | null;
   group_id: number | null;
-  start_time: string;
+  start_time: string | null;
   end_time: string | null;
   days_of_week: string;
   priority: number;
   enabled: boolean;
+  cron_expression: string | null;
+  duration_seconds: number | null;
+  timezone: string | null;
+  conditions: ScheduleConditions | null;
+  interrupt_mode: ScheduleInterruptMode;
+  template_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -214,11 +241,17 @@ export interface CreateScheduleInput {
   playlist_id: number;
   client_id?: string;
   group_id?: number;
-  start_time: string;
+  start_time?: string;
   end_time?: string;
   days_of_week?: string;
   priority?: number;
   enabled?: boolean;
+  cron_expression?: string;
+  duration_seconds?: number;
+  timezone?: string;
+  conditions?: ScheduleConditions;
+  interrupt_mode?: ScheduleInterruptMode;
+  template_id?: number;
 }
 
 export interface UpdateScheduleInput {
@@ -226,11 +259,46 @@ export interface UpdateScheduleInput {
   playlist_id?: number;
   client_id?: string | null;
   group_id?: number | null;
-  start_time?: string;
+  start_time?: string | null;
   end_time?: string | null;
   days_of_week?: string;
   priority?: number;
   enabled?: boolean;
+  cron_expression?: string | null;
+  duration_seconds?: number | null;
+  timezone?: string | null;
+  conditions?: ScheduleConditions | null;
+  interrupt_mode?: ScheduleInterruptMode;
+  template_id?: number | null;
+}
+
+// Schedule template types
+export interface ScheduleTemplateDefinition {
+  mode: 'simple' | 'advanced';
+  start_time?: string;
+  end_time?: string;
+  days_of_week?: string;
+  cron_expression?: string;
+  duration_seconds?: number;
+  timezone?: string;
+  conditions?: ScheduleConditions;
+  interrupt_mode?: ScheduleInterruptMode;
+  priority?: number;
+}
+
+export interface ScheduleTemplate {
+  id: number;
+  name: string;
+  description: string | null;
+  definition: ScheduleTemplateDefinition;
+  is_builtin: boolean;
+  created_at: string;
+}
+
+export interface CreateScheduleTemplateInput {
+  name: string;
+  description?: string;
+  definition: ScheduleTemplateDefinition;
 }
 
 // Client playlist assignment types

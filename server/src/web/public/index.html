@@ -739,9 +739,14 @@
             <div class="modal-body">
                 <form id="scheduleForm">
                     <input type="hidden" id="scheduleEditId">
-                    <div class="form-group">
-                        <label for="scheduleName">Name</label>
-                        <input type="text" id="scheduleName" placeholder="e.g., Morning Playlist" required maxlength="255">
+                    <div class="form-row" style="align-items:flex-end">
+                        <div class="form-group" style="flex:1">
+                            <label for="scheduleName">Name</label>
+                            <input type="text" id="scheduleName" placeholder="e.g., Morning Playlist" required maxlength="255">
+                        </div>
+                        <div class="form-group">
+                            <button type="button" class="btn btn-secondary" id="fromTemplateBtn">From Template…</button>
+                        </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
@@ -755,28 +760,116 @@
                             <input type="number" id="schedulePriority" value="50" min="1" max="100">
                         </div>
                     </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="scheduleStartTime">Start Time</label>
-                            <input type="time" id="scheduleStartTime" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="scheduleEndTime">End Time (optional)</label>
-                            <input type="time" id="scheduleEndTime">
-                        </div>
-                    </div>
+
                     <div class="form-group">
-                        <label>Days of Week</label>
-                        <div class="days-picker" id="daysPicker">
-                            <label class="day-checkbox"><input type="checkbox" value="0" checked> Sun</label>
-                            <label class="day-checkbox"><input type="checkbox" value="1" checked> Mon</label>
-                            <label class="day-checkbox"><input type="checkbox" value="2" checked> Tue</label>
-                            <label class="day-checkbox"><input type="checkbox" value="3" checked> Wed</label>
-                            <label class="day-checkbox"><input type="checkbox" value="4" checked> Thu</label>
-                            <label class="day-checkbox"><input type="checkbox" value="5" checked> Fri</label>
-                            <label class="day-checkbox"><input type="checkbox" value="6" checked> Sat</label>
+                        <label>Trigger Mode</label>
+                        <div class="days-picker" id="scheduleModeToggle">
+                            <label class="day-checkbox"><input type="radio" name="scheduleMode" value="simple" checked> Simple (HH:MM window)</label>
+                            <label class="day-checkbox"><input type="radio" name="scheduleMode" value="advanced"> Advanced (cron)</label>
+                            <label class="day-checkbox"><input type="radio" name="scheduleMode" value="event"> Event-triggered</label>
                         </div>
                     </div>
+
+                    <div id="scheduleSimpleFields">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="scheduleStartTime">Start Time</label>
+                                <input type="time" id="scheduleStartTime">
+                            </div>
+                            <div class="form-group">
+                                <label for="scheduleEndTime">End Time (optional)</label>
+                                <input type="time" id="scheduleEndTime">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Days of Week</label>
+                            <div class="days-picker" id="daysPicker">
+                                <label class="day-checkbox"><input type="checkbox" value="0" checked> Sun</label>
+                                <label class="day-checkbox"><input type="checkbox" value="1" checked> Mon</label>
+                                <label class="day-checkbox"><input type="checkbox" value="2" checked> Tue</label>
+                                <label class="day-checkbox"><input type="checkbox" value="3" checked> Wed</label>
+                                <label class="day-checkbox"><input type="checkbox" value="4" checked> Thu</label>
+                                <label class="day-checkbox"><input type="checkbox" value="5" checked> Fri</label>
+                                <label class="day-checkbox"><input type="checkbox" value="6" checked> Sat</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="scheduleAdvancedFields" style="display:none">
+                        <div class="form-row">
+                            <div class="form-group" style="flex:2">
+                                <label for="scheduleCronExpression">Cron Expression</label>
+                                <input type="text" id="scheduleCronExpression" placeholder="0 9 * * 1-5 (9am weekdays)">
+                                <small class="text-muted">5 fields: minute hour day month day-of-week</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="scheduleTimezone">Timezone</label>
+                                <input type="text" id="scheduleTimezone" placeholder="UTC or America/Los_Angeles">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="scheduleDurationSeconds">Duration (seconds, optional)</label>
+                                <input type="number" id="scheduleDurationSeconds" placeholder="e.g., 3600" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label for="scheduleInterruptMode">Dispatch Mode</label>
+                                <select id="scheduleInterruptMode" class="form-select">
+                                    <option value="assign">Assign playlist</option>
+                                    <option value="interrupt">Interrupt &amp; resume after duration</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="scheduleEventFields" style="display:none">
+                        <div class="form-group">
+                            <label for="scheduleEventType">Trigger Event</label>
+                            <select id="scheduleEventType" class="form-select">
+                                <option value="client_offline">Client offline</option>
+                                <option value="client_error">Client error</option>
+                                <option value="playlist_empty">Playlist empty</option>
+                                <option value="storage_full">Storage full</option>
+                                <option value="media_approval_needed">Media approval needed</option>
+                            </select>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="scheduleEventDuration">Playback Duration (seconds)</label>
+                                <input type="number" id="scheduleEventDuration" value="60" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label for="scheduleEventInterruptMode">Dispatch Mode</label>
+                                <select id="scheduleEventInterruptMode" class="form-select">
+                                    <option value="interrupt">Interrupt &amp; resume</option>
+                                    <option value="assign">Assign playlist</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <details class="form-accordion">
+                        <summary>Conditions (holidays &amp; special dates)</summary>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="scheduleHolidayCountry">Holiday country</label>
+                                <input type="text" id="scheduleHolidayCountry" placeholder="US, GB, DE, …" maxlength="8">
+                            </div>
+                            <div class="form-group">
+                                <label for="scheduleHolidayMatch">Match</label>
+                                <select id="scheduleHolidayMatch" class="form-select">
+                                    <option value="">— no holiday condition —</option>
+                                    <option value="on">Only on holidays</option>
+                                    <option value="not_on">Only on non-holidays</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="scheduleSpecialDates">Special dates (comma-separated YYYY-MM-DD)</label>
+                            <input type="text" id="scheduleSpecialDates" placeholder="2026-12-25, 2026-01-01">
+                        </div>
+                    </details>
+
                     <div class="form-row">
                         <div class="form-group">
                             <label for="scheduleTarget">Target</label>
@@ -801,8 +894,41 @@
                 </form>
             </div>
             <div class="modal-footer">
+                <button class="btn btn-secondary" id="previewScheduleBtn" type="button">Preview next 7 days</button>
                 <button class="btn btn-secondary" id="cancelScheduleModal">Cancel</button>
                 <button class="btn btn-primary" id="saveScheduleBtn">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Template Picker Modal -->
+    <div id="templatePickerModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Schedule Templates</h3>
+                <button class="modal-close" id="closeTemplatePickerModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="templatePickerList">Loading templates…</div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelTemplatePickerModal">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Schedule Preview Modal -->
+    <div id="schedulePreviewModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Schedule Preview</h3>
+                <button class="modal-close" id="closeSchedulePreviewModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="schedulePreviewBody">Loading…</div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelSchedulePreviewModal">Close</button>
             </div>
         </div>
     </div>
