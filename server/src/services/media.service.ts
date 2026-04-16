@@ -354,7 +354,10 @@ export class MediaService {
     filename: string,
     type: 'video' | 'image'
   ): void {
-    (async () => {
+    // Fire-and-forget: the returned promise MUST have a terminal .catch so
+    // any unexpected throw (e.g. dynamic import failure in finally) can't
+    // reach process.on('unhandledRejection') and kill the server.
+    void (async () => {
       let sourcePath = filePath;
       let needsCleanup = false;
       try {
@@ -404,11 +407,17 @@ export class MediaService {
         }
       } finally {
         if (needsCleanup) {
-          const fs = await import('fs/promises');
-          await fs.unlink(sourcePath).catch(() => {});
+          try {
+            const fs = await import('fs/promises');
+            await fs.unlink(sourcePath).catch(() => {});
+          } catch (cleanupError) {
+            logger.warn(`Thumbnail temp cleanup failed for media ${mediaId}:`, cleanupError);
+          }
         }
       }
-    })();
+    })().catch((err) => {
+      logger.error(`Unhandled error in generateThumbnailAsync for media ${mediaId}:`, err);
+    });
   }
 
   /**
