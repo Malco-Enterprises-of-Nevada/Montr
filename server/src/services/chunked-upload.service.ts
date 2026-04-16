@@ -144,9 +144,7 @@ class ChunkedUploadService {
   /**
    * Completes an upload session by assembling all chunks.
    */
-  async completeUpload(
-    uploadId: string
-  ): Promise<{
+  async completeUpload(uploadId: string): Promise<{
     storageInfo: StorageFileInfo;
     originalFilename: string;
     mimeType: string;

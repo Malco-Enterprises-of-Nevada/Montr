@@ -114,10 +114,7 @@ router.get(
     await folderService.getFolderById(id);
     const q = (req.validatedQuery ?? req.query) as { page: number; limit: number };
     const db = await getDatabase();
-    const result = await db.getAllMedia(
-      { page: q.page, limit: q.limit },
-      { folder_id: id }
-    );
+    const result = await db.getAllMedia({ page: q.page, limit: q.limit }, { folder_id: id });
     res.json(successResponse(result));
   })
 );

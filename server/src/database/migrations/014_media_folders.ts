@@ -106,9 +106,7 @@ async function setupMongoDB(ctx: MigrationContext): Promise<void> {
   await db.collection('media_folders').createIndex({ parent_id: 1 });
   await db.collection('media_folders').createIndex({ path: 1 });
   // Enforce unique (parent_id, name) — sparse to allow NULL parent_id roots
-  await db
-    .collection('media_folders')
-    .createIndex({ parent_id: 1, name: 1 }, { unique: true });
+  await db.collection('media_folders').createIndex({ parent_id: 1, name: 1 }, { unique: true });
   // Index on media_files.folder_id for filtering
   await db.collection('media_files').createIndex({ folder_id: 1 });
 

@@ -331,9 +331,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   }
 
   async getAllMediaFolders(): Promise<MediaFolder[]> {
-    return this.rawQuery<MediaFolder>(
-      'SELECT * FROM media_folders ORDER BY path ASC, name ASC'
-    );
+    return this.rawQuery<MediaFolder>('SELECT * FROM media_folders ORDER BY path ASC, name ASC');
   }
 
   async updateMediaFolder(id: number, input: UpdateMediaFolderInput): Promise<MediaFolder> {
@@ -393,10 +391,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   }
 
   async deleteMediaFolder(id: number): Promise<void> {
-    await this.rawExecute(
-      `DELETE FROM media_folders WHERE id = ${this.placeholder(1)}`,
-      [id]
-    );
+    await this.rawExecute(`DELETE FROM media_folders WHERE id = ${this.placeholder(1)}`, [id]);
   }
 
   async getMediaFolderDescendants(id: number): Promise<MediaFolder[]> {
@@ -408,9 +403,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     );
   }
 
-  async getMediaFolderContentCounts(
-    id: number
-  ): Promise<{ media: number; subfolders: number }> {
+  async getMediaFolderContentCounts(id: number): Promise<{ media: number; subfolders: number }> {
     const mediaRows = await this.rawQuery<{ count: number }>(
       `SELECT COUNT(*) as count FROM media_files WHERE folder_id = ${this.placeholder(1)}`,
       [id]

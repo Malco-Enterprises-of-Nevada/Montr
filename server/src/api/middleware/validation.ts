@@ -115,10 +115,9 @@ export const listMediaQuerySchema = paginationSchema.extend({
   folder_id: z
     .string()
     .optional()
-    .refine(
-      (val) => val === undefined || val === 'root' || /^\d+$/.test(val),
-      { message: 'folder_id must be a positive integer or the literal "root"' }
-    )
+    .refine((val) => val === undefined || val === 'root' || /^\d+$/.test(val), {
+      message: 'folder_id must be a positive integer or the literal "root"',
+    })
     .transform((val) => {
       if (val === undefined) return undefined;
       if (val === 'root') return 'root' as const;
@@ -140,7 +139,12 @@ export const createFolderSchema = z.object({
     .refine((n) => !/[\\/]/.test(n), {
       message: 'Folder name must not contain slashes',
     }),
-  parent_id: z.number().int().positive('Parent ID must be a positive integer').nullable().optional(),
+  parent_id: z
+    .number()
+    .int()
+    .positive('Parent ID must be a positive integer')
+    .nullable()
+    .optional(),
 });
 
 /**
