@@ -249,10 +249,7 @@ router.get(
     };
     const { page, limit, type, search, folder_id } = query;
 
-    const result = await mediaService.getAllMedia(
-      { page, limit },
-      { type, search, folder_id }
-    );
+    const result = await mediaService.getAllMedia({ page, limit }, { type, search, folder_id });
 
     res.json(successResponse(result));
   })
@@ -383,10 +380,9 @@ const updateMediaSchema = z
     original_filename: z.string().min(1).max(255).trim().optional(),
     folder_id: z.number().int().positive().nullable().optional(),
   })
-  .refine(
-    (data) => data.original_filename !== undefined || data.folder_id !== undefined,
-    { message: 'At least one field (original_filename, folder_id) must be provided' }
-  );
+  .refine((data) => data.original_filename !== undefined || data.folder_id !== undefined, {
+    message: 'At least one field (original_filename, folder_id) must be provided',
+  });
 
 /**
  * PATCH /api/media/:id

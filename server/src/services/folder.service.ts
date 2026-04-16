@@ -4,11 +4,7 @@
  */
 
 import { getDatabase } from '../database/connection';
-import {
-  MediaFolder,
-  CreateMediaFolderInput,
-  UpdateMediaFolderInput,
-} from '../database/types';
+import { MediaFolder, CreateMediaFolderInput, UpdateMediaFolderInput } from '../database/types';
 import { getLogger } from '../utils/logger';
 import { AppError, ErrorCode } from '../api/middleware/error-handler';
 

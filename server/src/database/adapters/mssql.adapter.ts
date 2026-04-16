@@ -250,10 +250,7 @@ export class MSSQLAdapter extends SqlBaseAdapter {
       [input.name, parentId, '/', input.created_by ?? null]
     );
     const fullPath = parentPath === '/' ? `/${id}` : `${parentPath}/${id}`;
-    await this.rawExecute(
-      `UPDATE media_folders SET path = @p1 WHERE id = @p2`,
-      [fullPath, id]
-    );
+    await this.rawExecute(`UPDATE media_folders SET path = @p1 WHERE id = @p2`, [fullPath, id]);
     const folder = await this.getMediaFolderById(id);
     if (!folder) throw new Error('Failed to retrieve created folder');
     return folder;

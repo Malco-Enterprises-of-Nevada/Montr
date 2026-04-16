@@ -302,18 +302,13 @@ export class MongoDBAdapter implements DatabaseAdapter {
     return doc as import('../types').MediaFolder;
   }
 
-  async getMediaFolderById(
-    id: number
-  ): Promise<import('../types').MediaFolder | null> {
+  async getMediaFolderById(id: number): Promise<import('../types').MediaFolder | null> {
     const doc = await this.col('media_folders').findOne({ id });
     return this.docToObj<import('../types').MediaFolder>(doc);
   }
 
   async getAllMediaFolders(): Promise<import('../types').MediaFolder[]> {
-    const docs = await this.col('media_folders')
-      .find({})
-      .sort({ path: 1, name: 1 })
-      .toArray();
+    const docs = await this.col('media_folders').find({}).sort({ path: 1, name: 1 }).toArray();
     return docs.map((d) => this.docToObj<import('../types').MediaFolder>(d)!);
   }
 
@@ -397,9 +392,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
     return docs.map((d) => this.docToObj<import('../types').MediaFolder>(d)!);
   }
 
-  async getMediaFolderContentCounts(
-    id: number
-  ): Promise<{ media: number; subfolders: number }> {
+  async getMediaFolderContentCounts(id: number): Promise<{ media: number; subfolders: number }> {
     const [media, subfolders] = await Promise.all([
       this.col('media_files').countDocuments({ folder_id: id }),
       this.col('media_folders').countDocuments({ parent_id: id }),
