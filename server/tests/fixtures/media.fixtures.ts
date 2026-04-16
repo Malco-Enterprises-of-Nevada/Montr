@@ -18,6 +18,7 @@ export const mockVideoFile: MediaFile = {
   checksum: 'abc123def456abc123def456abc123def456abc123def456abc123def456abcd',
   thumbnail_status: 'pending',
   approval_status: 'pending',
+  folder_id: null,
   created_at: '2025-10-10T10:00:00.000Z',
   updated_at: '2025-10-10T10:00:00.000Z',
 };
@@ -36,6 +37,7 @@ export const mockImageFile: MediaFile = {
   checksum: 'def456abc123def456abc123def456abc123def456abc123def456abc123efgh',
   thumbnail_status: 'pending',
   approval_status: 'pending',
+  folder_id: null,
   created_at: '2025-10-10T10:05:00.000Z',
   updated_at: '2025-10-10T10:05:00.000Z',
 };
@@ -57,6 +59,7 @@ export const mockMediaFiles: MediaFile[] = [
     checksum: 'ijkl9012mnop3456ijkl9012mnop3456ijkl9012mnop3456ijkl9012mnop',
     thumbnail_status: 'pending',
     approval_status: 'pending',
+    folder_id: null,
     created_at: '2025-10-10T10:10:00.000Z',
     updated_at: '2025-10-10T10:10:00.000Z',
   },

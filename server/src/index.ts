@@ -10,6 +10,7 @@ import { initLogger, getLogger } from './utils/logger';
 import { errorHandler, notFoundHandler, successResponse } from './api/middleware/error-handler';
 import { getDatabase, closeDatabase } from './database/connection';
 import mediaRoutes from './api/routes/media.routes';
+import foldersRoutes from './api/routes/folders.routes';
 import playlistRoutes from './api/routes/playlist.routes';
 import clientRoutes from './api/routes/client.routes';
 import groupRoutes from './api/routes/group.routes';
@@ -130,6 +131,10 @@ class MontrServer {
         successResponse({
           dashboardRefreshInterval: parseInt(process.env.UI_DASHBOARD_REFRESH_MS || '30000', 10),
           toastDisplayDuration: parseInt(process.env.UI_TOAST_DURATION_MS || '3000', 10),
+          mediaUploadConcurrency: Math.max(
+            1,
+            Math.min(10, parseInt(process.env.UI_MEDIA_UPLOAD_CONCURRENCY || '3', 10))
+          ),
         })
       );
     });
@@ -141,6 +146,7 @@ class MontrServer {
 
     // API routes (JWT auth required — passes through in bootstrap mode when 0 users)
     this.app.use('/api/media', requireAuth(), mediaRoutes);
+    this.app.use('/api/folders', requireAuth(), foldersRoutes);
     this.app.use('/api/playlists', requireAuth(), playlistRoutes);
     this.app.use('/api/clients', requireAuth(), clientRoutes);
     this.app.use('/api/groups', requireAuth(), groupRoutes);

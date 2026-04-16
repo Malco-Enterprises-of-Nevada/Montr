@@ -273,6 +273,39 @@ Phases 1-4 are complete. This file tracks what remains.
 
 ---
 
+## Media Library QOL (v2.1)
+
+### Folders
+- [x] **Schema**: `media_folders` table with nested parent_id + `folder_id` FK on `media_files` — migration 014
+- [x] **Adapters**: Folder CRUD + move-media across SQLite/MySQL/MSSQL/MongoDB (cycle detection, path recomputation)
+- [x] **Server API**: `GET/POST/PATCH/DELETE /api/folders`, `GET /api/folders/:id/media`
+- [x] **Server API**: Optional `folder_id` on `POST /api/media/upload` and `/api/media/upload/init`
+- [x] **Server API**: `POST /api/media/bulk/move`, `POST /api/media/bulk/delete`, `PATCH /api/media/:id`
+- [x] **Web UI**: Sidebar folder tree, breadcrumb, destination selector in upload, rename/delete from tree
+- [x] **Client transparency**: No Rust-client changes needed — folders are DB-only; `/api/media/:id/download` unchanged
+
+### Parallel uploads
+- [x] **Web UI**: Bounded-concurrency upload queue panel (configurable via `UI_MEDIA_UPLOAD_CONCURRENCY`, default 3)
+- [x] **Web UI**: Per-file progress/cancel/retry, keeps modal state sane while uploads continue
+- [x] **Client retry**: Per-chunk retry with exponential backoff for chunked uploads (server already tracks `receivedChunks` for idempotency)
+
+### Bulk operations + thumbnail retry UI
+- [x] **Web UI**: Checkbox selection, select-all, sticky bulk action bar (move / delete / clear)
+- [x] **Web UI**: Thumbnail retry button on media cards with `thumbnail_status = failed` (wires to the pre-existing `/api/media/:id/thumbnail/retry` endpoint)
+
+### Tests
+- [x] Integration tests for folder CRUD (cycle detection, non-empty guard, recursive delete)
+- [x] Integration tests for bulk move/delete, `folder_id` filter, `PATCH /api/media/:id`
+- [x] Updated `tests/unit/database/migration-runner.test.ts` for migration 014
+
+### Deferred
+- [ ] Cross-session upload resume (persist `uploadId` in `localStorage` across browser restarts)
+- [ ] Playlist folders (media only for now)
+- [ ] Tags/labels
+- [ ] Drag-drop reorganise in folder tree
+
+---
+
 ## v2.0 — Cloud & Mobile
 
 ### Cloud Sync

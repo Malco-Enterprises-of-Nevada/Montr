@@ -31,6 +31,16 @@ export const createMockDatabase = (): jest.Mocked<DatabaseAdapter> => ({
   getAllMedia: jest.fn(),
   updateMedia: jest.fn(),
   deleteMedia: jest.fn(),
+  moveMediaToFolder: jest.fn().mockResolvedValue(0),
+
+  // Media folder methods
+  createMediaFolder: jest.fn(),
+  getMediaFolderById: jest.fn(),
+  getAllMediaFolders: jest.fn().mockResolvedValue([]),
+  updateMediaFolder: jest.fn(),
+  deleteMediaFolder: jest.fn(),
+  getMediaFolderDescendants: jest.fn().mockResolvedValue([]),
+  getMediaFolderContentCounts: jest.fn().mockResolvedValue({ media: 0, subfolders: 0 }),
 
   // Playlist methods
   createPlaylist: jest.fn(),

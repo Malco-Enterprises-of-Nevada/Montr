@@ -8,6 +8,7 @@ const WS_URL = `ws://${window.location.host}/ws`;
 let UI_CONFIG = {
     dashboardRefreshInterval: 30000,
     toastDisplayDuration: 3000,
+    mediaUploadConcurrency: 3,
 };
 
 // Auth state
@@ -28,6 +29,9 @@ const state = {
     schedules: [],
     latestTelemetry: {},
     currentPlaylist: null,
+    folders: [],           // flat list from GET /api/folders
+    currentFolderId: null, // null = All media (no folder filter), 'root' = folder_id IS NULL, or number
+    selectedMediaIds: new Set(),
     stats: {
         mediaCount: 0,
         playlistCount: 0,
@@ -148,18 +152,110 @@ async function checkHealth() {
     }
 }
 
+// Per-chunk upload with retry + abort support. Called by mediaAPI.upload for
+// chunked uploads; lives here so it's close to the XHR code it drives.
+function _uploadChunkWithRetry({ uploadId, chunkIndex, chunk, fileSize, alreadyUploaded, onProgress, signal, totalChunks }) {
+    const MAX_ATTEMPTS = 3;
+    const BACKOFFS_MS = [1000, 3000, 8000];
+
+    return new Promise((resolve, reject) => {
+        let attempt = 0;
+        let currentXhr = null;
+        const onAbort = () => {
+            if (currentXhr) currentXhr.abort();
+        };
+        if (signal) signal.addEventListener('abort', onAbort, { once: true });
+
+        const attemptUpload = () => {
+            if (signal?.aborted) return reject(new Error('Upload cancelled'));
+            attempt += 1;
+            const xhr = new XMLHttpRequest();
+            currentXhr = xhr;
+
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable && onProgress) {
+                    onProgress(((alreadyUploaded + e.loaded) / fileSize) * 100);
+                }
+            });
+
+            xhr.addEventListener('load', () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    resolve();
+                } else if (attempt < MAX_ATTEMPTS && xhr.status >= 500) {
+                    setTimeout(attemptUpload, BACKOFFS_MS[attempt - 1] || 8000);
+                } else {
+                    reject(new Error(`Chunk ${chunkIndex + 1}/${totalChunks} failed (HTTP ${xhr.status})`));
+                }
+            });
+
+            xhr.addEventListener('error', () => {
+                if (attempt < MAX_ATTEMPTS && !signal?.aborted) {
+                    setTimeout(attemptUpload, BACKOFFS_MS[attempt - 1] || 8000);
+                } else {
+                    reject(new Error(`Chunk ${chunkIndex + 1}/${totalChunks} failed`));
+                }
+            });
+
+            xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')));
+
+            xhr.open('POST', `${API_BASE}/media/upload/${uploadId}/chunk/${chunkIndex}`);
+            xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+            if (auth.token) xhr.setRequestHeader('Authorization', 'Bearer ' + auth.token);
+            xhr.send(chunk);
+        };
+
+        attemptUpload();
+    });
+}
+
+// Folders API
+const foldersAPI = {
+    async list() {
+        return await apiCall('/folders');
+    },
+    async create(name, parentId) {
+        return await apiCall('/folders', {
+            method: 'POST',
+            body: JSON.stringify({ name, parent_id: parentId ?? null }),
+        });
+    },
+    async update(id, updates) {
+        return await apiCall(`/folders/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify(updates),
+        });
+    },
+    async remove(id, { recursive = false } = {}) {
+        const qs = recursive ? '?recursive=true' : '';
+        return await apiCall(`/folders/${id}${qs}`, { method: 'DELETE' });
+    },
+};
+
 // Media API
 const mediaAPI = {
-    async list() {
-        return await apiCall('/media');
+    async list(params = {}) {
+        const query = new URLSearchParams();
+        if (params.folderId !== undefined && params.folderId !== null) {
+            query.set('folder_id', String(params.folderId));
+        }
+        if (params.type) query.set('type', params.type);
+        if (params.search) query.set('search', params.search);
+        if (params.page) query.set('page', String(params.page));
+        if (params.limit) query.set('limit', String(params.limit));
+        const qs = query.toString();
+        return await apiCall(`/media${qs ? '?' + qs : ''}`);
     },
 
-    async upload(file, onProgress) {
+    // upload() is called per-file. Parallelism is controlled by the UploadQueue.
+    // opts: { folderId?: number|'root'|null, onProgress?: fn, signal?: AbortSignal }
+    async upload(file, opts = {}) {
         const CHUNK_SIZE = 50 * 1024 * 1024; // 50MB
+        const { folderId, onProgress, signal } = opts;
+        const folderPayload = (folderId === 'root' || folderId == null) ? null : Number(folderId);
 
         // Small files: use simple upload
         if (file.size <= CHUNK_SIZE) {
-            return this._simpleUpload(file, onProgress);
+            return this._simpleUpload(file, { folderId: folderPayload, onProgress, signal });
         }
 
         // Large files: chunked upload
@@ -169,51 +265,51 @@ const mediaAPI = {
                 filename: file.name,
                 mimeType: file.type || 'application/octet-stream',
                 totalSize: file.size,
+                folder_id: folderPayload,
             }),
         });
+
+        // Track the uploadId so the caller can abort us if needed
+        if (signal) {
+            signal.addEventListener('abort', () => {
+                // Best-effort server-side cleanup; failure is non-fatal
+                apiCall(`/media/upload/${uploadId}`, { method: 'DELETE' }).catch(() => {});
+            }, { once: true });
+        }
 
         let totalUploaded = 0;
 
         for (let i = 0; i < totalChunks; i++) {
+            if (signal?.aborted) throw new Error('Upload cancelled');
+
             const start = i * chunkSize;
             const end = Math.min(start + chunkSize, file.size);
             const chunk = file.slice(start, end);
 
-            await new Promise((resolve, reject) => {
-                const xhr = new XMLHttpRequest();
-
-                xhr.upload.addEventListener('progress', (e) => {
-                    if (e.lengthComputable && onProgress) {
-                        onProgress(((totalUploaded + e.loaded) / file.size) * 100);
-                    }
-                });
-
-                xhr.addEventListener('load', () => {
-                    if (xhr.status >= 200 && xhr.status < 300) {
-                        totalUploaded += (end - start);
-                        resolve();
-                    } else {
-                        reject(new Error(`Chunk ${i + 1}/${totalChunks} upload failed`));
-                    }
-                });
-
-                xhr.addEventListener('error', () => {
-                    reject(new Error(`Chunk ${i + 1}/${totalChunks} upload failed`));
-                });
-
-                xhr.open('POST', `${API_BASE}/media/upload/${uploadId}/chunk/${i}`);
-                xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-                if (auth.token) xhr.setRequestHeader('Authorization', 'Bearer ' + auth.token);
-                xhr.send(chunk);
+            // Per-chunk retry (3 attempts, exponential backoff). Server tracks
+            // receivedChunks per uploadId so re-POSTing is idempotent.
+            await _uploadChunkWithRetry({
+                uploadId,
+                chunkIndex: i,
+                chunk,
+                fileSize: file.size,
+                alreadyUploaded: totalUploaded,
+                onProgress,
+                signal,
+                totalChunks,
             });
+
+            totalUploaded += (end - start);
         }
 
         return await apiCall(`/media/upload/${uploadId}/complete`, { method: 'POST' });
     },
 
-    _simpleUpload(file, onProgress) {
+    _simpleUpload(file, opts = {}) {
+        const { folderId, onProgress, signal } = opts;
         const formData = new FormData();
         formData.append('files', file);
+        if (folderId != null) formData.append('folder_id', String(folderId));
 
         return new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
@@ -230,13 +326,25 @@ const mediaAPI = {
                     const response = JSON.parse(xhr.responseText);
                     resolve(response.data);
                 } else {
-                    reject(new Error('Upload failed'));
+                    let msg = 'Upload failed';
+                    try {
+                        const parsed = JSON.parse(xhr.responseText);
+                        if (parsed?.error?.message) msg = parsed.error.message;
+                    } catch {}
+                    reject(new Error(msg));
                 }
             });
 
-            xhr.addEventListener('error', () => {
-                reject(new Error('Upload failed'));
-            });
+            xhr.addEventListener('error', () => reject(new Error('Upload failed')));
+            xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')));
+
+            if (signal) {
+                if (signal.aborted) {
+                    xhr.abort();
+                    return;
+                }
+                signal.addEventListener('abort', () => xhr.abort(), { once: true });
+            }
 
             xhr.open('POST', API_BASE + '/media/upload');
             if (auth.token) xhr.setRequestHeader('Authorization', 'Bearer ' + auth.token);
@@ -246,6 +354,34 @@ const mediaAPI = {
 
     async delete(id) {
         return await apiCall(`/media/${id}`, { method: 'DELETE' });
+    },
+
+    async update(id, updates) {
+        return await apiCall(`/media/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify(updates),
+        });
+    },
+
+    async bulkMove(mediaIds, folderId) {
+        return await apiCall('/media/bulk/move', {
+            method: 'POST',
+            body: JSON.stringify({
+                media_ids: mediaIds,
+                folder_id: folderId === 'root' || folderId == null ? null : Number(folderId),
+            }),
+        });
+    },
+
+    async bulkDelete(mediaIds) {
+        return await apiCall('/media/bulk/delete', {
+            method: 'POST',
+            body: JSON.stringify({ media_ids: mediaIds }),
+        });
+    },
+
+    async retryThumbnail(id) {
+        return await apiCall(`/media/${id}/thumbnail/retry`, { method: 'POST' });
     },
 
     async download(id) {
@@ -651,15 +787,39 @@ async function loadMedia() {
     gridEl.innerHTML = '<div class="loading">Loading media files...</div>';
     emptyEl.style.display = 'none';
 
+    // Load folders in parallel with media so the tree stays fresh.
+    const folderPromise = loadFolders();
+
     try {
-        const response = await mediaAPI.list();
-        const media = response?.data || [];
+        const params = { limit: 100 };
+        // currentFolderId: null = show all media, 'root' = only root, number = that folder
+        if (state.currentFolderId === 'root') params.folderId = 'root';
+        else if (typeof state.currentFolderId === 'number') params.folderId = state.currentFolderId;
+        // apiCall unwraps .data, so response is either an array (old shape)
+        // or { data: [...], pagination: {...} } (paginated shape).
+        const response = await mediaAPI.list(params);
+        const media = Array.isArray(response) ? response : (response?.data || []);
         state.media = media;
         renderMediaGrid(media);
     } catch (error) {
         console.error('Failed to load media:', error);
         showToast('Failed to load media files', 'error');
         gridEl.innerHTML = '<div class="empty-state"><p>Failed to load media files</p></div>';
+    }
+
+    await folderPromise;
+    renderFolderTree();
+    renderFolderBreadcrumb();
+}
+
+async function loadFolders() {
+    try {
+        // apiCall unwraps to the `data` field — /api/folders returns an array.
+        const resp = await foldersAPI.list();
+        state.folders = Array.isArray(resp) ? resp : [];
+    } catch (err) {
+        console.warn('Failed to load folders:', err);
+        state.folders = [];
     }
 }
 
@@ -670,6 +830,7 @@ function renderMediaGrid(media) {
     if (!media || media.length === 0) {
         gridEl.innerHTML = '';
         emptyEl.style.display = '';
+        updateBulkActionBar();
         return;
     }
 
@@ -677,18 +838,23 @@ function renderMediaGrid(media) {
 
     const videoIcon = `<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
     const imageIcon = `<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`;
+    const canEdit = auth.user?.role !== 'viewer';
 
     gridEl.innerHTML = media.map(item => {
         const displayName = item.original_filename || item.filename;
+        const isSelected = state.selectedMediaIds.has(item.id);
+        const thumbFailed = item.thumbnail_status === 'failed';
         return `
-        <div class="media-item" data-id="${item.id}">
+        <div class="media-item${isSelected ? ' selected' : ''}" data-id="${item.id}">
+            ${canEdit ? `<label class="media-select"><input type="checkbox" class="media-select-cb" data-id="${item.id}"${isSelected ? ' checked' : ''}></label>` : ''}
             <div class="media-thumbnail" data-id="${item.id}">
                 <img class="thumb-img" data-thumb-id="${item.id}" alt="" style="display:none">
                 <div class="thumb-fallback">${item.type === 'video' ? videoIcon : imageIcon}</div>
                 ${item.type === 'video' ? '<div class="thumb-play-badge">&#9654;</div>' : ''}
+                ${thumbFailed ? `<button class="thumb-retry-btn" data-retry-id="${item.id}" title="Thumbnail failed — click to retry">&#8634;</button>` : ''}
             </div>
             <div class="media-info">
-                <div class="media-name" title="${displayName}">${displayName}</div>
+                <div class="media-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
                 <div class="media-meta">
                     <span class="badge badge-info">${item.type}</span>
                     <span>${item.file_size ? formatFileSize(item.file_size) : 'N/A'}${item.duration ? ' / ' + formatDuration(item.duration) : ''}</span>
@@ -698,16 +864,21 @@ function renderMediaGrid(media) {
                 <button class="btn btn-sm btn-secondary media-download-btn" data-id="${item.id}">
                     Download
                 </button>
-                ${auth.user?.role !== 'viewer' ? `<button class="btn btn-sm btn-danger media-delete-btn" data-id="${item.id}">
+                ${canEdit ? `<button class="btn btn-sm btn-danger media-delete-btn" data-id="${item.id}">
                     Delete
                 </button>` : ''}
             </div>
         </div>`;
     }).join('');
 
-    // Click media item to open preview
+    // Click media item to open preview (but not when clicking checkbox/buttons)
     gridEl.querySelectorAll('.media-item').forEach(el => {
-        el.addEventListener('click', () => openMediaPreview(parseInt(el.dataset.id)));
+        el.addEventListener('click', (e) => {
+            if (e.target.closest('.media-select') ||
+                e.target.closest('.media-actions') ||
+                e.target.closest('.thumb-retry-btn')) return;
+            openMediaPreview(parseInt(el.dataset.id));
+        });
     });
     gridEl.querySelectorAll('.media-download-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -721,9 +892,328 @@ function renderMediaGrid(media) {
             handleMediaDelete(btn.dataset.id);
         });
     });
+    gridEl.querySelectorAll('.media-select-cb').forEach((cb) => {
+        cb.addEventListener('change', (e) => {
+            const id = parseInt(e.target.dataset.id);
+            if (e.target.checked) state.selectedMediaIds.add(id);
+            else state.selectedMediaIds.delete(id);
+            // Re-render the selected highlight only
+            const card = gridEl.querySelector(`.media-item[data-id="${id}"]`);
+            if (card) card.classList.toggle('selected', e.target.checked);
+            updateBulkActionBar();
+        });
+    });
+    gridEl.querySelectorAll('.thumb-retry-btn').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const id = parseInt(btn.dataset.retryId);
+            btn.disabled = true;
+            try {
+                await mediaAPI.retryThumbnail(id);
+                showToast('Thumbnail retry queued', 'success');
+                setTimeout(loadMedia, 1500);
+            } catch (err) {
+                console.error('Thumbnail retry failed:', err);
+                showToast('Thumbnail retry failed', 'error');
+                btn.disabled = false;
+            }
+        });
+    });
 
     // Load thumbnails asynchronously
     loadThumbnails(media);
+    updateBulkActionBar();
+}
+
+// ===== Folder Tree =====
+
+function renderFolderTree() {
+    const tree = document.getElementById('folderTree');
+    if (!tree) return;
+
+    const roots = state.folders.filter((f) => f.parent_id == null);
+    const byParent = new Map();
+    for (const f of state.folders) {
+        const p = f.parent_id ?? 'root';
+        if (!byParent.has(p)) byParent.set(p, []);
+        byParent.get(p).push(f);
+    }
+
+    const renderLevel = (parentKey, depth) =>
+        (byParent.get(parentKey) || [])
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((f) => {
+                const active = state.currentFolderId === f.id ? ' active' : '';
+                const childrenHtml = renderLevel(f.id, depth + 1);
+                return `
+                    <li class="folder-node${active}" data-folder-id="${f.id}" style="padding-left:${depth * 14}px">
+                        <span class="folder-label" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+                        ${canEditFolders() ? `<span class="folder-node-actions">
+                            <button class="folder-rename" data-folder-id="${f.id}" title="Rename">&#9998;</button>
+                            <button class="folder-delete" data-folder-id="${f.id}" title="Delete">&times;</button>
+                        </span>` : ''}
+                    </li>
+                    ${childrenHtml}
+                `;
+            })
+            .join('');
+
+    const allActive = state.currentFolderId == null ? ' active' : '';
+    const rootActive = state.currentFolderId === 'root' ? ' active' : '';
+    tree.innerHTML = `
+        <li class="folder-node folder-node-root${allActive}" data-folder-id=""><span class="folder-label">All media</span></li>
+        <li class="folder-node folder-node-root${rootActive}" data-folder-id="root"><span class="folder-label">&#128193; Root</span></li>
+        ${renderLevel('root', 0)}
+    `;
+
+    tree.querySelectorAll('.folder-node').forEach((li) => {
+        li.addEventListener('click', (e) => {
+            if (e.target.closest('.folder-node-actions')) return;
+            const raw = li.dataset.folderId;
+            if (raw === '') state.currentFolderId = null;
+            else if (raw === 'root') state.currentFolderId = 'root';
+            else state.currentFolderId = Number(raw);
+            state.selectedMediaIds.clear();
+            loadMedia();
+        });
+    });
+    tree.querySelectorAll('.folder-rename').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const id = Number(btn.dataset.folderId);
+            const folder = state.folders.find((f) => f.id === id);
+            const name = prompt('Rename folder', folder?.name || '');
+            if (!name || name === folder?.name) return;
+            try {
+                await foldersAPI.update(id, { name: name.trim() });
+                showToast('Folder renamed', 'success');
+                loadMedia();
+            } catch (err) {
+                showToast(err.message || 'Rename failed', 'error');
+            }
+        });
+    });
+    tree.querySelectorAll('.folder-delete').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const id = Number(btn.dataset.folderId);
+            await deleteFolderFlow(id);
+        });
+    });
+}
+
+async function deleteFolderFlow(id) {
+    const folder = state.folders.find((f) => f.id === id);
+    if (!folder) return;
+    if (!confirm(`Delete folder "${folder.name}"?`)) return;
+    try {
+        await foldersAPI.remove(id);
+        showToast('Folder deleted', 'success');
+        if (state.currentFolderId === id) state.currentFolderId = null;
+        loadMedia();
+    } catch (err) {
+        if (err?.code === 'FOLDER_NOT_EMPTY' || /not empty/i.test(err.message || '')) {
+            if (confirm(`"${folder.name}" is not empty. Delete it and move its media to Root?`)) {
+                try {
+                    await foldersAPI.remove(id, { recursive: true });
+                    showToast('Folder deleted', 'success');
+                    if (state.currentFolderId === id) state.currentFolderId = null;
+                    loadMedia();
+                } catch (err2) {
+                    showToast(err2.message || 'Delete failed', 'error');
+                }
+            }
+        } else {
+            showToast(err.message || 'Delete failed', 'error');
+        }
+    }
+}
+
+function renderFolderBreadcrumb() {
+    const crumb = document.getElementById('folderBreadcrumb');
+    if (!crumb) return;
+
+    const byId = new Map(state.folders.map((f) => [f.id, f]));
+    const parts = [{ label: state.currentFolderId == null ? 'All media' : 'Root', id: null }];
+    if (typeof state.currentFolderId === 'number') {
+        const chain = [];
+        let cur = byId.get(state.currentFolderId);
+        while (cur) {
+            chain.unshift(cur);
+            cur = cur.parent_id != null ? byId.get(cur.parent_id) : null;
+        }
+        for (const f of chain) parts.push({ label: f.name, id: f.id });
+    } else if (state.currentFolderId === 'root') {
+        parts[0] = { label: 'Root', id: 'root' };
+    }
+
+    crumb.innerHTML = parts
+        .map((p, i) => {
+            const cls = i === parts.length - 1 ? 'breadcrumb-item current' : 'breadcrumb-item';
+            const attr = p.id == null ? '' : `data-folder-id="${p.id}"`;
+            return `<a href="#" class="${cls}" ${attr}>${escapeHtml(p.label)}</a>`;
+        })
+        .join(`<span class="breadcrumb-sep">/</span>`);
+
+    crumb.querySelectorAll('.breadcrumb-item').forEach((a) => {
+        a.addEventListener('click', (e) => {
+            e.preventDefault();
+            const raw = a.dataset.folderId;
+            if (raw == null || raw === '') state.currentFolderId = null;
+            else if (raw === 'root') state.currentFolderId = 'root';
+            else state.currentFolderId = Number(raw);
+            state.selectedMediaIds.clear();
+            loadMedia();
+        });
+    });
+}
+
+function canEditFolders() {
+    return auth.user?.role !== 'viewer';
+}
+
+function populateFolderSelect(selectEl, { includeRoot = true, defaultValue = null } = {}) {
+    if (!selectEl) return;
+    const options = [];
+    if (includeRoot) options.push(`<option value="root">Root (no folder)</option>`);
+
+    const byParent = new Map();
+    for (const f of state.folders) {
+        const p = f.parent_id ?? 'root';
+        if (!byParent.has(p)) byParent.set(p, []);
+        byParent.get(p).push(f);
+    }
+    const walk = (parentKey, prefix) => {
+        for (const f of (byParent.get(parentKey) || []).sort((a, b) => a.name.localeCompare(b.name))) {
+            options.push(`<option value="${f.id}">${prefix}${escapeHtml(f.name)}</option>`);
+            walk(f.id, prefix + '— ');
+        }
+    };
+    walk('root', '');
+
+    selectEl.innerHTML = options.join('');
+    if (defaultValue != null) selectEl.value = String(defaultValue);
+}
+
+// ===== Bulk Action Bar =====
+
+function updateBulkActionBar() {
+    const bar = document.getElementById('bulkActionBar');
+    const countEl = document.getElementById('bulkSelectionCount');
+    if (!bar || !countEl) return;
+    const n = state.selectedMediaIds.size;
+    if (n === 0) {
+        bar.style.display = 'none';
+        return;
+    }
+    bar.style.display = '';
+    countEl.textContent = `${n} selected`;
+}
+
+function initBulkActions() {
+    const selectAllBtn = document.getElementById('bulkSelectAllBtn');
+    const moveBtn = document.getElementById('bulkMoveBtn');
+    const deleteBtn = document.getElementById('bulkDeleteBtn');
+    const clearBtn = document.getElementById('bulkClearBtn');
+
+    selectAllBtn?.addEventListener('click', () => {
+        for (const m of state.media) state.selectedMediaIds.add(m.id);
+        renderMediaGrid(state.media);
+    });
+    clearBtn?.addEventListener('click', () => {
+        state.selectedMediaIds.clear();
+        renderMediaGrid(state.media);
+    });
+    deleteBtn?.addEventListener('click', async () => {
+        const ids = Array.from(state.selectedMediaIds);
+        if (ids.length === 0) return;
+        if (!confirm(`Delete ${ids.length} media file(s)?`)) return;
+        try {
+            const resp = await mediaAPI.bulkDelete(ids);
+            showToast(`Deleted ${resp?.deleted ?? ids.length} file(s)`, 'success');
+            state.selectedMediaIds.clear();
+            loadMedia();
+        } catch (err) {
+            showToast(err.message || 'Bulk delete failed', 'error');
+        }
+    });
+    moveBtn?.addEventListener('click', () => {
+        const ids = Array.from(state.selectedMediaIds);
+        if (ids.length === 0) return;
+        const modal = document.getElementById('moveMediaModal');
+        const countEl = document.getElementById('moveMediaCount');
+        const select = document.getElementById('moveMediaDest');
+        if (!modal || !select) return;
+        countEl.textContent = String(ids.length);
+        populateFolderSelect(select);
+        openModal('moveMediaModal');
+    });
+
+    document.getElementById('confirmMoveMediaBtn')?.addEventListener('click', async () => {
+        const select = document.getElementById('moveMediaDest');
+        const target = select?.value ?? 'root';
+        const ids = Array.from(state.selectedMediaIds);
+        if (ids.length === 0) return closeModal('moveMediaModal');
+        try {
+            const folderId = target === 'root' ? null : Number(target);
+            await mediaAPI.bulkMove(ids, folderId);
+            showToast(`Moved ${ids.length} file(s)`, 'success');
+            state.selectedMediaIds.clear();
+            closeModal('moveMediaModal');
+            loadMedia();
+        } catch (err) {
+            showToast(err.message || 'Bulk move failed', 'error');
+        }
+    });
+    document.getElementById('cancelMoveMediaBtn')?.addEventListener('click', () => closeModal('moveMediaModal'));
+    document.getElementById('closeMoveMediaModal')?.addEventListener('click', () => closeModal('moveMediaModal'));
+}
+
+function initFolderActions() {
+    document.getElementById('newFolderBtn')?.addEventListener('click', () => {
+        const parentSel = document.getElementById('newFolderParent');
+        populateFolderSelect(parentSel, { includeRoot: false, defaultValue: null });
+        // Prepend a "Root" option manually since includeRoot: false above omitted it
+        if (parentSel && !parentSel.querySelector('option[value="root"]')) {
+            parentSel.insertAdjacentHTML('afterbegin', `<option value="root">Root</option>`);
+        }
+        if (parentSel) {
+            parentSel.value = typeof state.currentFolderId === 'number'
+                ? String(state.currentFolderId)
+                : 'root';
+        }
+        const nameEl = document.getElementById('newFolderName');
+        if (nameEl) nameEl.value = '';
+        openModal('newFolderModal');
+        nameEl?.focus();
+    });
+    document.getElementById('cancelNewFolderBtn')?.addEventListener('click', () => closeModal('newFolderModal'));
+    document.getElementById('closeNewFolderModal')?.addEventListener('click', () => closeModal('newFolderModal'));
+    document.getElementById('createNewFolderBtn')?.addEventListener('click', async () => {
+        const name = document.getElementById('newFolderName')?.value?.trim();
+        if (!name) return showToast('Folder name is required', 'error');
+        const parentVal = document.getElementById('newFolderParent')?.value ?? 'root';
+        const parentId = parentVal === 'root' ? null : Number(parentVal);
+        try {
+            const folder = await foldersAPI.create(name, parentId);
+            showToast('Folder created', 'success');
+            closeModal('newFolderModal');
+            if (folder?.id) state.currentFolderId = folder.id;
+            loadMedia();
+        } catch (err) {
+            showToast(err.message || 'Create folder failed', 'error');
+        }
+    });
+}
+
+function initUploadQueueUI() {
+    document.getElementById('uploadQueueToggle')?.addEventListener('click', () => {
+        const panel = document.getElementById('uploadQueuePanel');
+        panel?.classList.toggle('collapsed');
+    });
+    document.getElementById('uploadQueueClose')?.addEventListener('click', () => {
+        UploadQueue.clearFinished();
+    });
 }
 
 async function loadThumbnails(media) {
@@ -776,10 +1266,12 @@ function initMediaUpload() {
     const fileInput = document.getElementById('fileInput');
     const browseBtn = document.getElementById('browseBtn');
 
-    console.log('initMediaUpload:', { uploadBtn, uploadModal, closeModalBtn, uploadZone, fileInput, browseBtn });
-
     uploadBtn.addEventListener('click', () => {
-        console.log('Upload button clicked!');
+        const select = document.getElementById('uploadDestFolder');
+        populateFolderSelect(select, {
+            includeRoot: true,
+            defaultValue: typeof state.currentFolderId === 'number' ? state.currentFolderId : 'root',
+        });
         openModal('uploadModal');
     });
     closeModalBtn.addEventListener('click', () => closeModal('uploadModal'));
@@ -787,6 +1279,8 @@ function initMediaUpload() {
 
     fileInput.addEventListener('change', (e) => {
         handleFileSelection(e.target.files);
+        // Allow selecting the same file again (e.g., after a failed upload + retry)
+        e.target.value = '';
     });
 
     // Drag and drop
@@ -804,45 +1298,267 @@ function initMediaUpload() {
         uploadZone.classList.remove('dragover');
         handleFileSelection(e.dataTransfer.files);
     });
+
+    // Also accept drops directly onto the library when no modal is open
+    const mediaLayout = document.querySelector('.media-layout');
+    if (mediaLayout) {
+        mediaLayout.addEventListener('dragover', (e) => {
+            // Only handle file drags
+            if (Array.from(e.dataTransfer?.types || []).includes('Files')) {
+                e.preventDefault();
+                mediaLayout.classList.add('dragover');
+            }
+        });
+        mediaLayout.addEventListener('dragleave', () => mediaLayout.classList.remove('dragover'));
+        mediaLayout.addEventListener('drop', (e) => {
+            if (!e.dataTransfer?.files?.length) return;
+            e.preventDefault();
+            mediaLayout.classList.remove('dragover');
+            // Use the currently-viewed folder as the implicit destination.
+            // Mirror what the modal path would do.
+            const select = document.getElementById('uploadDestFolder');
+            if (select) {
+                populateFolderSelect(select, {
+                    includeRoot: true,
+                    defaultValue: typeof state.currentFolderId === 'number' ? state.currentFolderId : 'root',
+                });
+            }
+            handleFileSelection(e.dataTransfer.files);
+        });
+    }
 }
 
-async function handleFileSelection(files) {
+// ===== Upload Queue =====
+//
+// Bounded-concurrency upload queue. Replaces the previous sequential
+// `for (file of files) { await upload(file) }` loop so the UI can show
+// multiple files uploading in parallel with per-file progress/cancel/retry.
+//
+// Concurrency is delivered by /api/ui-config (mediaUploadConcurrency, default 3).
+// Each queue entry owns an AbortController so cancel + bulk-cancel work.
+const UploadQueue = {
+    entries: new Map(), // queueId -> { file, folderId, state, percent, error, controller }
+    nextId: 1,
+    activeCount: 0,
+    concurrency: 3,
+    panelOpen: false,
+
+    setConcurrency(n) {
+        const clamped = Math.max(1, Math.min(10, Number(n) || 3));
+        this.concurrency = clamped;
+    },
+
+    enqueue(files, folderId) {
+        for (const file of files) {
+            const id = this.nextId++;
+            this.entries.set(id, {
+                id,
+                file,
+                folderId,
+                state: 'queued',   // queued | uploading | done | failed | cancelled
+                percent: 0,
+                error: null,
+                controller: new AbortController(),
+            });
+        }
+        this.renderPanel();
+        this.pump();
+    },
+
+    pump() {
+        if (this.activeCount >= this.concurrency) return;
+        const next = this.pickNext();
+        if (!next) {
+            // Nothing left queued. If nothing active either, trigger a refresh.
+            if (this.activeCount === 0 && this.anyDoneRecently()) {
+                loadMedia();
+            }
+            return;
+        }
+        this.startUpload(next);
+        // Fire more in parallel up to the limit
+        this.pump();
+    },
+
+    pickNext() {
+        for (const e of this.entries.values()) {
+            if (e.state === 'queued') return e;
+        }
+        return null;
+    },
+
+    anyDoneRecently() {
+        for (const e of this.entries.values()) {
+            if (e.state === 'done' || e.state === 'failed' || e.state === 'cancelled') return true;
+        }
+        return false;
+    },
+
+    async startUpload(entry) {
+        entry.state = 'uploading';
+        this.activeCount += 1;
+        this.renderPanel();
+
+        const MAX_RETRIES = 2;
+        const BACKOFFS_MS = [1000, 4000];
+        let attempt = 0;
+
+        while (true) {
+            try {
+                await mediaAPI.upload(entry.file, {
+                    folderId: entry.folderId,
+                    signal: entry.controller.signal,
+                    onProgress: (percent) => {
+                        entry.percent = percent;
+                        this.renderPanel();
+                    },
+                });
+                entry.state = 'done';
+                entry.percent = 100;
+                break;
+            } catch (err) {
+                if (entry.controller.signal.aborted) {
+                    entry.state = 'cancelled';
+                    break;
+                }
+                if (attempt < MAX_RETRIES) {
+                    attempt += 1;
+                    entry.error = `Retry ${attempt}/${MAX_RETRIES}…`;
+                    this.renderPanel();
+                    await new Promise((r) => setTimeout(r, BACKOFFS_MS[attempt - 1] || 4000));
+                    continue;
+                }
+                entry.state = 'failed';
+                entry.error = err?.message || 'Upload failed';
+                break;
+            }
+        }
+
+        this.activeCount -= 1;
+        this.renderPanel();
+        this.pump();
+    },
+
+    cancel(id) {
+        const entry = this.entries.get(id);
+        if (!entry) return;
+        entry.controller.abort();
+        if (entry.state === 'queued') {
+            entry.state = 'cancelled';
+        }
+        this.renderPanel();
+        this.pump();
+    },
+
+    retry(id) {
+        const entry = this.entries.get(id);
+        if (!entry || (entry.state !== 'failed' && entry.state !== 'cancelled')) return;
+        entry.state = 'queued';
+        entry.percent = 0;
+        entry.error = null;
+        entry.controller = new AbortController();
+        this.renderPanel();
+        this.pump();
+    },
+
+    clearFinished() {
+        for (const [id, e] of Array.from(this.entries.entries())) {
+            if (e.state === 'done' || e.state === 'failed' || e.state === 'cancelled') {
+                this.entries.delete(id);
+            }
+        }
+        this.renderPanel();
+    },
+
+    renderPanel() {
+        const panel = document.getElementById('uploadQueuePanel');
+        const list = document.getElementById('uploadQueueList');
+        const title = document.getElementById('uploadQueueTitle');
+        const closeBtn = document.getElementById('uploadQueueClose');
+        if (!panel || !list || !title) return;
+
+        if (this.entries.size === 0) {
+            panel.style.display = 'none';
+            return;
+        }
+
+        panel.style.display = '';
+        const counts = { total: this.entries.size, active: 0, done: 0, failed: 0 };
+        for (const e of this.entries.values()) {
+            if (e.state === 'uploading' || e.state === 'queued') counts.active += 1;
+            else if (e.state === 'done') counts.done += 1;
+            else if (e.state === 'failed' || e.state === 'cancelled') counts.failed += 1;
+        }
+        if (counts.active > 0) {
+            title.textContent = `Uploading ${counts.active} of ${counts.total}…`;
+            if (closeBtn) closeBtn.style.display = 'none';
+        } else {
+            title.textContent = `${counts.done} uploaded${counts.failed ? `, ${counts.failed} failed` : ''}`;
+            if (closeBtn) closeBtn.style.display = '';
+        }
+
+        list.innerHTML = Array.from(this.entries.values()).map((e) => {
+            const pct = Math.round(e.percent);
+            let statusLabel = '';
+            let actions = '';
+            switch (e.state) {
+                case 'queued':
+                    statusLabel = 'Queued';
+                    actions = `<button class="upload-queue-cancel" data-qid="${e.id}">Cancel</button>`;
+                    break;
+                case 'uploading':
+                    statusLabel = `${pct}%`;
+                    actions = `<button class="upload-queue-cancel" data-qid="${e.id}">Cancel</button>`;
+                    break;
+                case 'done':
+                    statusLabel = 'Done';
+                    break;
+                case 'failed':
+                    statusLabel = e.error || 'Failed';
+                    actions = `<button class="upload-queue-retry" data-qid="${e.id}">Retry</button>`;
+                    break;
+                case 'cancelled':
+                    statusLabel = 'Cancelled';
+                    actions = `<button class="upload-queue-retry" data-qid="${e.id}">Retry</button>`;
+                    break;
+            }
+            const safeName = escapeHtml(e.file.name);
+            return `
+                <li class="upload-queue-item upload-queue-${e.state}">
+                    <div class="upload-queue-name" title="${safeName}">${safeName}</div>
+                    <div class="upload-queue-progress"><div class="upload-queue-progress-fill" style="width:${pct}%"></div></div>
+                    <div class="upload-queue-status">${statusLabel}</div>
+                    <div class="upload-queue-actions">${actions}</div>
+                </li>`;
+        }).join('');
+
+        list.querySelectorAll('.upload-queue-cancel').forEach((btn) => {
+            btn.addEventListener('click', () => this.cancel(Number(btn.dataset.qid)));
+        });
+        list.querySelectorAll('.upload-queue-retry').forEach((btn) => {
+            btn.addEventListener('click', () => this.retry(Number(btn.dataset.qid)));
+        });
+    },
+};
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
+function handleFileSelection(files) {
     if (!files || files.length === 0) return;
 
+    // Determine destination folder from the modal selector (falls back to
+    // the currently-viewed folder if the modal wasn't used — e.g. drag-drop
+    // onto the library when we wire that up).
+    const destEl = document.getElementById('uploadDestFolder');
+    let folderId = 'root';
+    if (destEl && destEl.value) folderId = destEl.value;
+
+    UploadQueue.enqueue(Array.from(files), folderId);
     closeModal('uploadModal');
-
-    for (const file of files) {
-        await uploadFile(file);
-    }
-
-    loadMedia();
-}
-
-async function uploadFile(file) {
-    const progressEl = document.getElementById('uploadProgress');
-    const fileNameEl = document.getElementById('uploadFileName');
-    const percentEl = document.getElementById('uploadPercent');
-    const progressBar = document.getElementById('uploadProgressBar');
-
-    progressEl.style.display = 'block';
-    fileNameEl.textContent = `Uploading: ${file.name}`;
-
-    try {
-        await mediaAPI.upload(file, (percent) => {
-            percentEl.textContent = `${Math.round(percent)}%`;
-            progressBar.style.width = `${percent}%`;
-        });
-
-        showToast(`Successfully uploaded ${file.name}`, 'success');
-    } catch (error) {
-        console.error('Upload failed:', error);
-        showToast(`Failed to upload ${file.name}`, 'error');
-    } finally {
-        setTimeout(() => {
-            progressEl.style.display = 'none';
-            progressBar.style.width = '0%';
-        }, 1000);
-    }
 }
 
 async function handleMediaDelete(id) {
@@ -3777,6 +4493,8 @@ async function init() {
         console.warn('Failed to load UI config, using defaults:', e);
     }
 
+    UploadQueue.setConcurrency(UI_CONFIG.mediaUploadConcurrency);
+
     // Initialize auth forms (always needed)
     initAuthForms();
     initUserMenu();
@@ -3804,6 +4522,9 @@ function initApp() {
     initMediaSearch();
     initMediaUpload();
     initMediaPreviewModal();
+    initBulkActions();
+    initFolderActions();
+    initUploadQueueUI();
 
     // Initialize playlist functionality
     initCreatePlaylist();

@@ -158,6 +158,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
       checksum: input.checksum || null,
       thumbnail_status: input.thumbnail_status || 'pending',
       approval_status: 'pending',
+      folder_id: input.folder_id ?? null,
       created_at: now,
       updated_at: now,
     };
@@ -186,6 +187,11 @@ export class MongoDBAdapter implements DatabaseAdapter {
         { original_filename: { $regex: filter.search, $options: 'i' } },
         { filename: { $regex: filter.search, $options: 'i' } },
       ];
+    }
+    if (filter?.folder_id === 'root') {
+      query.folder_id = null;
+    } else if (typeof filter?.folder_id === 'number') {
+      query.folder_id = filter.folder_id;
     }
 
     const total = await this.col('media_files').countDocuments(query);
@@ -221,6 +227,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
       'checksum',
       'thumbnail_status',
       'approval_status',
+      'folder_id',
     ]);
 
     const setFields: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -256,6 +263,148 @@ export class MongoDBAdapter implements DatabaseAdapter {
   async getMediaByChecksum(checksum: string): Promise<MediaFile | null> {
     const doc = await this.col('media_files').findOne({ checksum });
     return this.docToObj<MediaFile>(doc);
+  }
+
+  async moveMediaToFolder(mediaIds: number[], folderId: number | null): Promise<number> {
+    if (mediaIds.length === 0) return 0;
+    const result = await this.col('media_files').updateMany(
+      { id: { $in: mediaIds } },
+      { $set: { folder_id: folderId, updated_at: new Date().toISOString() } }
+    );
+    return result.modifiedCount;
+  }
+
+  // ── Media folder operations ──────────────────────────────────────────────
+
+  async createMediaFolder(
+    input: import('../types').CreateMediaFolderInput
+  ): Promise<import('../types').MediaFolder> {
+    const parentId = input.parent_id ?? null;
+    let parentPath = '/';
+    if (parentId !== null) {
+      const parent = await this.getMediaFolderById(parentId);
+      if (!parent) throw new Error(`Parent folder with ID ${parentId} not found`);
+      parentPath = parent.path;
+    }
+    const id = await this.nextId('media_folders');
+    const fullPath = parentPath === '/' ? `/${id}` : `${parentPath}/${id}`;
+    const now = new Date().toISOString();
+    const doc = {
+      id,
+      name: input.name,
+      parent_id: parentId,
+      path: fullPath,
+      created_by: input.created_by ?? null,
+      created_at: now,
+      updated_at: now,
+    };
+    await this.col('media_folders').insertOne(doc);
+    return doc as import('../types').MediaFolder;
+  }
+
+  async getMediaFolderById(
+    id: number
+  ): Promise<import('../types').MediaFolder | null> {
+    const doc = await this.col('media_folders').findOne({ id });
+    return this.docToObj<import('../types').MediaFolder>(doc);
+  }
+
+  async getAllMediaFolders(): Promise<import('../types').MediaFolder[]> {
+    const docs = await this.col('media_folders')
+      .find({})
+      .sort({ path: 1, name: 1 })
+      .toArray();
+    return docs.map((d) => this.docToObj<import('../types').MediaFolder>(d)!);
+  }
+
+  async updateMediaFolder(
+    id: number,
+    input: import('../types').UpdateMediaFolderInput
+  ): Promise<import('../types').MediaFolder> {
+    const folder = await this.getMediaFolderById(id);
+    if (!folder) throw new Error(`Folder with ID ${id} not found`);
+
+    const setFields: Record<string, unknown> = { updated_at: new Date().toISOString() };
+
+    if (input.name !== undefined) setFields.name = input.name;
+
+    if (input.parent_id !== undefined && input.parent_id !== folder.parent_id) {
+      const newParentId = input.parent_id;
+      let newParentPath = '/';
+      if (newParentId !== null) {
+        if (newParentId === id) throw new Error('A folder cannot be its own parent');
+        const newParent = await this.getMediaFolderById(newParentId);
+        if (!newParent) throw new Error(`Parent folder ${newParentId} not found`);
+        if (newParent.path === folder.path || newParent.path.startsWith(`${folder.path}/`)) {
+          throw new Error('Cannot move folder into its own descendant');
+        }
+        newParentPath = newParent.path;
+      }
+      const newPath = newParentPath === '/' ? `/${id}` : `${newParentPath}/${id}`;
+      setFields.parent_id = newParentId;
+      setFields.path = newPath;
+
+      // Recompute descendants
+      const oldPath = folder.path;
+      const descendants = await this.col('media_folders')
+        .find({ path: { $regex: `^${oldPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/` } })
+        .toArray();
+      for (const d of descendants) {
+        const descriptor = this.docToObj<import('../types').MediaFolder>(d);
+        if (!descriptor) continue;
+        const suffix = descriptor.path.slice(oldPath.length);
+        await this.col('media_folders').updateOne(
+          { id: descriptor.id },
+          {
+            $set: {
+              path: `${newPath}${suffix}`,
+              updated_at: new Date().toISOString(),
+            },
+          }
+        );
+      }
+    }
+
+    await this.col('media_folders').updateOne({ id }, { $set: setFields });
+    const updated = await this.getMediaFolderById(id);
+    if (!updated) throw new Error(`Folder with ID ${id} not found`);
+    return updated;
+  }
+
+  async deleteMediaFolder(id: number): Promise<void> {
+    // Cascade manually: delete the folder and all descendants, detach media to root.
+    const folder = await this.getMediaFolderById(id);
+    if (!folder) return;
+    const descendants = await this.col('media_folders')
+      .find({ path: { $regex: `^${folder.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/` } })
+      .toArray();
+    const idsToRemove = [id, ...descendants.map((d) => (d as unknown as { id: number }).id)];
+    await this.col('media_files').updateMany(
+      { folder_id: { $in: idsToRemove } },
+      { $set: { folder_id: null, updated_at: new Date().toISOString() } }
+    );
+    await this.col('media_folders').deleteMany({ id: { $in: idsToRemove } });
+  }
+
+  async getMediaFolderDescendants(id: number): Promise<import('../types').MediaFolder[]> {
+    const folder = await this.getMediaFolderById(id);
+    if (!folder) return [];
+    const escaped = folder.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const docs = await this.col('media_folders')
+      .find({ path: { $regex: `^${escaped}/` } })
+      .sort({ path: 1 })
+      .toArray();
+    return docs.map((d) => this.docToObj<import('../types').MediaFolder>(d)!);
+  }
+
+  async getMediaFolderContentCounts(
+    id: number
+  ): Promise<{ media: number; subfolders: number }> {
+    const [media, subfolders] = await Promise.all([
+      this.col('media_files').countDocuments({ folder_id: id }),
+      this.col('media_folders').countDocuments({ parent_id: id }),
+    ]);
+    return { media, subfolders };
   }
 
   // ── Playlist operations ──────────────────────────────────────────────────

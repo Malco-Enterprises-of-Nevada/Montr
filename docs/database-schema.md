@@ -54,6 +54,9 @@ CREATE TABLE IF NOT EXISTS media_files (
   width INTEGER,                             -- Resolution width
   height INTEGER,                            -- Resolution height
   checksum TEXT UNIQUE,                      -- SHA-256 hash for duplicate detection
+  thumbnail_status TEXT,                     -- pending|generating|generated|failed (added 002)
+  approval_status TEXT,                      -- pending|approved|rejected (added 009)
+  folder_id INTEGER REFERENCES media_folders(id) ON DELETE SET NULL, -- added 014
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -72,8 +75,39 @@ CREATE TABLE IF NOT EXISTS media_files (
 | `width` | INTEGER | | Resolution width in pixels |
 | `height` | INTEGER | | Resolution height in pixels |
 | `checksum` | TEXT | UNIQUE | SHA-256 hash for duplicate detection |
+| `thumbnail_status` | TEXT | | `pending` / `generating` / `generated` / `failed` |
+| `approval_status` | TEXT | | `pending` / `approved` / `rejected` |
+| `folder_id` | INTEGER | FK, nullable | References `media_folders(id)`. `NULL` = root. |
 | `created_at` | DATETIME | DEFAULT NOW | Upload timestamp |
 | `updated_at` | DATETIME | DEFAULT NOW | Auto-updated via trigger |
+
+### media_folders
+
+Nested (self-referential) folder hierarchy for organising media. Added in migration **014**. Folder identity is purely a DB concept — the on-disk layout under `STORAGE_PATH` is unchanged, so client-side downloads by media ID are unaffected by folder moves.
+
+```sql
+CREATE TABLE IF NOT EXISTS media_folders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  parent_id INTEGER REFERENCES media_folders(id) ON DELETE CASCADE,
+  path TEXT NOT NULL DEFAULT '/',             -- Materialised path like "/1/4/7"
+  created_by INTEGER,                          -- FK to users(id), nullable
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(parent_id, name)
+);
+```
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | INTEGER | PK, AUTO | Unique identifier |
+| `name` | TEXT | NOT NULL | Display name (1-255 chars, no slashes) |
+| `parent_id` | INTEGER | FK, nullable | `NULL` = top-level folder; CASCADE on delete |
+| `path` | TEXT | NOT NULL | Slash-joined ancestor IDs (e.g. `/1/4`); maintained by the service on move |
+| `created_by` | INTEGER | nullable | User that created the folder |
+| `created_at` / `updated_at` | DATETIME | | Timestamps (trigger maintains updated_at) |
+
+Uniqueness is enforced on `(parent_id, name)` so no two siblings share a name.
 
 ### playlists
 
@@ -221,6 +255,9 @@ CREATE TABLE IF NOT EXISTS system_state (
 | `idx_media_type` | media_files | `type` | Filter media by video/image |
 | `idx_media_created` | media_files | `created_at DESC` | List media by newest first |
 | `idx_media_checksum` | media_files | `checksum` | Fast duplicate detection on upload |
+| `idx_media_folder` | media_files | `folder_id` | Filter media by folder |
+| `idx_media_folders_parent` | media_folders | `parent_id` | Tree traversal (children of a folder) |
+| `idx_media_folders_path` | media_folders | `path` | Prefix matching for descendant queries |
 | `idx_playlist_items_playlist` | playlist_items | `playlist_id, order_index` | Load playlist items in order |
 | `idx_playlist_items_media` | playlist_items | `media_id` | Find which playlists contain a media file |
 | `idx_clients_status` | clients | `status` | Filter clients by online/offline/error |

@@ -156,7 +156,10 @@ export class MediaService {
   /**
    * Creates a new media file entry
    */
-  async createMedia(file: Express.Multer.File): Promise<MediaFile> {
+  async createMedia(
+    file: Express.Multer.File,
+    options?: { folderId?: number | null }
+  ): Promise<MediaFile> {
     try {
       // Save file to storage
       const storageInfo: StorageFileInfo = await storageService.saveUploadedFile(file);
@@ -190,6 +193,20 @@ export class MediaService {
         );
       }
 
+      // If a folder was requested, make sure it exists. Bad folder_id = 400
+      // rather than relying on the FK to throw a cryptic error later.
+      if (options?.folderId != null) {
+        const folder = await db.getMediaFolderById(options.folderId);
+        if (!folder) {
+          await storageService.deleteFile(storageInfo.filepath);
+          throw new AppError(
+            ErrorCode.FOLDER_NOT_FOUND,
+            `Folder with ID ${options.folderId} not found`,
+            404
+          );
+        }
+      }
+
       // Create media entry in database
       const input: CreateMediaInput = {
         filename: storageInfo.filename,
@@ -202,6 +219,7 @@ export class MediaService {
         width: metadata.width,
         height: metadata.height,
         checksum: storageInfo.checksum,
+        folder_id: options?.folderId ?? null,
       };
 
       const media = await db.createMedia(input);
@@ -228,7 +246,8 @@ export class MediaService {
   async createMediaFromStorageInfo(
     storageInfo: StorageFileInfo,
     originalFilename: string,
-    mimeType: string
+    mimeType: string,
+    options?: { folderId?: number | null }
   ): Promise<MediaFile> {
     const mediaType = this.getMediaType(mimeType);
 
@@ -272,6 +291,18 @@ export class MediaService {
       );
     }
 
+    if (options?.folderId != null) {
+      const folder = await db.getMediaFolderById(options.folderId);
+      if (!folder) {
+        await storageService.deleteFile(storageInfo.filepath);
+        throw new AppError(
+          ErrorCode.FOLDER_NOT_FOUND,
+          `Folder with ID ${options.folderId} not found`,
+          404
+        );
+      }
+    }
+
     const input: CreateMediaInput = {
       filename: storageInfo.filename,
       original_filename: originalFilename,
@@ -283,6 +314,7 @@ export class MediaService {
       width: metadata.width,
       height: metadata.height,
       checksum: storageInfo.checksum,
+      folder_id: options?.folderId ?? null,
     };
 
     const media = await db.createMedia(input);

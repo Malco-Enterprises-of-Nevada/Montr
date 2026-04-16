@@ -182,9 +182,9 @@ export class MSSQLAdapter extends SqlBaseAdapter {
     const id = await this.insertAndGetId(
       `INSERT INTO media_files (
         filename, original_filename, filepath, type, mime_type,
-        file_size, duration, width, height, checksum, thumbnail_status, approval_status
+        file_size, duration, width, height, checksum, thumbnail_status, approval_status, folder_id
       ) OUTPUT INSERTED.id
-      VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10, @p11, @p12)`,
+      VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10, @p11, @p12, @p13)`,
       [
         input.filename,
         input.original_filename,
@@ -198,6 +198,7 @@ export class MSSQLAdapter extends SqlBaseAdapter {
         input.checksum || null,
         input.thumbnail_status || 'pending',
         'pending',
+        input.folder_id ?? null,
       ]
     );
 
@@ -231,6 +232,31 @@ export class MSSQLAdapter extends SqlBaseAdapter {
     const item = await this.getPlaylistItemById(id);
     if (!item) throw new Error('Failed to retrieve created playlist item');
     return item;
+  }
+
+  async createMediaFolder(
+    input: import('../types').CreateMediaFolderInput
+  ): Promise<import('../types').MediaFolder> {
+    const parentId = input.parent_id ?? null;
+    let parentPath = '/';
+    if (parentId !== null) {
+      const parent = await this.getMediaFolderById(parentId);
+      if (!parent) throw new Error(`Parent folder with ID ${parentId} not found`);
+      parentPath = parent.path;
+    }
+    const id = await this.insertAndGetId(
+      `INSERT INTO media_folders (name, parent_id, path, created_by)
+       OUTPUT INSERTED.id VALUES (@p1, @p2, @p3, @p4)`,
+      [input.name, parentId, '/', input.created_by ?? null]
+    );
+    const fullPath = parentPath === '/' ? `/${id}` : `${parentPath}/${id}`;
+    await this.rawExecute(
+      `UPDATE media_folders SET path = @p1 WHERE id = @p2`,
+      [fullPath, id]
+    );
+    const folder = await this.getMediaFolderById(id);
+    if (!folder) throw new Error('Failed to retrieve created folder');
+    return folder;
   }
 
   async createClientStatus(input: CreateClientStatusInput): Promise<ClientStatus> {

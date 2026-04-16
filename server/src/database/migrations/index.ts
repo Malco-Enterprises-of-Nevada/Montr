@@ -17,6 +17,7 @@ import { migration as m010 } from './010_users';
 import { migration as m011 } from './011_client_telemetry';
 import { migration as m012 } from './012_widen_notification_events';
 import { migration as m013 } from './013_advanced_scheduling';
+import { migration as m014 } from './014_media_folders';
 
 export const migrations: Migration[] = [
   m001,
@@ -32,4 +33,5 @@ export const migrations: Migration[] = [
   m011,
   m012,
   m013,
+  m014,
 ];

@@ -54,6 +54,9 @@ import {
   ClientLogEventRow,
   CreateClientLogEventInput,
   ClientLogLevel,
+  MediaFolder,
+  CreateMediaFolderInput,
+  UpdateMediaFolderInput,
 } from '../types';
 
 export interface DatabaseAdapter {
@@ -72,6 +75,19 @@ export interface DatabaseAdapter {
   updateMedia(id: number, updates: Partial<CreateMediaInput>): Promise<MediaFile>;
   deleteMedia(id: number): Promise<void>;
   getMediaByChecksum(checksum: string): Promise<MediaFile | null>;
+  /** Bulk move media to folder (null = root). Returns number of rows affected. */
+  moveMediaToFolder(mediaIds: number[], folderId: number | null): Promise<number>;
+
+  // Media folder operations
+  createMediaFolder(input: CreateMediaFolderInput): Promise<MediaFolder>;
+  getMediaFolderById(id: number): Promise<MediaFolder | null>;
+  getAllMediaFolders(): Promise<MediaFolder[]>;
+  updateMediaFolder(id: number, input: UpdateMediaFolderInput): Promise<MediaFolder>;
+  deleteMediaFolder(id: number): Promise<void>;
+  /** Returns all descendant folders of the given folder (not including itself). */
+  getMediaFolderDescendants(id: number): Promise<MediaFolder[]>;
+  /** Count of media files + subfolders directly under this folder. */
+  getMediaFolderContentCounts(id: number): Promise<{ media: number; subfolders: number }>;
 
   // Playlist operations
   createPlaylist(input: CreatePlaylistInput): Promise<Playlist>;

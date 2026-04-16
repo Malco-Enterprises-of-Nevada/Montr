@@ -18,8 +18,31 @@ export interface MediaFile {
   checksum: string | null;
   thumbnail_status: ThumbnailStatus;
   approval_status: ApprovalStatus;
+  folder_id: number | null;
   created_at: string;
   updated_at: string;
+}
+
+// Media folder types
+export interface MediaFolder {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  path: string;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateMediaFolderInput {
+  name: string;
+  parent_id?: number | null;
+  created_by?: number | null;
+}
+
+export interface UpdateMediaFolderInput {
+  name?: string;
+  parent_id?: number | null;
 }
 
 export interface Playlist {
@@ -87,6 +110,12 @@ export interface CreateMediaInput {
   height?: number;
   checksum?: string;
   thumbnail_status?: ThumbnailStatus;
+  folder_id?: number | null;
+}
+
+export interface UpdateMediaInput {
+  original_filename?: string;
+  folder_id?: number | null;
 }
 
 export interface CreatePlaylistInput {
@@ -156,6 +185,8 @@ export interface PaginatedResult<T> {
 export interface MediaFilter {
   type?: 'video' | 'image';
   search?: string;
+  /** Numeric ID filters by folder; 'root' filters for media with NULL folder_id; undefined = no filter */
+  folder_id?: number | 'root';
 }
 
 export interface ClientFilter {
