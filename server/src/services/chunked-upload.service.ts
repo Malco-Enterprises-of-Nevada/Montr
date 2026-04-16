@@ -26,6 +26,7 @@ interface UploadSession {
   chunkSize: number;
   receivedChunks: Map<number, { etag?: string; size: number }>;
   localChunkDir?: string;
+  folderId: number | null;
   createdAt: number;
   lastActivity: number;
 }
@@ -50,7 +51,8 @@ class ChunkedUploadService {
   async initUpload(
     filename: string,
     mimeType: string,
-    totalSize: number
+    totalSize: number,
+    folderId: number | null = null
   ): Promise<InitUploadResult> {
     const uploadId = crypto.randomUUID();
     const chunkSizeMB = config.storage.chunkSizeMB;
@@ -66,6 +68,7 @@ class ChunkedUploadService {
       totalChunks,
       chunkSize,
       receivedChunks: new Map(),
+      folderId,
       createdAt: Date.now(),
       lastActivity: Date.now(),
     };
@@ -143,7 +146,12 @@ class ChunkedUploadService {
    */
   async completeUpload(
     uploadId: string
-  ): Promise<{ storageInfo: StorageFileInfo; originalFilename: string; mimeType: string }> {
+  ): Promise<{
+    storageInfo: StorageFileInfo;
+    originalFilename: string;
+    mimeType: string;
+    folderId: number | null;
+  }> {
     const session = this.getSession(uploadId);
     const backend = config.storage.backend;
 
@@ -174,6 +182,7 @@ class ChunkedUploadService {
       storageInfo,
       originalFilename: session.originalFilename,
       mimeType: session.mimeType,
+      folderId: session.folderId,
     };
   }
 

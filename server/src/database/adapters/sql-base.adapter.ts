@@ -64,6 +64,9 @@ import {
   TelemetryNetSample,
   TelemetryMpvSample,
   TelemetryProcessSample,
+  MediaFolder,
+  CreateMediaFolderInput,
+  UpdateMediaFolderInput,
 } from '../types';
 import { MigrationExecutor } from '../migrations/runner';
 
@@ -81,6 +84,7 @@ const MEDIA_UPDATABLE_FIELDS = new Set([
   'checksum',
   'thumbnail_status',
   'approval_status',
+  'folder_id',
 ]);
 
 /** Row result from a query with execution metadata */
@@ -151,12 +155,12 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
   // ── Media operations ─────────────────────────────────────────────────────
 
   async createMedia(input: CreateMediaInput): Promise<MediaFile> {
-    const p = this.placeholder;
+    const p = (i: number) => this.placeholder(i);
     const result = await this.rawExecute(
       `INSERT INTO media_files (
         filename, original_filename, filepath, type, mime_type,
-        file_size, duration, width, height, checksum, thumbnail_status, approval_status
-      ) VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)}, ${p(10)}, ${p(11)}, ${p(12)})`,
+        file_size, duration, width, height, checksum, thumbnail_status, approval_status, folder_id
+      ) VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)}, ${p(10)}, ${p(11)}, ${p(12)}, ${p(13)})`,
       [
         input.filename,
         input.original_filename,
@@ -170,6 +174,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
         input.checksum || null,
         input.thumbnail_status || 'pending',
         'pending',
+        input.folder_id ?? null,
       ]
     );
 
@@ -207,6 +212,12 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
           `(original_filename LIKE ${this.placeholder(paramIndex++)} OR filename LIKE ${this.placeholder(paramIndex++)})`
         );
         params.push(`%${filter.search}%`, `%${filter.search}%`);
+      }
+      if (filter.folder_id === 'root') {
+        conditions.push(`folder_id IS NULL`);
+      } else if (typeof filter.folder_id === 'number') {
+        conditions.push(`folder_id = ${this.placeholder(paramIndex++)}`);
+        params.push(filter.folder_id);
       }
       if (conditions.length > 0) {
         whereClause = `WHERE ${conditions.join(' AND ')}`;
@@ -276,6 +287,144 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     );
   }
 
+  async moveMediaToFolder(mediaIds: number[], folderId: number | null): Promise<number> {
+    if (mediaIds.length === 0) return 0;
+    const placeholders = mediaIds.map((_, i) => this.placeholder(i + 2)).join(', ');
+    const result = await this.rawExecute(
+      `UPDATE media_files SET folder_id = ${this.placeholder(1)} WHERE id IN (${placeholders})`,
+      [folderId, ...mediaIds]
+    );
+    return result.affectedRows;
+  }
+
+  // ── Media folder operations ──────────────────────────────────────────────
+
+  async createMediaFolder(input: CreateMediaFolderInput): Promise<MediaFolder> {
+    const parentId = input.parent_id ?? null;
+    let parentPath = '/';
+    if (parentId !== null) {
+      const parent = await this.getMediaFolderById(parentId);
+      if (!parent) throw new Error(`Parent folder with ID ${parentId} not found`);
+      parentPath = parent.path;
+    }
+    // Insert with placeholder path, then update path to include id
+    const result = await this.rawExecute(
+      `INSERT INTO media_folders (name, parent_id, path, created_by) VALUES (${this.placeholder(1)}, ${this.placeholder(2)}, ${this.placeholder(3)}, ${this.placeholder(4)})`,
+      [input.name, parentId, '/', input.created_by ?? null]
+    );
+    const id = result.lastInsertId;
+    const fullPath = parentPath === '/' ? `/${id}` : `${parentPath}/${id}`;
+    await this.rawExecute(
+      `UPDATE media_folders SET path = ${this.placeholder(1)} WHERE id = ${this.placeholder(2)}`,
+      [fullPath, id]
+    );
+    const folder = await this.getMediaFolderById(id);
+    if (!folder) throw new Error('Failed to retrieve created folder');
+    return folder;
+  }
+
+  async getMediaFolderById(id: number): Promise<MediaFolder | null> {
+    return this.rawQueryOne<MediaFolder>(
+      `SELECT * FROM media_folders WHERE id = ${this.placeholder(1)}`,
+      [id]
+    );
+  }
+
+  async getAllMediaFolders(): Promise<MediaFolder[]> {
+    return this.rawQuery<MediaFolder>(
+      'SELECT * FROM media_folders ORDER BY path ASC, name ASC'
+    );
+  }
+
+  async updateMediaFolder(id: number, input: UpdateMediaFolderInput): Promise<MediaFolder> {
+    const folder = await this.getMediaFolderById(id);
+    if (!folder) throw new Error(`Folder with ID ${id} not found`);
+
+    await this.rawTransaction(async () => {
+      if (input.name !== undefined) {
+        await this.rawExecute(
+          `UPDATE media_folders SET name = ${this.placeholder(1)} WHERE id = ${this.placeholder(2)}`,
+          [input.name, id]
+        );
+      }
+
+      if (input.parent_id !== undefined && input.parent_id !== folder.parent_id) {
+        const newParentId = input.parent_id;
+        let newParentPath = '/';
+        if (newParentId !== null) {
+          const newParent = await this.getMediaFolderById(newParentId);
+          if (!newParent) throw new Error(`Parent folder ${newParentId} not found`);
+          // Cycle check: new parent must not be the folder itself or a descendant.
+          if (newParentId === id) throw new Error('A folder cannot be its own parent');
+          if (newParent.path === folder.path || newParent.path.startsWith(`${folder.path}/`)) {
+            throw new Error('Cannot move folder into its own descendant');
+          }
+          newParentPath = newParent.path;
+        }
+
+        const newPath = newParentPath === '/' ? `/${id}` : `${newParentPath}/${id}`;
+        const oldPath = folder.path;
+
+        await this.rawExecute(
+          `UPDATE media_folders SET parent_id = ${this.placeholder(1)}, path = ${this.placeholder(2)} WHERE id = ${this.placeholder(3)}`,
+          [newParentId, newPath, id]
+        );
+
+        // Recompute descendants' paths: replace prefix oldPath with newPath.
+        // Select all descendants by the old path prefix.
+        const descendants = await this.rawQuery<MediaFolder>(
+          `SELECT * FROM media_folders WHERE path LIKE ${this.placeholder(1)}`,
+          [`${oldPath}/%`]
+        );
+        for (const d of descendants) {
+          const suffix = d.path.slice(oldPath.length); // starts with '/'
+          const updated = `${newPath}${suffix}`;
+          await this.rawExecute(
+            `UPDATE media_folders SET path = ${this.placeholder(1)} WHERE id = ${this.placeholder(2)}`,
+            [updated, d.id]
+          );
+        }
+      }
+    });
+
+    const updated = await this.getMediaFolderById(id);
+    if (!updated) throw new Error(`Folder with ID ${id} not found`);
+    return updated;
+  }
+
+  async deleteMediaFolder(id: number): Promise<void> {
+    await this.rawExecute(
+      `DELETE FROM media_folders WHERE id = ${this.placeholder(1)}`,
+      [id]
+    );
+  }
+
+  async getMediaFolderDescendants(id: number): Promise<MediaFolder[]> {
+    const folder = await this.getMediaFolderById(id);
+    if (!folder) return [];
+    return this.rawQuery<MediaFolder>(
+      `SELECT * FROM media_folders WHERE path LIKE ${this.placeholder(1)} ORDER BY path ASC`,
+      [`${folder.path}/%`]
+    );
+  }
+
+  async getMediaFolderContentCounts(
+    id: number
+  ): Promise<{ media: number; subfolders: number }> {
+    const mediaRows = await this.rawQuery<{ count: number }>(
+      `SELECT COUNT(*) as count FROM media_files WHERE folder_id = ${this.placeholder(1)}`,
+      [id]
+    );
+    const subfolderRows = await this.rawQuery<{ count: number }>(
+      `SELECT COUNT(*) as count FROM media_folders WHERE parent_id = ${this.placeholder(1)}`,
+      [id]
+    );
+    return {
+      media: Number(mediaRows[0]?.count ?? 0),
+      subfolders: Number(subfolderRows[0]?.count ?? 0),
+    };
+  }
+
   // ── Playlist operations ──────────────────────────────────────────────────
 
   async createPlaylist(input: CreatePlaylistInput): Promise<Playlist> {
@@ -314,6 +463,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
         checksum: string | null;
         thumbnail_status: import('../types').ThumbnailStatus;
         approval_status: import('../types').ApprovalStatus;
+        folder_id: number | null;
         media_created_at: string;
         media_updated_at: string;
       }
@@ -322,7 +472,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
         pi.id, pi.playlist_id, pi.media_id, pi.order_index, pi.image_duration, pi.created_at,
         mf.id as media_id, mf.filename, mf.original_filename, mf.filepath, mf.type,
         mf.mime_type, mf.file_size, mf.duration, mf.width, mf.height, mf.checksum,
-        mf.thumbnail_status, mf.approval_status,
+        mf.thumbnail_status, mf.approval_status, mf.folder_id,
         mf.created_at as media_created_at, mf.updated_at as media_updated_at
       FROM playlist_items pi
       JOIN media_files mf ON pi.media_id = mf.id
@@ -352,6 +502,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
         checksum: row.checksum,
         thumbnail_status: row.thumbnail_status || 'pending',
         approval_status: row.approval_status || 'pending',
+        folder_id: row.folder_id ?? null,
         created_at: row.media_created_at,
         updated_at: row.media_updated_at,
       },

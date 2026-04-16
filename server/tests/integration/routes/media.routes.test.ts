@@ -305,4 +305,204 @@ describe('Media Routes Integration Tests', () => {
       expectValidationError(response);
     });
   });
+
+  describe('Folder integration with media', () => {
+    describe('GET /api/media?folder_id=...', () => {
+      it('filters by numeric folder_id', async () => {
+        mockDb.getAllMedia.mockResolvedValue(createPaginatedResult([]));
+
+        const response = await request(app).get('/api/media?folder_id=5');
+
+        expectSuccessResponse(response);
+        expect(mockDb.getAllMedia).toHaveBeenCalledWith(
+          expect.any(Object),
+          expect.objectContaining({ folder_id: 5 })
+        );
+      });
+
+      it('filters root-level media with folder_id=root', async () => {
+        mockDb.getAllMedia.mockResolvedValue(createPaginatedResult([]));
+
+        const response = await request(app).get('/api/media?folder_id=root');
+
+        expectSuccessResponse(response);
+        expect(mockDb.getAllMedia).toHaveBeenCalledWith(
+          expect.any(Object),
+          expect.objectContaining({ folder_id: 'root' })
+        );
+      });
+
+      it('rejects invalid folder_id', async () => {
+        const response = await request(app).get('/api/media?folder_id=bogus');
+
+        expectValidationError(response);
+      });
+    });
+
+    describe('POST /api/media/upload with folder_id', () => {
+      it('persists folder_id via createMedia options', async () => {
+        mockDb.getMediaByChecksum.mockResolvedValue(null);
+        mockDb.getMediaFolderById.mockResolvedValue({
+          id: 7,
+          name: 'Ads',
+          parent_id: null,
+          path: '/7',
+          created_by: null,
+          created_at: '',
+          updated_at: '',
+        });
+        mockDb.createMedia.mockResolvedValue({ ...mockVideoFile, folder_id: 7 });
+
+        const response = await request(app)
+          .post('/api/media/upload')
+          .field('folder_id', '7')
+          .attach('files', Buffer.from('fake-video-data'), 'clip.mp4');
+
+        const data = expectSuccessResponse<{ uploaded: Array<{ folder_id: number | null }> }>(
+          response,
+          201
+        );
+        expect(data.uploaded[0].folder_id).toBe(7);
+        expect(mockDb.createMedia).toHaveBeenCalledWith(
+          expect.objectContaining({ folder_id: 7 })
+        );
+      });
+
+      it('rejects invalid folder_id on upload', async () => {
+        const response = await request(app)
+          .post('/api/media/upload')
+          .field('folder_id', 'not-a-number')
+          .attach('files', Buffer.from('fake'), 'x.mp4');
+
+        expectErrorResponse(response, 400);
+      });
+    });
+
+    describe('PATCH /api/media/:id', () => {
+      it('moves media to a different folder', async () => {
+        mockDb.getMediaById.mockResolvedValue(mockVideoFile);
+        mockDb.getMediaFolderById.mockResolvedValue({
+          id: 3,
+          name: 'Target',
+          parent_id: null,
+          path: '/3',
+          created_by: null,
+          created_at: '',
+          updated_at: '',
+        });
+        mockDb.updateMedia.mockResolvedValue({ ...mockVideoFile, folder_id: 3 });
+
+        const response = await request(app)
+          .patch('/api/media/1')
+          .send({ folder_id: 3 });
+
+        const data = expectSuccessResponse<{ folder_id: number | null }>(response);
+        expect(data.folder_id).toBe(3);
+      });
+
+      it('returns FOLDER_NOT_FOUND for unknown folder_id', async () => {
+        mockDb.getMediaById.mockResolvedValue(mockVideoFile);
+        mockDb.getMediaFolderById.mockResolvedValue(null);
+
+        const response = await request(app)
+          .patch('/api/media/1')
+          .send({ folder_id: 999 });
+
+        expectErrorResponse(response, 404, 'FOLDER_NOT_FOUND');
+      });
+
+      it('requires at least one field', async () => {
+        const response = await request(app).patch('/api/media/1').send({});
+
+        expectErrorResponse(response, 400, 'VALIDATION_ERROR');
+      });
+    });
+
+    describe('POST /api/media/bulk/move', () => {
+      it('moves multiple media to a folder', async () => {
+        mockDb.getMediaFolderById.mockResolvedValue({
+          id: 4,
+          name: 'Archive',
+          parent_id: null,
+          path: '/4',
+          created_by: null,
+          created_at: '',
+          updated_at: '',
+        });
+        mockDb.moveMediaToFolder.mockResolvedValue(3);
+
+        const response = await request(app)
+          .post('/api/media/bulk/move')
+          .send({ media_ids: [1, 2, 3], folder_id: 4 });
+
+        const data = expectSuccessResponse<{ moved: number; requested: number }>(response);
+        expect(data.moved).toBe(3);
+        expect(data.requested).toBe(3);
+        expect(mockDb.moveMediaToFolder).toHaveBeenCalledWith([1, 2, 3], 4);
+      });
+
+      it('moves media to root (folder_id=null)', async () => {
+        mockDb.moveMediaToFolder.mockResolvedValue(2);
+
+        const response = await request(app)
+          .post('/api/media/bulk/move')
+          .send({ media_ids: [1, 2], folder_id: null });
+
+        expectSuccessResponse(response);
+        expect(mockDb.moveMediaToFolder).toHaveBeenCalledWith([1, 2], null);
+      });
+
+      it('rejects unknown target folder', async () => {
+        mockDb.getMediaFolderById.mockResolvedValue(null);
+
+        const response = await request(app)
+          .post('/api/media/bulk/move')
+          .send({ media_ids: [1], folder_id: 999 });
+
+        expectErrorResponse(response, 404, 'FOLDER_NOT_FOUND');
+      });
+    });
+
+    describe('POST /api/media/bulk/delete', () => {
+      it('deletes requested media and reports success', async () => {
+        mockDb.getMediaById.mockResolvedValue(mockVideoFile);
+        mockDb.deleteMedia.mockResolvedValue(undefined);
+
+        const response = await request(app)
+          .post('/api/media/bulk/delete')
+          .send({ media_ids: [1, 2] });
+
+        const data = expectSuccessResponse<{ deleted: number; ids: number[] }>(response);
+        expect(data.deleted).toBe(2);
+      });
+
+      it('reports per-id errors but keeps going', async () => {
+        mockDb.getMediaById
+          .mockResolvedValueOnce(mockVideoFile)
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(mockImageFile);
+        mockDb.deleteMedia.mockResolvedValue(undefined);
+
+        const response = await request(app)
+          .post('/api/media/bulk/delete')
+          .send({ media_ids: [1, 999, 2] });
+
+        const data = expectSuccessResponse<{
+          deleted: number;
+          errors?: Array<{ id: number }>;
+        }>(response);
+        expect(data.deleted).toBe(2);
+        expect(data.errors).toHaveLength(1);
+        expect(data.errors![0].id).toBe(999);
+      });
+
+      it('rejects empty media_ids', async () => {
+        const response = await request(app)
+          .post('/api/media/bulk/delete')
+          .send({ media_ids: [] });
+
+        expectErrorResponse(response, 400, 'VALIDATION_ERROR');
+      });
+    });
+  });
 });

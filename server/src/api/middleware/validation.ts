@@ -111,6 +111,87 @@ export const paginationSchema = z.object({
 export const listMediaQuerySchema = paginationSchema.extend({
   type: z.enum(['video', 'image']).optional(),
   search: z.string().optional(),
+  /** Folder filter: numeric id, or the literal 'root' for media at the top level. */
+  folder_id: z
+    .string()
+    .optional()
+    .refine(
+      (val) => val === undefined || val === 'root' || /^\d+$/.test(val),
+      { message: 'folder_id must be a positive integer or the literal "root"' }
+    )
+    .transform((val) => {
+      if (val === undefined) return undefined;
+      if (val === 'root') return 'root' as const;
+      return Number(val);
+    }),
+});
+
+// Media folder validation schemas
+
+/**
+ * Request body for creating a folder
+ */
+export const createFolderSchema = z.object({
+  name: z
+    .string()
+    .min(1, 'Folder name is required')
+    .max(255, 'Folder name must not exceed 255 characters')
+    .trim()
+    .refine((n) => !/[\\/]/.test(n), {
+      message: 'Folder name must not contain slashes',
+    }),
+  parent_id: z.number().int().positive('Parent ID must be a positive integer').nullable().optional(),
+});
+
+/**
+ * Request body for updating a folder (rename and/or re-parent)
+ */
+export const updateFolderSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(255)
+      .trim()
+      .refine((n) => !/[\\/]/.test(n), {
+        message: 'Folder name must not contain slashes',
+      })
+      .optional(),
+    parent_id: z.number().int().positive().nullable().optional(),
+  })
+  .refine((data) => data.name !== undefined || data.parent_id !== undefined, {
+    message: 'At least one field (name or parent_id) must be provided',
+  });
+
+/**
+ * Query parameters for deleting a folder
+ */
+export const deleteFolderQuerySchema = z.object({
+  recursive: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true' || val === '1'),
+});
+
+/**
+ * Request body for bulk-moving media to a folder
+ */
+export const bulkMoveMediaSchema = z.object({
+  media_ids: z
+    .array(z.number().int().positive())
+    .min(1, 'At least one media ID is required')
+    .max(1000, 'Cannot move more than 1000 items at once'),
+  folder_id: z.number().int().positive().nullable(),
+});
+
+/**
+ * Request body for bulk-deleting media
+ */
+export const bulkDeleteMediaSchema = z.object({
+  media_ids: z
+    .array(z.number().int().positive())
+    .min(1, 'At least one media ID is required')
+    .max(1000, 'Cannot delete more than 1000 items at once'),
 });
 
 // Playlist validation schemas

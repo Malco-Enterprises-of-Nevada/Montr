@@ -14,10 +14,14 @@ import { asyncHandler, successResponse, AppError, ErrorCode } from '../middlewar
 import {
   validateParams,
   validateQuery,
+  validateBody,
   idParamSchema,
   listMediaQuerySchema,
+  bulkMoveMediaSchema,
+  bulkDeleteMediaSchema,
 } from '../middleware/validation';
 import { requireRole } from '../middleware/jwt-auth';
+import { z } from 'zod';
 
 const router = Router();
 
@@ -58,7 +62,8 @@ const upload = multer({
 
 /**
  * POST /api/media/upload
- * Upload one or more media files
+ * Upload one or more media files. Optional folder_id field assigns them
+ * to a folder on creation (null/omitted = root).
  */
 router.post(
   '/upload',
@@ -71,13 +76,23 @@ router.post(
       throw new AppError(ErrorCode.BAD_REQUEST, 'No files provided', 400);
     }
 
+    const folderIdRaw = (req.body as Record<string, unknown>)?.folder_id;
+    let folderId: number | null = null;
+    if (folderIdRaw !== undefined && folderIdRaw !== '' && folderIdRaw !== null) {
+      const parsed = Number(folderIdRaw);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new AppError(ErrorCode.BAD_REQUEST, 'folder_id must be a positive integer', 400);
+      }
+      folderId = parsed;
+    }
+
     // Process each file
     const uploadedMedia = [];
     const errors = [];
 
     for (const file of files) {
       try {
-        const media = await mediaService.createMedia(file);
+        const media = await mediaService.createMedia(file, { folderId });
         uploadedMedia.push(media);
       } catch (error) {
         errors.push({
@@ -105,10 +120,11 @@ router.post(
   '/upload/init',
   requireRole('admin', 'editor'),
   asyncHandler(async (req: Request, res: Response) => {
-    const { filename, mimeType, totalSize } = req.body as {
+    const { filename, mimeType, totalSize, folder_id } = req.body as {
       filename: string;
       mimeType: string;
       totalSize: number;
+      folder_id?: number | null;
     };
 
     if (!filename || !mimeType || !totalSize) {
@@ -132,7 +148,15 @@ router.post(
       );
     }
 
-    const session = await chunkedUploadService.initUpload(filename, mimeType, totalSize);
+    let folderId: number | null = null;
+    if (folder_id !== undefined && folder_id !== null) {
+      if (!Number.isInteger(folder_id) || folder_id <= 0) {
+        throw new AppError(ErrorCode.BAD_REQUEST, 'folder_id must be a positive integer', 400);
+      }
+      folderId = folder_id;
+    }
+
+    const session = await chunkedUploadService.initUpload(filename, mimeType, totalSize, folderId);
     res.json(successResponse(session));
   })
 );
@@ -174,13 +198,14 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const uploadId = req.params.uploadId as string;
 
-    const { storageInfo, originalFilename, mimeType } =
+    const { storageInfo, originalFilename, mimeType, folderId } =
       await chunkedUploadService.completeUpload(uploadId);
 
     const media = await mediaService.createMediaFromStorageInfo(
       storageInfo,
       originalFilename,
-      mimeType
+      mimeType,
+      { folderId }
     );
 
     res.status(201).json(
@@ -220,10 +245,14 @@ router.get(
       limit: number;
       type?: 'video' | 'image';
       search?: string;
+      folder_id?: number | 'root';
     };
-    const { page, limit, type, search } = query;
+    const { page, limit, type, search, folder_id } = query;
 
-    const result = await mediaService.getAllMedia({ page, limit }, { type, search });
+    const result = await mediaService.getAllMedia(
+      { page, limit },
+      { type, search, folder_id }
+    );
 
     res.json(successResponse(result));
   })
@@ -240,6 +269,76 @@ router.get(
     const db = await getDatabase();
     const pending = await db.getPendingMedia();
     res.json(successResponse(pending));
+  })
+);
+
+/**
+ * POST /api/media/bulk/move
+ * Move multiple media files to a folder (null = root).
+ */
+router.post(
+  '/bulk/move',
+  requireRole('admin', 'editor'),
+  validateBody(bulkMoveMediaSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { media_ids, folder_id } = req.body as {
+      media_ids: number[];
+      folder_id: number | null;
+    };
+    const { getDatabase } = await import('../../database/connection');
+    const db = await getDatabase();
+    if (folder_id !== null) {
+      const folder = await db.getMediaFolderById(folder_id);
+      if (!folder) {
+        throw new AppError(
+          ErrorCode.FOLDER_NOT_FOUND,
+          `Folder with ID ${folder_id} not found`,
+          404
+        );
+      }
+    }
+    const moved = await db.moveMediaToFolder(media_ids, folder_id);
+    res.json(
+      successResponse({
+        moved,
+        requested: media_ids.length,
+        folder_id,
+      })
+    );
+  })
+);
+
+/**
+ * POST /api/media/bulk/delete
+ * Delete multiple media files. Errors on individual files are reported
+ * per-id; the overall request succeeds as long as it was well-formed.
+ */
+router.post(
+  '/bulk/delete',
+  requireRole('admin', 'editor'),
+  validateBody(bulkDeleteMediaSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { media_ids } = req.body as { media_ids: number[] };
+    const deleted: number[] = [];
+    const errors: Array<{ id: number; error: string }> = [];
+    for (const id of media_ids) {
+      try {
+        await mediaService.deleteMedia(id);
+        deleted.push(id);
+      } catch (err) {
+        errors.push({
+          id,
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      }
+    }
+    res.json(
+      successResponse({
+        deleted: deleted.length,
+        ids: deleted,
+        errors: errors.length > 0 ? errors : undefined,
+      })
+    );
   })
 );
 
@@ -276,6 +375,51 @@ router.delete(
         id,
       })
     );
+  })
+);
+
+const updateMediaSchema = z
+  .object({
+    original_filename: z.string().min(1).max(255).trim().optional(),
+    folder_id: z.number().int().positive().nullable().optional(),
+  })
+  .refine(
+    (data) => data.original_filename !== undefined || data.folder_id !== undefined,
+    { message: 'At least one field (original_filename, folder_id) must be provided' }
+  );
+
+/**
+ * PATCH /api/media/:id
+ * Update media metadata (rename, move between folders).
+ */
+router.patch(
+  '/:id',
+  requireRole('admin', 'editor'),
+  validateParams(idParamSchema),
+  validateBody(updateMediaSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params as unknown as { id: number };
+    const body = req.body as { original_filename?: string; folder_id?: number | null };
+    const { getDatabase } = await import('../../database/connection');
+    const db = await getDatabase();
+
+    const existing = await db.getMediaById(id);
+    if (!existing) {
+      throw new AppError(ErrorCode.MEDIA_NOT_FOUND, `Media with ID ${id} not found`, 404);
+    }
+    if (body.folder_id != null) {
+      const folder = await db.getMediaFolderById(body.folder_id);
+      if (!folder) {
+        throw new AppError(
+          ErrorCode.FOLDER_NOT_FOUND,
+          `Folder with ID ${body.folder_id} not found`,
+          404
+        );
+      }
+    }
+
+    const updated = await db.updateMedia(id, body);
+    res.json(successResponse(updated));
   })
 );
 

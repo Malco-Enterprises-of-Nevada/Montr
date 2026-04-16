@@ -115,11 +115,14 @@ Returns configurable UI parameters. No authentication required.
   "success": true,
   "data": {
     "dashboardRefreshInterval": 30000,
-    "toastDisplayDuration": 3000
+    "toastDisplayDuration": 3000,
+    "mediaUploadConcurrency": 3
   },
   "error": null
 }
 ```
+
+`mediaUploadConcurrency` controls how many files the web UI uploads in parallel. Override via `UI_MEDIA_UPLOAD_CONCURRENCY` (1-10, default 3).
 
 ---
 
@@ -131,6 +134,7 @@ Upload one or more media files.
 
 **Content-Type:** `multipart/form-data`
 **Field name:** `files` (up to 10 files per request)
+**Optional field:** `folder_id` — numeric ID of the destination folder. Omit or send empty for root.
 
 **Allowed MIME types:**
 - `video/mp4`, `video/mpeg`, `video/quicktime`, `video/x-msvideo`, `video/x-matroska`, `video/webm`
@@ -141,7 +145,8 @@ Upload one or more media files.
 ```bash
 curl -X POST http://localhost:3000/api/media/upload \
   -F "files=@video.mp4" \
-  -F "files=@photo.jpg"
+  -F "files=@photo.jpg" \
+  -F "folder_id=4"
 ```
 
 **Response 201:**
@@ -187,6 +192,7 @@ List media files with pagination and filtering.
 | `limit` | integer | 20 | Items per page (1-100) |
 | `type` | string | | Filter by `video` or `image` |
 | `search` | string | | Search in filename |
+| `folder_id` | integer \| `root` | | Filter to a folder. `root` = media with no folder assigned. Omit = all folders. |
 
 ```bash
 curl "http://localhost:3000/api/media?page=1&limit=10&type=video"
@@ -233,6 +239,39 @@ Delete a media file and remove it from all playlists.
 }
 ```
 
+### PATCH /api/media/:id
+
+Update media metadata. Only `original_filename` and `folder_id` are allowed (send `folder_id: null` to move to root).
+
+```bash
+curl -X PATCH http://localhost:3000/api/media/42 \
+  -H "Content-Type: application/json" \
+  -d '{"folder_id": 7}'
+```
+
+**Errors:** `MEDIA_NOT_FOUND`, `FOLDER_NOT_FOUND`, `VALIDATION_ERROR`
+
+### POST /api/media/bulk/move
+
+Move multiple media to a folder (or to root) in a single call.
+
+**Body:**
+
+| Field | Type | Required |
+|-------|------|----------|
+| `media_ids` | integer[] | yes — 1-1000 items |
+| `folder_id` | integer \| null | yes — `null` = root |
+
+**Response 200:** `{ moved: <count>, requested: <count>, folder_id: <id or null> }`
+
+### POST /api/media/bulk/delete
+
+Delete multiple media files. Best-effort: reports which IDs failed but does not abort on the first error.
+
+**Body:** `{ "media_ids": [1, 2, 3] }` (1-1000 items)
+
+**Response 200:** `{ deleted: <count>, ids: [...], errors?: [{id, error}] }`
+
 ### GET /api/media/:id/download
 
 Download the raw media file. Returns the binary file with `Content-Disposition: attachment` header.
@@ -240,6 +279,76 @@ Download the raw media file. Returns the binary file with `Content-Disposition: 
 ### GET /api/media/:id/thumbnail
 
 Returns the thumbnail image for a media file. Generated automatically on upload; generated on-demand if missing.
+
+### POST /api/media/:id/thumbnail/retry
+
+Re-attempt thumbnail generation for a media file whose `thumbnail_status` is `failed`. Returns the updated media object.
+
+### Chunked upload (for large files)
+
+For files larger than 50 MB the web UI automatically falls back to chunked upload. The raw protocol:
+
+1. `POST /api/media/upload/init` — body `{ filename, mimeType, totalSize, folder_id? }`. Response: `{ uploadId, chunkSize, totalChunks }`.
+2. `POST /api/media/upload/:uploadId/chunk/:chunkIndex` — raw binary chunk (`Content-Type: application/octet-stream`). Idempotent — re-POSTing the same chunk is safe, enabling per-chunk retry.
+3. `POST /api/media/upload/:uploadId/complete` — assembles chunks and creates the media entry. Inherits the `folder_id` from init.
+4. `DELETE /api/media/upload/:uploadId` — aborts and cleans up.
+
+---
+
+## Folder Endpoints
+
+Folders organise media into a nested hierarchy. Storage layout on disk is **not** affected — folders are purely a DB concept, so client-side file downloads (`/api/media/:id/download`) are unaffected by folder moves.
+
+### GET /api/folders
+
+Returns a flat list of all folders. The UI builds the tree from `parent_id`.
+
+**Response 200:**
+```json
+{
+  "success": true,
+  "data": [
+    { "id": 1, "name": "Ads", "parent_id": null, "path": "/1", "created_by": null, "created_at": "...", "updated_at": "..." },
+    { "id": 2, "name": "Q2-2026", "parent_id": 1, "path": "/1/2", "created_by": null, "created_at": "...", "updated_at": "..." }
+  ],
+  "error": null
+}
+```
+
+### POST /api/folders
+
+Create a folder.
+
+**Body:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `name` | string | yes | 1-255 chars, no slashes |
+| `parent_id` | integer \| null | no | must refer to an existing folder |
+
+**Errors:** `FOLDER_NOT_FOUND` (bad parent), `FOLDER_NAME_CONFLICT` (sibling with the same name).
+
+### PATCH /api/folders/:id
+
+Rename and/or re-parent a folder. Moving a folder recomputes the `path` for it and all descendants in a single transaction.
+
+**Body:** `{ name?, parent_id? }`
+
+**Errors:** `FOLDER_NOT_FOUND`, `FOLDER_CYCLE` (moving into self/descendant), `FOLDER_NAME_CONFLICT`.
+
+### DELETE /api/folders/:id
+
+Delete a folder.
+
+**Query:** `?recursive=true` to force. Without it, a non-empty folder returns 409.
+
+Recursive delete removes the folder and all descendants, and detaches the media they contained to root (media is **not** deleted).
+
+**Errors:** `FOLDER_NOT_FOUND`, `FOLDER_NOT_EMPTY`.
+
+### GET /api/folders/:id/media
+
+Paginated list of media in the folder. Accepts the same `page`/`limit` query params as `GET /api/media`.
 
 ---
 
@@ -478,6 +587,10 @@ Record a client heartbeat. Updates `last_seen` timestamp.
 | `MEDIA_UPLOAD_FAILED` | 500 | File processing failed during upload |
 | `INVALID_MEDIA_TYPE` | 400 | Unsupported MIME type |
 | `FILE_TOO_LARGE` | 413 | Exceeds `MAX_UPLOAD_SIZE_MB` |
+| `FOLDER_NOT_FOUND` | 404 | Folder not found |
+| `FOLDER_NOT_EMPTY` | 409 | Non-recursive delete of a non-empty folder |
+| `FOLDER_CYCLE` | 400 | Attempted to move a folder into itself or a descendant |
+| `FOLDER_NAME_CONFLICT` | 409 | Sibling folder with the same name already exists |
 | `PLAYLIST_NOT_FOUND` | 404 | Playlist not found |
 | `PLAYLIST_ITEM_NOT_FOUND` | 404 | Playlist item not found |
 | `PLAYLIST_EMPTY` | 400 | Playlist has no items |
