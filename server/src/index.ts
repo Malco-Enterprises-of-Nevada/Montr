@@ -336,7 +336,17 @@ async function main(): Promise<void> {
     });
   });
 
-  // Handle uncaught errors
+  // Handle uncaught errors.
+  //
+  // uncaughtException: the process state is unpredictable after one, so we
+  // still exit — systemd/docker will restart us. (It's a real bug; the signal
+  // is worth the restart.)
+  //
+  // unhandledRejection: exiting used to take the whole server down whenever
+  // any stray async op (thumbnail gen, notification send, cleanup) threw an
+  // unexpected error. Node's default is now "warn, don't exit", which matches
+  // what we want for a long-running API server. Log it loudly so we can fix
+  // the source, but keep serving traffic.
   process.on('uncaughtException', (error: Error) => {
     const logger = getLogger();
     logger.error('Uncaught exception:', error);
@@ -345,8 +355,7 @@ async function main(): Promise<void> {
 
   process.on('unhandledRejection', (reason: unknown) => {
     const logger = getLogger();
-    logger.error('Unhandled rejection:', reason);
-    process.exit(1);
+    logger.error('Unhandled rejection (keeping process alive):', reason);
   });
 
   // Start the server
