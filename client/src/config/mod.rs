@@ -275,6 +275,9 @@ media_cache_dir = "./cache"
 max_cache_size_mb = 5000
 # Number of upcoming items to pre-fetch
 preload_next_items = 2
+# Seconds to wait at startup for the server to assign a playlist before falling
+# back to the last-known playlist cached on disk. Set to 0 to disable.
+offline_fallback_grace_secs = 5
 
 [system]
 # Enable auto-start on system boot

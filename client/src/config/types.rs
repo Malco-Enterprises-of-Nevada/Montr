@@ -83,6 +83,12 @@ pub struct PlaybackConfig {
     /// Number of upcoming items to pre-fetch
     #[serde(default = "default_preload_next_items")]
     pub preload_next_items: usize,
+
+    /// Seconds to wait at startup for the server to assign a playlist before
+    /// falling back to the last-known playlist cached on disk. Set to 0 to
+    /// disable offline fallback.
+    #[serde(default = "default_offline_fallback_grace_secs")]
+    pub offline_fallback_grace_secs: u64,
 }
 
 /// System-level configuration
@@ -155,6 +161,10 @@ fn default_max_cache_size() -> u64 {
 
 fn default_preload_next_items() -> usize {
     2
+}
+
+fn default_offline_fallback_grace_secs() -> u64 {
+    5
 }
 
 fn default_preview_interval_secs() -> u64 {
@@ -303,6 +313,7 @@ mod tests {
                 media_cache_dir: PathBuf::from("./cache"),
                 max_cache_size_mb: 5000,
                 preload_next_items: 2,
+                offline_fallback_grace_secs: 5,
             },
             system: SystemConfig {
                 auto_start: false,
@@ -428,6 +439,7 @@ mod tests {
         assert_eq!(default_loop_playlist(), true);
         assert_eq!(default_max_cache_size(), 5000);
         assert_eq!(default_preload_next_items(), 2);
+        assert_eq!(default_offline_fallback_grace_secs(), 5);
         assert_eq!(default_log_level(), "info");
         assert_eq!(default_log_max_size(), 100);
         assert_eq!(default_log_max_files(), 5);

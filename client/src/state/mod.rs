@@ -4,6 +4,7 @@
 
 pub mod app_state;
 pub mod coordinator;
+pub mod persistence;
 
 pub use app_state::{AppState, StateSnapshot};
 pub use coordinator::{CoordinatorMessage, PlaybackEventMessage, StateCoordinator};
