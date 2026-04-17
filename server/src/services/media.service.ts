@@ -531,23 +531,45 @@ export class MediaService {
     let thumbnailPath = await storageService.getThumbnailPath(media.filename);
 
     if (!thumbnailPath) {
-      // Generate thumbnail on-demand — download source for Spaces (local returns existing path)
-      const sourcePath = await storageService.downloadToTemp(media.filepath);
-      try {
-        if (media.type === 'video') {
-          thumbnailPath = await this.generateVideoThumbnail(sourcePath, media.filename);
-        } else if (media.type === 'image') {
-          thumbnailPath = await this.generateImageThumbnail(sourcePath, media.filename);
+      // Generate thumbnail on-demand. On Spaces this re-downloads the full
+      // source (can be 500MB+), so serialise through the thumbnail semaphore —
+      // browsers commonly fire 5-10 parallel /thumbnail requests at page load
+      // and that burst previously OOM-killed the container.
+      thumbnailPath = await thumbnailSemaphore.run(async () => {
+        // Re-check inside the semaphore: a prior waiter may have just
+        // generated this exact thumbnail while we were queued.
+        const already = await storageService.getThumbnailPath(media.filename);
+        if (already) return already;
+
+        const sourcePath = await storageService.downloadToTemp(media.filepath);
+        let generated: string | null = null;
+        try {
+          if (media.type === 'video') {
+            generated = await this.generateVideoThumbnail(sourcePath, media.filename);
+          } else if (media.type === 'image') {
+            generated = await this.generateImageThumbnail(sourcePath, media.filename);
+          }
+        } finally {
+          // Clean up downloaded temp file for Spaces
+          if (config.storage.backend === 'spaces') {
+            const fs = await import('fs/promises');
+            await fs.unlink(sourcePath).catch(() => {});
+          }
         }
-      } finally {
-        // Clean up downloaded temp file for Spaces
-        if (config.storage.backend === 'spaces') {
-          const fs = await import('fs/promises');
-          await fs.unlink(sourcePath).catch(() => {});
-        }
-      }
+        return generated;
+      });
 
       if (!thumbnailPath) {
+        // Mark as failed so the UI can surface the retry button and stop
+        // hammering this endpoint on every render.
+        try {
+          const db = await getDatabase();
+          await db.updateMedia(id, {
+            thumbnail_status: 'failed',
+          } as Partial<CreateMediaInput>);
+        } catch (err) {
+          logger.warn(`Failed to mark media ${id} thumbnail as failed:`, err);
+        }
         throw new AppError(ErrorCode.MEDIA_NOT_FOUND, 'Failed to generate thumbnail', 500);
       }
     }

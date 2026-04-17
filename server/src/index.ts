@@ -178,8 +178,29 @@ class MontrServer {
   public async start(): Promise<void> {
     try {
       // Initialize database connection
-      await getDatabase();
+      const db = await getDatabase();
       this.logger.info('Database connection established');
+
+      // If the previous process died mid-thumbnail (OOM, SIGKILL, crash),
+      // any media stuck at thumbnail_status='generating' will never progress.
+      // Flip them to 'failed' so the UI shows the retry button instead of
+      // hammering /thumbnail and re-triggering the expensive generator.
+      try {
+        const stuck = await db.getAllMedia({ page: 1, limit: 1000 });
+        const generating = stuck.data.filter((m) => m.thumbnail_status === 'generating');
+        for (const m of generating) {
+          await db.updateMedia(m.id, { thumbnail_status: 'failed' } as Parameters<
+            typeof db.updateMedia
+          >[1]);
+        }
+        if (generating.length > 0) {
+          this.logger.warn(
+            `Reset ${generating.length} stuck thumbnail_status='generating' rows to 'failed' on startup`
+          );
+        }
+      } catch (err) {
+        this.logger.warn('Failed to reset stuck thumbnail statuses on startup:', err);
+      }
 
       // Create HTTP or HTTPS server
       const tlsEnabled = process.env.TLS_ENABLED === 'true';
