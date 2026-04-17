@@ -8,7 +8,7 @@ const WS_URL = `ws://${window.location.host}/ws`;
 let UI_CONFIG = {
     dashboardRefreshInterval: 30000,
     toastDisplayDuration: 3000,
-    mediaUploadConcurrency: 3,
+    mediaUploadConcurrency: 2,
 };
 
 // Auth state

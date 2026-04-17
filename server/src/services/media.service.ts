@@ -20,6 +20,7 @@ import {
 } from '../database/types';
 import { getLogger } from '../utils/logger';
 import { AppError, ErrorCode } from '../api/middleware/error-handler';
+import { postProcessSemaphore, thumbnailSemaphore } from './processing-limits';
 
 const execFile = promisify(execFileCallback);
 const logger = getLogger();
@@ -251,26 +252,31 @@ export class MediaService {
   ): Promise<MediaFile> {
     const mediaType = this.getMediaType(mimeType);
 
-    // Extract metadata — skip temp download for large files (>500MB) to avoid timeout
+    // Extract metadata — skip temp download for large files (>500MB) to avoid timeout.
+    // Gated by a global semaphore: three concurrent downloads of 500MB Spaces
+    // files + ffprobe each OOM-killed the container.
     let metadata: MediaMetadata = {};
     let localPath: string | null = null;
     const MAX_METADATA_SIZE = 500 * 1024 * 1024;
     if (storageInfo.size <= MAX_METADATA_SIZE) {
-      try {
-        localPath = await storageService.downloadToTemp(storageInfo.filepath);
-        if (mediaType === 'video') {
-          metadata = await this.extractVideoMetadata(localPath);
-        } else if (mediaType === 'image') {
-          metadata = await this.extractImageMetadata(localPath);
+      await postProcessSemaphore.run(async () => {
+        try {
+          localPath = await storageService.downloadToTemp(storageInfo.filepath);
+          if (mediaType === 'video') {
+            metadata = await this.extractVideoMetadata(localPath);
+          } else if (mediaType === 'image') {
+            metadata = await this.extractImageMetadata(localPath);
+          }
+          // Clean up temp file for Spaces backend
+          if (config.storage.backend === 'spaces') {
+            const fs = await import('fs/promises');
+            await fs.unlink(localPath).catch(() => {});
+            localPath = null;
+          }
+        } catch (error) {
+          logger.warn(`Failed to extract metadata for ${originalFilename}:`, error);
         }
-        // Clean up temp file for Spaces backend
-        if (config.storage.backend === 'spaces') {
-          const fs = await import('fs/promises');
-          await fs.unlink(localPath).catch(() => {});
-        }
-      } catch (error) {
-        logger.warn(`Failed to extract metadata for ${originalFilename}:`, error);
-      }
+      });
     } else {
       logger.info(
         `Skipping metadata extraction for large file (${Math.round(storageInfo.size / 1024 / 1024)}MB): ${originalFilename}`
@@ -356,68 +362,73 @@ export class MediaService {
   ): void {
     // Fire-and-forget: the returned promise MUST have a terminal .catch so
     // any unexpected throw (e.g. dynamic import failure in finally) can't
-    // reach process.on('unhandledRejection') and kill the server.
-    void (async () => {
-      let sourcePath = filePath;
-      let needsCleanup = false;
-      try {
-        // Mark as generating
-        const db = await getDatabase();
-        await db.updateMedia(mediaId, {
-          thumbnail_status: 'generating',
-        } as Partial<CreateMediaInput>);
-
-        // For Spaces, download source file from S3 (filePath may not exist locally)
-        if (config.storage.backend === 'spaces') {
-          const media = await db.getMediaById(mediaId);
-          if (!media) throw new Error(`Media ${mediaId} not found`);
-          sourcePath = await storageService.downloadToTemp(media.filepath);
-          needsCleanup = true;
-        }
-
-        let thumbnailPath: string | null = null;
-        if (type === 'video') {
-          thumbnailPath = await this.generateVideoThumbnail(sourcePath, filename);
-        } else if (type === 'image') {
-          thumbnailPath = await this.generateImageThumbnail(sourcePath, filename);
-        }
-
-        if (thumbnailPath) {
-          await db.updateMedia(mediaId, {
-            thumbnail_status: 'generated',
-          } as Partial<CreateMediaInput>);
-          logger.info(`Thumbnail generated for media ${mediaId}: ${thumbnailPath}`);
-        } else {
-          await db.updateMedia(mediaId, {
-            thumbnail_status: 'failed',
-          } as Partial<CreateMediaInput>);
-        }
-      } catch (error) {
-        logger.error(`Failed to generate thumbnail for media ${mediaId}:`, error);
+    // reach process.on('unhandledRejection').
+    //
+    // Serialised by thumbnailSemaphore (default 1) to keep ffmpeg/ffprobe
+    // off the OOM killer's radar when multiple uploads finish back-to-back.
+    void thumbnailSemaphore
+      .run(async () => {
+        let sourcePath = filePath;
+        let needsCleanup = false;
         try {
+          // Mark as generating
           const db = await getDatabase();
           await db.updateMedia(mediaId, {
-            thumbnail_status: 'failed',
+            thumbnail_status: 'generating',
           } as Partial<CreateMediaInput>);
-        } catch (updateError) {
-          logger.error(
-            `Failed to update thumbnail_status to failed for media ${mediaId}:`,
-            updateError
-          );
-        }
-      } finally {
-        if (needsCleanup) {
+
+          // For Spaces, download source file from S3 (filePath may not exist locally)
+          if (config.storage.backend === 'spaces') {
+            const media = await db.getMediaById(mediaId);
+            if (!media) throw new Error(`Media ${mediaId} not found`);
+            sourcePath = await storageService.downloadToTemp(media.filepath);
+            needsCleanup = true;
+          }
+
+          let thumbnailPath: string | null = null;
+          if (type === 'video') {
+            thumbnailPath = await this.generateVideoThumbnail(sourcePath, filename);
+          } else if (type === 'image') {
+            thumbnailPath = await this.generateImageThumbnail(sourcePath, filename);
+          }
+
+          if (thumbnailPath) {
+            await db.updateMedia(mediaId, {
+              thumbnail_status: 'generated',
+            } as Partial<CreateMediaInput>);
+            logger.info(`Thumbnail generated for media ${mediaId}: ${thumbnailPath}`);
+          } else {
+            await db.updateMedia(mediaId, {
+              thumbnail_status: 'failed',
+            } as Partial<CreateMediaInput>);
+          }
+        } catch (error) {
+          logger.error(`Failed to generate thumbnail for media ${mediaId}:`, error);
           try {
-            const fs = await import('fs/promises');
-            await fs.unlink(sourcePath).catch(() => {});
-          } catch (cleanupError) {
-            logger.warn(`Thumbnail temp cleanup failed for media ${mediaId}:`, cleanupError);
+            const db = await getDatabase();
+            await db.updateMedia(mediaId, {
+              thumbnail_status: 'failed',
+            } as Partial<CreateMediaInput>);
+          } catch (updateError) {
+            logger.error(
+              `Failed to update thumbnail_status to failed for media ${mediaId}:`,
+              updateError
+            );
+          }
+        } finally {
+          if (needsCleanup) {
+            try {
+              const fs = await import('fs/promises');
+              await fs.unlink(sourcePath).catch(() => {});
+            } catch (cleanupError) {
+              logger.warn(`Thumbnail temp cleanup failed for media ${mediaId}:`, cleanupError);
+            }
           }
         }
-      }
-    })().catch((err) => {
-      logger.error(`Unhandled error in generateThumbnailAsync for media ${mediaId}:`, err);
-    });
+      })
+      .catch((err) => {
+        logger.error(`Unhandled error in generateThumbnailAsync for media ${mediaId}:`, err);
+      });
   }
 
   /**

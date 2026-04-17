@@ -133,7 +133,7 @@ class MontrServer {
           toastDisplayDuration: parseInt(process.env.UI_TOAST_DURATION_MS || '3000', 10),
           mediaUploadConcurrency: Math.max(
             1,
-            Math.min(10, parseInt(process.env.UI_MEDIA_UPLOAD_CONCURRENCY || '3', 10))
+            Math.min(10, parseInt(process.env.UI_MEDIA_UPLOAD_CONCURRENCY || '2', 10))
           ),
         })
       );
