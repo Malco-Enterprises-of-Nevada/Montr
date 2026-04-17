@@ -2,7 +2,8 @@
   "name": "montr",
   "private": true,
   "scripts": {
-    "prepare": "husky"
+    "prepare": "husky",
+    "logs": "node scripts/montr-logs.mjs"
   },
   "devDependencies": {
     "husky": "^9.0.0",

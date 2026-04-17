@@ -19,6 +19,7 @@ import scheduleTemplateRoutes from './api/routes/schedule-template.routes';
 import analyticsRoutes from './api/routes/analytics.routes';
 import telemetryRoutes from './api/routes/telemetry.routes';
 import notificationRoutes from './api/routes/notification.routes';
+import adminLogsRoutes from './api/routes/admin-logs.routes';
 import authRoutes from './api/routes/auth.routes';
 import { requireAuth } from './api/middleware/jwt-auth';
 import { webSocketServer } from './websocket/server';
@@ -155,6 +156,7 @@ class MontrServer {
     this.app.use('/api/analytics', requireAuth(), analyticsRoutes);
     this.app.use('/api/telemetry', requireAuth(), telemetryRoutes);
     this.app.use('/api/notifications', requireAuth(), notificationRoutes);
+    this.app.use('/api/admin/logs', requireAuth(), adminLogsRoutes);
 
     // Auth routes (no API key required)
     this.app.use('/api/auth', authRoutes);
