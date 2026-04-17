@@ -1,0 +1,49 @@
+name: Server Logs
+
+on:
+  workflow_dispatch:
+    inputs:
+      lines:
+        description: 'Number of log lines to fetch'
+        required: false
+        default: '500'
+      restart:
+        description: 'Also `docker compose up -d` to restart the container'
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+jobs:
+  logs:
+    name: Fetch server logs
+    runs-on: [self-hosted, linux]
+    steps:
+      - name: Tail docker logs via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 5m
+          script: |
+            echo "=== docker ps ==="
+            docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' | grep -i montr || true
+            echo
+            echo "=== docker inspect (state) ==="
+            docker inspect --format '{{.State.Status}} exitCode={{.State.ExitCode}} oomKilled={{.State.OOMKilled}} startedAt={{.State.StartedAt}} finishedAt={{.State.FinishedAt}}' montr-server-1 || true
+            echo
+            if [ "${{ inputs.restart }}" = "true" ]; then
+              echo "=== restarting container ==="
+              cd /opt/montr && docker compose up -d
+              sleep 8
+              echo
+            fi
+            echo "=== docker logs --tail ${{ inputs.lines }} ==="
+            docker logs --tail ${{ inputs.lines }} montr-server-1 2>&1 || true
+            echo
+            echo "=== curl health ==="
+            curl -s -o /dev/null -w 'HTTP %{http_code}\n' http://localhost:3000/api/health || true
