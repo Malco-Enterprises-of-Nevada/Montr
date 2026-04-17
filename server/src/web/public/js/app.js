@@ -449,8 +449,8 @@ const playlistAPI = {
     },
 
     async reorderItems(playlistId, itemIds) {
-        return await apiCall(`/playlists/${playlistId}/items/reorder`, {
-            method: 'PUT',
+        return await apiCall(`/playlists/${playlistId}/reorder`, {
+            method: 'POST',
             body: JSON.stringify({ itemIds })
         });
     }
