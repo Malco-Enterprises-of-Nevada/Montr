@@ -18,6 +18,9 @@ loop_playlist = true
 media_cache_dir = "/home/stripcheese/.cache/montr-client"
 max_cache_size_mb = 5000
 preload_next_items = 2
+# Seconds to wait at startup for the server to assign a playlist before falling
+# back to the last-known playlist cached on disk. Set to 0 to disable.
+offline_fallback_grace_secs = 5
 
 [system]
 auto_start = true

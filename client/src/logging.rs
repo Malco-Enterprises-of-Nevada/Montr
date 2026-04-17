@@ -287,6 +287,7 @@ mod tests {
                 media_cache_dir: temp_dir.path().join("cache"),
                 max_cache_size_mb: 5000,
                 preload_next_items: 2,
+                offline_fallback_grace_secs: 5,
             },
             system: crate::config::SystemConfig {
                 auto_start: false,

@@ -12,6 +12,8 @@ use crate::error::{MontrError, Result};
 use crate::network::{HttpClient, PlaylistItem, ServerMessage};
 use crate::playback::engine::{PlaybackCommand, PlaybackEngineOps};
 use crate::state::app_state::AppState;
+use crate::state::persistence;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Notify};
 use tokio_util::sync::CancellationToken;
@@ -25,6 +27,9 @@ pub enum CoordinatorMessage {
     PlaybackEvent(PlaybackEventMessage),
     /// Download complete
     DownloadComplete { media_id: u32, success: bool },
+    /// Grace period elapsed without a playlist from the server — try to
+    /// restore the last-known playlist from disk and start playback.
+    TryOfflineRestore,
 }
 
 /// Playback events from the engine
@@ -71,6 +76,9 @@ pub struct StateCoordinator {
     /// Path to the local log file — used by the `fetch_logs` command handler
     /// to read a tail and upload it to the server.
     log_file: Option<std::path::PathBuf>,
+    /// Directory used for persisting playlist snapshots for offline fallback.
+    /// When `None`, no persistence or offline restore is attempted.
+    cache_dir: Option<PathBuf>,
 }
 
 impl StateCoordinator {
@@ -101,6 +109,7 @@ impl StateCoordinator {
             current_playback_log_id: None,
             playback_start_time: None,
             log_file: None,
+            cache_dir: None,
         }
     }
 
@@ -108,6 +117,15 @@ impl StateCoordinator {
     /// can answer `fetch_logs` commands by reading a tail and uploading it.
     pub fn with_log_file(mut self, path: std::path::PathBuf) -> Self {
         self.log_file = Some(path);
+        self
+    }
+
+    /// Enable playlist persistence for offline fallback. When set, the
+    /// coordinator writes a `playlist.json` snapshot to this directory on each
+    /// server-sent playlist update, and will restore from it in response to
+    /// `CoordinatorMessage::TryOfflineRestore`.
+    pub fn with_cache_dir(mut self, path: PathBuf) -> Self {
+        self.cache_dir = Some(path);
         self
     }
 
@@ -152,6 +170,7 @@ impl StateCoordinator {
             CoordinatorMessage::DownloadComplete { media_id, success } => {
                 self.handle_download_complete(media_id, success).await
             }
+            CoordinatorMessage::TryOfflineRestore => self.handle_try_offline_restore().await,
         }
     }
 
@@ -188,6 +207,9 @@ impl StateCoordinator {
                     .update_playlist(msg.playlist_id, msg.items.clone(), msg.loop_playlist)
                     .await?;
 
+                self.persist_playlist(msg.playlist_id, &msg.items, msg.loop_playlist)
+                    .await;
+
                 // Download media and start playback as soon as first item is ready
                 self.download_and_start(msg.items).await?;
 
@@ -212,6 +234,9 @@ impl StateCoordinator {
                 self.state
                     .update_playlist(msg.playlist_id, msg.items.clone(), msg.loop_playlist)
                     .await?;
+
+                self.persist_playlist(msg.playlist_id, &msg.items, msg.loop_playlist)
+                    .await;
 
                 let ready = self.download_playlist_media(msg.items).await?;
 
@@ -255,6 +280,8 @@ impl StateCoordinator {
                     self.state
                         .update_playlist(playlist_id, msg.items.clone(), msg.loop_playlist)
                         .await?;
+                    self.persist_playlist(playlist_id, &msg.items, msg.loop_playlist)
+                        .await;
                     self.download_and_start(msg.items).await?;
                 } else {
                     self.state.clear_playlist().await;
@@ -563,6 +590,71 @@ impl StateCoordinator {
                 tracing::warn!("No media files available, playback not started");
             }
         }
+        Ok(())
+    }
+
+    /// Persist the current playlist to `<cache_dir>/playlist.json` for
+    /// offline fallback. Best-effort — errors are logged and swallowed so a
+    /// disk failure never breaks live playback.
+    async fn persist_playlist(&self, playlist_id: u32, items: &[PlaylistItem], loop_enabled: bool) {
+        let Some(ref cache_dir) = self.cache_dir else {
+            return;
+        };
+        if let Err(e) = persistence::save(cache_dir, playlist_id, items, loop_enabled).await {
+            tracing::warn!(
+                "Failed to persist playlist {} for offline fallback: {}",
+                playlist_id,
+                e
+            );
+        } else {
+            tracing::debug!(
+                "Persisted playlist {} ({} items) for offline fallback",
+                playlist_id,
+                items.len()
+            );
+        }
+    }
+
+    /// Attempt to restore the last-known playlist from disk when the server
+    /// has not responded within the startup grace period. No-op if the queue
+    /// is already populated, if persistence is not configured, or if there is
+    /// no cached playlist on disk.
+    async fn handle_try_offline_restore(&mut self) -> Result<()> {
+        let Some(cache_dir) = self.cache_dir.clone() else {
+            return Ok(());
+        };
+
+        if !self.state.is_queue_empty().await {
+            tracing::debug!("Offline restore skipped: queue already populated");
+            return Ok(());
+        }
+
+        let snapshot = match persistence::load(&cache_dir).await? {
+            Some(s) => s,
+            None => {
+                tracing::info!(
+                    "Server unreachable after grace period, no cached playlist to restore"
+                );
+                return Ok(());
+            }
+        };
+
+        tracing::info!(
+            "Server unreachable after grace period; restoring playlist {} from disk ({} items)",
+            snapshot.playlist_id,
+            snapshot.items.len()
+        );
+
+        self.state
+            .update_playlist(
+                snapshot.playlist_id,
+                snapshot.items.clone(),
+                snapshot.loop_enabled,
+            )
+            .await?;
+
+        self.download_and_start(snapshot.items).await?;
+
         Ok(())
     }
 
@@ -1502,5 +1594,165 @@ mod tests {
             Ok(PlaybackCommand::Seek { position }) => assert_eq!(position, 30.0),
             other => panic!("expected Seek command, got {:?}", other),
         }
+    }
+
+    /// Helper: build a coordinator with a cache_dir configured (offline-fallback
+    /// enabled) sharing the same cache directory as its media cache manager.
+    fn make_coordinator_with_cache(
+        temp_dir: &TempDir,
+        state: AppState,
+    ) -> (StateCoordinator, Arc<CacheManager>) {
+        let http_client =
+            Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client.clone(),
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+        let playback_engine = create_mock_playback_engine();
+        let coordinator = StateCoordinator::new(
+            state,
+            cache_manager.clone(),
+            http_client,
+            &playback_engine,
+            cancel_token,
+            2,
+            None,
+        )
+        .with_cache_dir(temp_dir.path().to_path_buf());
+        (coordinator, cache_manager)
+    }
+
+    #[tokio::test]
+    async fn playlist_assigned_writes_persistence_snapshot() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let (mut coordinator, cache_manager) =
+            make_coordinator_with_cache(&temp_dir, state.clone());
+
+        let items = vec![create_test_item(1, 1), create_test_item(2, 2)];
+
+        // Pre-populate cache so download_and_start's fast path is taken
+        for item in &items {
+            let cache_path = cache_manager.get_cache_path(item.media_id, &item.filename);
+            std::fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+            std::fs::write(&cache_path, b"dummy video data").unwrap();
+        }
+
+        coordinator
+            .handle_server_message(ServerMessage::PlaylistAssigned(PlaylistAssignedMessage {
+                playlist_id: 77,
+                playlist_name: "Persisted".to_string(),
+                items: items.clone(),
+                loop_playlist: true,
+            }))
+            .await
+            .unwrap();
+
+        let loaded = persistence::load(temp_dir.path()).await.unwrap().unwrap();
+        assert_eq!(loaded.playlist_id, 77);
+        assert_eq!(loaded.items, items);
+        assert!(loaded.loop_enabled);
+    }
+
+    #[tokio::test]
+    async fn try_offline_restore_populates_empty_queue() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let (mut coordinator, cache_manager) =
+            make_coordinator_with_cache(&temp_dir, state.clone());
+
+        let items = vec![create_test_item(1, 1), create_test_item(2, 2)];
+        for item in &items {
+            let cache_path = cache_manager.get_cache_path(item.media_id, &item.filename);
+            std::fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+            std::fs::write(&cache_path, b"dummy video data").unwrap();
+        }
+
+        persistence::save(temp_dir.path(), 99, &items, true)
+            .await
+            .unwrap();
+
+        assert!(state.is_queue_empty().await);
+
+        coordinator.handle_try_offline_restore().await.unwrap();
+
+        assert_eq!(state.playlist_id().await, Some(99));
+        assert_eq!(state.queue_length().await, 2);
+        assert!(state.is_looping().await);
+    }
+
+    #[tokio::test]
+    async fn try_offline_restore_is_noop_when_queue_populated() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let (mut coordinator, _cache_manager) =
+            make_coordinator_with_cache(&temp_dir, state.clone());
+
+        let live_items = vec![create_test_item(1, 100)];
+        state
+            .update_playlist(1, live_items.clone(), false)
+            .await
+            .unwrap();
+
+        // Persist a *different* playlist on disk
+        let disk_items = vec![create_test_item(5, 500)];
+        persistence::save(temp_dir.path(), 55, &disk_items, true)
+            .await
+            .unwrap();
+
+        coordinator.handle_try_offline_restore().await.unwrap();
+
+        // Live playlist unchanged
+        assert_eq!(state.playlist_id().await, Some(1));
+        assert_eq!(state.queue_length().await, 1);
+    }
+
+    #[tokio::test]
+    async fn try_offline_restore_is_noop_when_no_snapshot_exists() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let (mut coordinator, _cache_manager) =
+            make_coordinator_with_cache(&temp_dir, state.clone());
+
+        coordinator.handle_try_offline_restore().await.unwrap();
+
+        assert!(state.is_queue_empty().await);
+        assert_eq!(state.playlist_id().await, None);
+    }
+
+    #[tokio::test]
+    async fn try_offline_restore_is_noop_when_cache_dir_unset() {
+        // Coordinator built *without* with_cache_dir() — persistence disabled
+        let temp_dir = TempDir::new().unwrap();
+        let state = AppState::new("test-id".to_string(), "Test Client".to_string());
+        let http_client =
+            Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap());
+        let cancel_token = CancellationToken::new();
+        let cache_manager = Arc::new(
+            CacheManager::new(
+                http_client.clone(),
+                temp_dir.path().to_path_buf(),
+                cancel_token.clone(),
+            )
+            .unwrap(),
+        );
+        let playback_engine = create_mock_playback_engine();
+        let mut coordinator = StateCoordinator::new(
+            state.clone(),
+            cache_manager,
+            http_client,
+            &playback_engine,
+            cancel_token,
+            2,
+            None,
+        );
+
+        coordinator.handle_try_offline_restore().await.unwrap();
+        assert!(state.is_queue_empty().await);
     }
 }

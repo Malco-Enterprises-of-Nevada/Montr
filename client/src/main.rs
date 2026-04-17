@@ -242,7 +242,8 @@ async fn run_client(config: config::Config) -> Result<()> {
         config.playback.preload_next_items,
         config.server.api_key.clone(),
     )
-    .with_log_file(config.system.log_file.clone());
+    .with_log_file(config.system.log_file.clone())
+    .with_cache_dir(config.playback.media_cache_dir.clone());
 
     let coordinator_tx = coordinator.message_sender();
 
@@ -252,6 +253,28 @@ async fn run_client(config: config::Config) -> Result<()> {
             tracing::error!("Coordinator error: {}", e);
         }
     });
+
+    // Spawn the offline-fallback grace-period task. After the configured
+    // number of seconds, signal the coordinator to try restoring the
+    // last-known playlist from disk; the coordinator no-ops if the server
+    // already assigned a playlist in the meantime.
+    if config.playback.offline_fallback_grace_secs > 0 {
+        use montr_client::state::coordinator::CoordinatorMessage;
+        let tx = coordinator_tx.clone();
+        let cancel = cancel_token.clone();
+        let grace =
+            tokio::time::Duration::from_secs(config.playback.offline_fallback_grace_secs);
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = cancel.cancelled() => {}
+                _ = tokio::time::sleep(grace) => {
+                    if let Err(e) = tx.send(CoordinatorMessage::TryOfflineRestore) {
+                        tracing::debug!("Grace-period restore signal failed: {}", e);
+                    }
+                }
+            }
+        });
+    }
 
     // Bridge playback events to coordinator
     {
