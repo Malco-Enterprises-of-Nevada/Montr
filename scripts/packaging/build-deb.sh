@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-COMPONENT="${1:?Usage: build-deb.sh <server|client>}"
+COMPONENT="${1:?Usage: build-deb.sh <server|client> [arch]}"
+ARCH="${2:-amd64}"
 VERSION="1.0.0"
-ARCH="amd64"
+
+case "$ARCH" in
+    amd64|arm64) ;;
+    *)
+        echo "Unsupported arch: $ARCH (expected amd64 or arm64)" >&2
+        exit 1
+        ;;
+esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -11,13 +19,17 @@ PKG_NAME="montr-${COMPONENT}_${VERSION}_${ARCH}"
 BUILD_DIR="$PROJECT_ROOT/build/deb/$PKG_NAME"
 OUTPUT_DIR="$PROJECT_ROOT/build"
 
-echo "=== Building Montr ${COMPONENT} .deb package ==="
+echo "=== Building Montr ${COMPONENT} .deb package (arch=${ARCH}) ==="
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR/DEBIAN"
 
 case "$COMPONENT" in
     server)
+        if [ "$ARCH" != "amd64" ]; then
+            echo "Server .deb is only built for amd64 (got: $ARCH)" >&2
+            exit 1
+        fi
         # Copy DEBIAN control files
         cp "$SCRIPT_DIR/debian/server/DEBIAN/"* "$BUILD_DIR/DEBIAN/"
         chmod 755 "$BUILD_DIR/DEBIAN/postinst" "$BUILD_DIR/DEBIAN/prerm" "$BUILD_DIR/DEBIAN/postrm"
@@ -45,6 +57,9 @@ case "$COMPONENT" in
         # Copy DEBIAN control files
         cp "$SCRIPT_DIR/debian/client/DEBIAN/"* "$BUILD_DIR/DEBIAN/"
         chmod 755 "$BUILD_DIR/DEBIAN/postinst" "$BUILD_DIR/DEBIAN/prerm" "$BUILD_DIR/DEBIAN/postrm"
+
+        # Patch Architecture in control file to match the requested arch
+        sed -i "s/^Architecture: .*/Architecture: ${ARCH}/" "$BUILD_DIR/DEBIAN/control"
 
         # Binary
         mkdir -p "$BUILD_DIR/usr/bin"
