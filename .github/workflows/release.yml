@@ -298,11 +298,33 @@ jobs:
           cp build/client/montr-client-linux-amd64 build/client/montr-client
           chmod +x build/client/montr-client
       - name: Build .deb package
-        run: scripts/packaging/build-deb.sh client
+        run: scripts/packaging/build-deb.sh client amd64
       - uses: actions/upload-artifact@v4
         with:
           name: montr-client-deb
-          path: build/montr-client_*.deb
+          path: build/montr-client_*_amd64.deb
+
+  # ── Build Client .deb (arm64, e.g. Raspberry Pi) ────────────
+  build-deb-client-arm64:
+    name: Build Client (.deb arm64)
+    needs: [tag, build-client-linux-arm64]
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: montr-client-linux-arm64
+          path: build/client
+      - name: Prepare binary for packaging
+        run: |
+          cp build/client/montr-client-linux-arm64 build/client/montr-client
+          chmod +x build/client/montr-client
+      - name: Build .deb package
+        run: scripts/packaging/build-deb.sh client arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: montr-client-deb-arm64
+          path: build/montr-client_*_arm64.deb
 
   # ── Create GitHub Release ───────────────────────────────────
   create-release:
@@ -315,6 +337,7 @@ jobs:
       - build-client-linux-arm64
       - build-client-macos
       - build-deb-client
+      - build-deb-client-arm64
     runs-on: [self-hosted, linux]
     permissions:
       contents: write
@@ -368,7 +391,8 @@ jobs:
             echo "| Linux arm64 | \`montr-client-linux-arm64\` |"
             echo "| macOS Apple Silicon | \`montr-client-darwin-arm64\` |"
             echo "| macOS Intel | \`montr-client-darwin-amd64\` |"
-            echo "| Linux (Debian) | \`montr-server_*.deb\`, \`montr-client_*.deb\` |"
+            echo "| Linux (Debian amd64) | \`montr-server_*_amd64.deb\`, \`montr-client_*_amd64.deb\` |"
+            echo "| Linux (Debian arm64, e.g. Raspberry Pi) | \`montr-client_*_arm64.deb\` |"
             echo "| Server (all platforms) | \`montr-server-${TAG}.tar.gz\` |"
             echo ""
             echo "EOF"
@@ -393,6 +417,7 @@ jobs:
             artifacts/montr-client-darwin-amd64/montr-client-darwin-amd64.sha256
             artifacts/montr-server-deb/*.deb
             artifacts/montr-client-deb/*.deb
+            artifacts/montr-client-deb-arm64/*.deb
 
   # ── Upload Client Binaries to Spaces ───────────────────────
   upload-to-spaces:

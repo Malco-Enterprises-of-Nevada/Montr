@@ -122,6 +122,27 @@ sudo systemctl status montr-client
 sudo journalctl -u montr-client -f
 ```
 
+### Quick Install via .deb (Raspberry Pi / arm64)
+
+Each GitHub release attaches a `montr-client_<version>_arm64.deb` built for 64-bit ARM
+(Raspberry Pi 3/4/5 running 64-bit Raspberry Pi OS or Debian). Install:
+
+```bash
+URL=$(curl -s https://api.github.com/repos/Malco-Enterprises-of-Nevada/Montr/releases/latest \
+  | grep browser_download_url | grep '_arm64\.deb' | cut -d'"' -f4)
+curl -fsSL -o /tmp/montr-client.deb "$URL"
+sudo apt install -y libmpv-dev file
+sudo dpkg -i /tmp/montr-client.deb
+sudo vim /etc/montr-client/config.toml   # set server.url and client.name
+sudo systemctl restart montr-client
+```
+
+To reinstall or upgrade after a new release, repeat the same commands — `dpkg -i`
+on an already-installed package upgrades it in place. Subsequent binary-only
+updates are delivered by the built-in auto-updater (see below).
+
+An amd64 `.deb` is also attached for x86_64 Debian/Ubuntu machines.
+
 ### Client Auto-Update
 
 The client checks for new releases against a manifest hosted on DigitalOcean Spaces and applies them without manual intervention. The flow is split by platform:
