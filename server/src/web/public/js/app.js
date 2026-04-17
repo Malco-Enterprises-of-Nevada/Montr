@@ -1220,6 +1220,11 @@ async function loadThumbnails(media) {
     for (const item of media) {
         const img = document.querySelector(`img[data-thumb-id="${item.id}"]`);
         if (!img) continue;
+        // Skip items whose thumbnail is known to have failed — otherwise every
+        // page render re-triggers the server's on-demand thumbnail generator,
+        // which downloads the full source file from Spaces. User must click
+        // the retry button on the card to try again.
+        if (item.thumbnail_status === 'failed') continue;
         try {
             const headers = {};
             if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
