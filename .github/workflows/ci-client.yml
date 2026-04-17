@@ -35,7 +35,7 @@ jobs:
             client/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('client/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
-      - run: sudo apt-get update && sudo apt-get install -y libmpv-dev
+      - run: sudo flock -w 300 /tmp/montr-apt.lock sh -c 'apt-get update && apt-get install -y libmpv-dev'
       - run: cd client && cargo fmt --check
       - run: cd client && cargo clippy -- -D warnings
 
@@ -55,5 +55,5 @@ jobs:
             client/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('client/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
-      - run: sudo apt-get update && sudo apt-get install -y libmpv-dev
+      - run: sudo flock -w 300 /tmp/montr-apt.lock sh -c 'apt-get update && apt-get install -y libmpv-dev'
       - run: cd client && cargo test
