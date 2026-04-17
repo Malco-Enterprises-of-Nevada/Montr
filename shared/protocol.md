@@ -1,6 +1,6 @@
 # Communication Protocol
 
-Protocol version: **1.0.0**
+Protocol version: **1.1.0**
 
 All messages are JSON-encoded and exchanged over WebSocket. Messages are discriminated by a top-level `type` field (no outer envelope or version wrapper).
 
@@ -232,6 +232,28 @@ Represents a single item in a playlist, sent within `playlist_assigned` and `pla
 | `checksum` | string\|null | SHA-256 hash for integrity verification |
 | `orderIndex` | number | 0-indexed position in playlist |
 | `imageDuration` | number | Display duration for images in seconds |
+| `subtitles` | SubtitleTrack[] | Subtitle tracks for this item (always an array; empty if none). **Added in 1.1.0.** |
+
+### SubtitleTrack
+
+Represents one subtitle track attached to a media item. Two kinds exist:
+- `external`: a standalone `.srt` or `.vtt` file uploaded and served by the server.
+- `embedded`: a subtitle stream already carried inside the video container (e.g. MKV).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | number | Subtitle track ID |
+| `kind` | string | `"external"` or `"embedded"` |
+| `language` | string\|null | ISO 639-2 language code (e.g. `"eng"`) when known |
+| `label` | string\|null | User-visible display name |
+| `isDefault` | boolean | Server-marked default track for its media |
+| `isForced` | boolean | Forced-display track (plays without user toggle) |
+| `downloadUrl` | string | *(external only)* HTTP path to download the subtitle file |
+| `filename` | string | *(external only)* Suggested cache-local filename hint |
+| `format` | string | *(external only)* `"srt"` or `"vtt"` |
+| `checksum` | string | *(external only)* SHA-256 hash for integrity verification |
+| `streamIndex` | number | *(embedded only)* ffprobe stream index inside the parent container |
+| `codec` | string | *(embedded only)* e.g. `"subrip"`, `"mov_text"`, `"webvtt"` |
 
 ### CurrentMediaInfo
 
@@ -266,6 +288,11 @@ Both the TypeScript server (`server/src/websocket/types.ts`) and Rust client (`c
 
 The Rust client's `ServerMessage` enum currently handles `playlist_assigned`, `playlist_updated`, and `command`. The `error_response` and `success` message types are handled separately as raw JSON in the client's WebSocket message processing.
 
+## Changelog
+
+- **1.1.0** — Added `subtitles: SubtitleTrack[]` to `PlaylistMediaItem`. Additive only; 1.0.0 clients safely ignore the new field (Rust deserializer uses `serde(default)`).
+- **1.0.0** — Initial versioned contract.
+
 ---
 
-*This document reflects protocol version 1.0.0.*
+*This document reflects protocol version 1.1.0.*

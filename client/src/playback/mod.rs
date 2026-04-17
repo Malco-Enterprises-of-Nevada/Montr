@@ -6,8 +6,10 @@
 pub mod engine;
 pub mod events;
 pub mod queue;
+pub mod subtitle_selector;
 
 // Re-export common types
 pub use engine::{PlaybackCommand, PlaybackEngine, PlaybackEvent, PlaybackState};
 pub use events::{MpvEvent, MpvEventHandler};
 pub use queue::PlaylistQueue;
+pub use subtitle_selector::{ResolvedSubtitles, SubtitleCandidate, SubtitleSelection};

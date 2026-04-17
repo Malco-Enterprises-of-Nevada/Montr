@@ -1201,6 +1201,36 @@
             <div class="modal-body media-preview-body">
                 <video id="mediaPreviewVideo" controls style="display:none"></video>
                 <img id="mediaPreviewImage" style="display:none">
+                <div id="mediaPreviewSubtitles" class="media-subtitles-section" style="display:none">
+                    <div class="media-subtitles-header">
+                        <h4>Subtitles</h4>
+                        <button class="btn btn-sm btn-secondary" id="addSubtitleBtn">Add subtitle</button>
+                    </div>
+                    <div id="mediaPreviewSubtitlesList" class="media-subtitles-list"></div>
+                    <form id="addSubtitleForm" class="media-subtitle-upload-form" style="display:none">
+                        <div class="form-group">
+                            <label for="subtitleFile">Subtitle file (.srt or .vtt)</label>
+                            <input type="file" id="subtitleFile" accept=".srt,.vtt" required>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="subtitleLanguage">Language code (e.g. eng, spa)</label>
+                                <input type="text" id="subtitleLanguage" maxlength="16" placeholder="eng">
+                            </div>
+                            <div class="form-group">
+                                <label for="subtitleLabel">Label (optional)</label>
+                                <input type="text" id="subtitleLabel" maxlength="255" placeholder="English">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label><input type="checkbox" id="subtitleIsDefault"> Default track</label>
+                        </div>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" id="cancelSubtitleBtn">Cancel</button>
+                            <button type="submit" class="btn btn-primary" id="submitSubtitleBtn">Upload</button>
+                        </div>
+                    </form>
+                </div>
             </div>
             <div class="modal-footer">
                 <span id="mediaPreviewMeta" class="text-muted" style="flex:1"></span>

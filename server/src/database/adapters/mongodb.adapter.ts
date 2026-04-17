@@ -252,6 +252,8 @@ export class MongoDBAdapter implements DatabaseAdapter {
   async deleteMedia(id: number): Promise<void> {
     // Cascade: remove playlist items referencing this media
     await this.col('playlist_items').deleteMany({ media_id: id });
+    // Cascade: remove subtitle tracks for this media (SQL FK handles this there)
+    await this.col('subtitle_tracks').deleteMany({ media_file_id: id });
     // Cascade: null out client_status references
     await this.col('client_status').updateMany(
       { current_media_id: id },
@@ -398,6 +400,171 @@ export class MongoDBAdapter implements DatabaseAdapter {
       this.col('media_folders').countDocuments({ parent_id: id }),
     ]);
     return { media, subfolders };
+  }
+
+  // ── Subtitle track operations ────────────────────────────────────────────
+
+  private async clearSubtitleDefaultSiblings(
+    mediaFileId: number,
+    kind: 'external' | 'embedded',
+    exceptId?: number
+  ): Promise<void> {
+    const query: Record<string, unknown> = { media_file_id: mediaFileId, kind };
+    if (exceptId !== undefined) query.id = { $ne: exceptId };
+    await this.col('subtitle_tracks').updateMany(query, { $set: { is_default: false } });
+  }
+
+  async createExternalSubtitle(
+    input: import('../types').CreateExternalSubtitleInput
+  ): Promise<import('../types').SubtitleTrack> {
+    if (input.is_default) {
+      await this.clearSubtitleDefaultSiblings(input.media_file_id, 'external');
+    }
+    const id = await this.nextId('subtitle_tracks');
+    const now = new Date().toISOString();
+    const doc = {
+      id,
+      media_file_id: input.media_file_id,
+      kind: 'external' as const,
+      storage_filename: input.storage_filename,
+      original_filename: input.original_filename,
+      format: input.format,
+      size_bytes: input.size_bytes,
+      checksum: input.checksum,
+      stream_index: null,
+      codec: null,
+      language: input.language ?? null,
+      label: input.label ?? null,
+      is_default: !!input.is_default,
+      is_forced: !!input.is_forced,
+      created_at: now,
+    };
+    await this.col('subtitle_tracks').insertOne(doc);
+    return doc as unknown as import('../types').SubtitleTrack;
+  }
+
+  async createEmbeddedSubtitle(
+    input: import('../types').CreateEmbeddedSubtitleInput
+  ): Promise<import('../types').SubtitleTrack> {
+    const existing = await this.col('subtitle_tracks').findOne({
+      media_file_id: input.media_file_id,
+      kind: 'embedded',
+      stream_index: input.stream_index,
+    });
+    if (existing) {
+      const existingId = (existing as unknown as { id: number }).id;
+      if (input.is_default) {
+        await this.clearSubtitleDefaultSiblings(input.media_file_id, 'embedded', existingId);
+      }
+      await this.col('subtitle_tracks').updateOne(
+        { id: existingId },
+        {
+          $set: {
+            codec: input.codec,
+            language: input.language ?? null,
+            label: input.label ?? null,
+            is_default: !!input.is_default,
+            is_forced: !!input.is_forced,
+          },
+        }
+      );
+      const updated = await this.getSubtitleById(existingId);
+      if (!updated) throw new Error('Failed to retrieve updated subtitle');
+      return updated;
+    }
+    if (input.is_default) {
+      await this.clearSubtitleDefaultSiblings(input.media_file_id, 'embedded');
+    }
+    const id = await this.nextId('subtitle_tracks');
+    const now = new Date().toISOString();
+    const doc = {
+      id,
+      media_file_id: input.media_file_id,
+      kind: 'embedded' as const,
+      storage_filename: null,
+      original_filename: null,
+      format: null,
+      size_bytes: null,
+      checksum: null,
+      stream_index: input.stream_index,
+      codec: input.codec,
+      language: input.language ?? null,
+      label: input.label ?? null,
+      is_default: !!input.is_default,
+      is_forced: !!input.is_forced,
+      created_at: now,
+    };
+    await this.col('subtitle_tracks').insertOne(doc);
+    return doc as unknown as import('../types').SubtitleTrack;
+  }
+
+  async getSubtitleById(id: number): Promise<import('../types').SubtitleTrack | null> {
+    const doc = await this.col('subtitle_tracks').findOne({ id });
+    return this.docToObj<import('../types').SubtitleTrack>(doc);
+  }
+
+  async getSubtitlesForMedia(mediaFileId: number): Promise<import('../types').SubtitleTrack[]> {
+    const docs = await this.col('subtitle_tracks')
+      .find({ media_file_id: mediaFileId })
+      .sort({ is_default: -1, kind: 1, id: 1 })
+      .toArray();
+    return docs.map((d) => this.docToObj<import('../types').SubtitleTrack>(d)!);
+  }
+
+  async updateSubtitle(
+    id: number,
+    input: import('../types').UpdateSubtitleInput
+  ): Promise<import('../types').SubtitleTrack> {
+    const existing = await this.getSubtitleById(id);
+    if (!existing) throw new Error(`Subtitle with ID ${id} not found`);
+
+    const setFields: Record<string, unknown> = {};
+    if (input.language !== undefined) setFields.language = input.language;
+    if (input.label !== undefined) setFields.label = input.label;
+    if (input.is_default !== undefined) {
+      if (input.is_default) {
+        await this.clearSubtitleDefaultSiblings(existing.media_file_id, existing.kind, id);
+      }
+      setFields.is_default = input.is_default;
+    }
+    if (input.is_forced !== undefined) setFields.is_forced = input.is_forced;
+
+    if (Object.keys(setFields).length === 0) return existing;
+
+    await this.col('subtitle_tracks').updateOne({ id }, { $set: setFields });
+    const updated = await this.getSubtitleById(id);
+    if (!updated) throw new Error(`Subtitle with ID ${id} not found`);
+    return updated;
+  }
+
+  async deleteSubtitle(id: number): Promise<void> {
+    await this.col('subtitle_tracks').deleteOne({ id });
+  }
+
+  async getSubtitleCountsByMedia(): Promise<Record<number, number>> {
+    const pipeline = [
+      { $group: { _id: '$media_file_id', count: { $sum: 1 } } },
+    ];
+    const docs = await this.col('subtitle_tracks')
+      .aggregate<{ _id: number; count: number }>(pipeline)
+      .toArray();
+    const counts: Record<number, number> = {};
+    for (const doc of docs) {
+      counts[Number(doc._id)] = Number(doc.count);
+    }
+    return counts;
+  }
+
+  async pruneEmbeddedSubtitles(
+    mediaFileId: number,
+    keepStreamIndexes: number[]
+  ): Promise<number> {
+    const query: Record<string, unknown> = { media_file_id: mediaFileId, kind: 'embedded' };
+    if (keepStreamIndexes.length > 0) {
+      query.stream_index = { $nin: keepStreamIndexes };
+    }
+    const result = await this.col('subtitle_tracks').deleteMany(query);
+    return result.deletedCount ?? 0;
   }
 
   // ── Playlist operations ──────────────────────────────────────────────────

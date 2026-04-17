@@ -42,6 +42,16 @@ export const createMockDatabase = (): jest.Mocked<DatabaseAdapter> => ({
   getMediaFolderDescendants: jest.fn().mockResolvedValue([]),
   getMediaFolderContentCounts: jest.fn().mockResolvedValue({ media: 0, subfolders: 0 }),
 
+  // Subtitle track methods
+  createExternalSubtitle: jest.fn(),
+  createEmbeddedSubtitle: jest.fn(),
+  getSubtitleById: jest.fn(),
+  getSubtitlesForMedia: jest.fn().mockResolvedValue([]),
+  updateSubtitle: jest.fn(),
+  deleteSubtitle: jest.fn().mockResolvedValue(undefined),
+  pruneEmbeddedSubtitles: jest.fn().mockResolvedValue(0),
+  getSubtitleCountsByMedia: jest.fn().mockResolvedValue({}),
+
   // Playlist methods
   createPlaylist: jest.fn(),
   getPlaylistById: jest.fn(),

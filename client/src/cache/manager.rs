@@ -97,6 +97,20 @@ impl CacheManager {
         self.cache_dir.join(format!("{}_{}", media_id, filename))
     }
 
+    /// Directory for cached subtitle sidecars, kept separate so file-listing
+    /// over the media cache doesn't have to distinguish subtitle `.srt` / `.vtt`
+    /// files from real media downloads.
+    fn subtitle_dir(&self) -> PathBuf {
+        self.cache_dir.join("subs")
+    }
+
+    /// Get path for a subtitle sidecar in cache. Keeping subtitle id in the
+    /// filename makes the (id, filename) tuple uniquely addressable and
+    /// collision-free if two subtitles happen to share an original filename.
+    pub fn get_subtitle_cache_path(&self, subtitle_id: u32, filename: &str) -> PathBuf {
+        self.subtitle_dir().join(format!("{}_{}", subtitle_id, filename))
+    }
+
     /// Check if media file exists in cache
     pub async fn is_cached(&self, media_id: u32, filename: &str) -> bool {
         let path = self.get_cache_path(media_id, filename);
@@ -215,6 +229,7 @@ impl CacheManager {
             let manager = self.clone();
             let progress_tx = progress_tx.clone();
             let cancel_token = self.cancel_token.clone();
+            let item_for_subs = item.clone();
 
             let handle = tokio::spawn(async move {
                 // Check for cancellation
@@ -229,6 +244,13 @@ impl CacheManager {
                 }
 
                 let result = manager.download_media(media_id, &filename, &checksum).await;
+
+                // Prefetch any external subtitle sidecars for this item. We don't
+                // surface individual failures — the engine will simply skip
+                // subtitles it can't find on disk and log.
+                if result.is_ok() {
+                    let _ = manager.download_subtitles_for_item(&item_for_subs).await;
+                }
 
                 // Send progress update if channel provided
                 if let Some(tx) = progress_tx {
@@ -278,6 +300,124 @@ impl CacheManager {
             failed
         );
 
+        results
+    }
+
+    /// Download and cache a subtitle sidecar by subtitle-track ID. Mirrors
+    /// `download_media` but targets a separate `subs/` subdirectory so the
+    /// LRU / eviction paths keyed on media IDs don't have to reason about
+    /// sidecar files.
+    pub async fn download_subtitle(
+        &self,
+        subtitle_id: u32,
+        filename: &str,
+        expected_checksum: Option<&str>,
+    ) -> Result<PathBuf> {
+        let final_path = self.get_subtitle_cache_path(subtitle_id, filename);
+
+        // If cached and checksum still matches, short-circuit.
+        if final_path.exists() {
+            match expected_checksum {
+                Some(cs) if !cs.is_empty() => {
+                    match checksum::verify_checksum(&final_path, cs).await {
+                        Ok(()) => {
+                            tracing::debug!("Subtitle {} already cached and valid", subtitle_id);
+                            return Ok(final_path);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Cached subtitle {} failed checksum ({}); refetching",
+                                subtitle_id,
+                                e
+                            );
+                            let _ = fs::remove_file(&final_path).await;
+                        }
+                    }
+                }
+                _ => return Ok(final_path),
+            }
+        }
+
+        // Ensure subs dir exists lazily.
+        let subs_dir = self.subtitle_dir();
+        if !subs_dir.exists() {
+            fs::create_dir_all(&subs_dir)
+                .await
+                .map_err(|e| MontrError::DirectoryCreation {
+                    path: subs_dir.clone(),
+                    source: e,
+                })?;
+        }
+
+        let _permit =
+            self.download_semaphore
+                .acquire()
+                .await
+                .map_err(|_| MontrError::DownloadFailed {
+                    url: format!("subtitles/{}", subtitle_id),
+                    reason: "Failed to acquire download permit".to_string(),
+                })?;
+
+        let temp_path = final_path.with_extension("tmp");
+        tracing::info!(
+            "Downloading subtitle {} to {:?}",
+            subtitle_id,
+            final_path
+        );
+
+        let options = DownloadOptions {
+            show_progress: false,
+            resume: false, // subtitles are small; keep path simple
+            timeout_secs: 60,
+            max_retries: 3,
+            api_key: self.api_key.clone(),
+        };
+
+        self.http_client
+            .download_subtitle(subtitle_id, &temp_path, options)
+            .await?;
+
+        if let Some(cs) = expected_checksum.filter(|c| !c.is_empty()) {
+            checksum::verify_checksum(&temp_path, cs).await?;
+        }
+
+        fs::rename(&temp_path, &final_path)
+            .await
+            .map_err(|e| MontrError::CacheWrite {
+                path: final_path.clone(),
+                source: e,
+            })?;
+
+        tracing::info!("Cached subtitle {} at {:?}", subtitle_id, final_path);
+        Ok(final_path)
+    }
+
+    /// Download every external subtitle referenced by a playlist item. Errors
+    /// are logged but do not fail the batch — a missing subtitle must not
+    /// prevent the main media from playing.
+    pub async fn download_subtitles_for_item(
+        &self,
+        item: &PlaylistItem,
+    ) -> Vec<(u32, Result<PathBuf>)> {
+        let mut results = Vec::new();
+        for sub in &item.subtitles {
+            if !matches!(sub.kind, crate::network::protocol::SubtitleKind::External) {
+                continue;
+            }
+            let filename = sub
+                .filename
+                .clone()
+                .unwrap_or_else(|| match sub.format.as_deref() {
+                    Some("vtt") => format!("{}.vtt", sub.id),
+                    _ => format!("{}.srt", sub.id),
+                });
+            let checksum = sub.checksum.as_deref();
+            let res = self.download_subtitle(sub.id, &filename, checksum).await;
+            if let Err(ref e) = res {
+                tracing::warn!("Failed to cache subtitle {}: {}", sub.id, e);
+            }
+            results.push((sub.id, res));
+        }
         results
     }
 
@@ -354,6 +494,7 @@ impl CacheManager {
 
     /// Clear entire cache directory
     pub async fn clear_cache(&self) -> Result<()> {
+        let mut removed = 0;
         let mut entries =
             fs::read_dir(&self.cache_dir)
                 .await
@@ -361,8 +502,6 @@ impl CacheManager {
                     path: self.cache_dir.clone(),
                     source: e,
                 })?;
-
-        let mut removed = 0;
         while let Some(entry) = entries.next_entry().await.map_err(MontrError::Io)? {
             if let Ok(metadata) = entry.metadata().await {
                 if metadata.is_file() {
@@ -370,6 +509,28 @@ impl CacheManager {
                         tracing::warn!("Failed to remove {:?}: {}", entry.path(), e);
                     } else {
                         removed += 1;
+                    }
+                }
+            }
+        }
+
+        // Also sweep cached subtitle sidecars so Clear Cache wipes both kinds.
+        let subs_dir = self.subtitle_dir();
+        if subs_dir.exists() {
+            let mut sub_entries = fs::read_dir(&subs_dir)
+                .await
+                .map_err(|e| MontrError::FileAccess {
+                    path: subs_dir.clone(),
+                    source: e,
+                })?;
+            while let Some(entry) = sub_entries.next_entry().await.map_err(MontrError::Io)? {
+                if let Ok(metadata) = entry.metadata().await {
+                    if metadata.is_file() {
+                        if let Err(e) = fs::remove_file(entry.path()).await {
+                            tracing::warn!("Failed to remove {:?}: {}", entry.path(), e);
+                        } else {
+                            removed += 1;
+                        }
                     }
                 }
             }

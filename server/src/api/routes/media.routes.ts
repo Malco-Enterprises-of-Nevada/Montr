@@ -6,7 +6,9 @@ import { Router, Request, Response } from 'express';
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs/promises';
 import { mediaService } from '../../services/media.service';
+import { subtitleService } from '../../services/subtitle.service';
 import { config } from '../../config/config';
 import { storageService } from '../../services/storage.service';
 import { chunkedUploadService } from '../../services/chunked-upload.service';
@@ -53,6 +55,31 @@ const upload = multer({
         new AppError(
           ErrorCode.INVALID_MEDIA_TYPE,
           `Unsupported file type: ${file.mimetype}. Allowed types: video/*, image/*`,
+          400
+        )
+      );
+    }
+  },
+});
+
+/**
+ * Multer config for subtitle uploads: gate by extension (not MIME) since
+ * browsers routinely send SRT files as application/octet-stream. Content
+ * sniffing happens in subtitleService.attachExternal().
+ */
+const SUBTITLE_EXTENSIONS = new Set(['.srt', '.vtt']);
+const subtitleUpload = multer({
+  dest: path.join(config.storage.path, 'temp'),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB cap for subtitle files
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (SUBTITLE_EXTENSIONS.has(ext)) {
+      cb(null, true);
+    } else {
+      cb(
+        new AppError(
+          ErrorCode.INVALID_MEDIA_TYPE,
+          `Unsupported subtitle extension: ${ext}. Allowed: .srt, .vtt`,
           400
         )
       );
@@ -266,6 +293,22 @@ router.get(
     const db = await getDatabase();
     const pending = await db.getPendingMedia();
     res.json(successResponse(pending));
+  })
+);
+
+/**
+ * GET /api/media/subtitle-counts
+ * Bulk per-media subtitle count map. Used by the web UI to decorate video
+ * cards with a "CC" badge without fetching subtitles for each item.
+ * Must be declared before /:id so Express doesn't swallow the path.
+ */
+router.get(
+  '/subtitle-counts',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { getDatabase } = await import('../../database/connection');
+    const db = await getDatabase();
+    const counts = await db.getSubtitleCountsByMedia();
+    res.json(successResponse(counts));
   })
 );
 
@@ -504,6 +547,63 @@ router.post(
     const { id } = params;
     const media = await mediaService.retryThumbnail(id);
     res.json(successResponse(media));
+  })
+);
+
+/**
+ * GET /api/media/:id/subtitles
+ * List all subtitle tracks (external + embedded) attached to a media file.
+ */
+router.get(
+  '/:id/subtitles',
+  validateParams(idParamSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params as unknown as { id: number };
+    const tracks = await subtitleService.list(id);
+    res.json(successResponse(tracks));
+  })
+);
+
+/**
+ * POST /api/media/:id/subtitles
+ * Attach an external subtitle file (.srt or .vtt) to a video.
+ * Body: multipart/form-data with field `subtitle` (file) and optional
+ * `language`, `label`, `is_default`, `is_forced`.
+ */
+router.post(
+  '/:id/subtitles',
+  requireRole('admin', 'editor'),
+  validateParams(idParamSchema),
+  subtitleUpload.single('subtitle'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params as unknown as { id: number };
+    const file = req.file;
+    if (!file) {
+      throw new AppError(ErrorCode.BAD_REQUEST, 'No subtitle file provided', 400);
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const parseBool = (v: unknown): boolean => v === true || v === 'true' || v === '1';
+    const trimOrNull = (v: unknown): string | null => {
+      if (typeof v !== 'string') return null;
+      const trimmed = v.trim();
+      return trimmed.length === 0 ? null : trimmed;
+    };
+
+    try {
+      const buffer = await fs.readFile(file.path);
+      const track = await subtitleService.attachExternal({
+        mediaFileId: id,
+        originalFilename: file.originalname,
+        buffer,
+        language: trimOrNull(body.language),
+        label: trimOrNull(body.label),
+        isDefault: parseBool(body.is_default),
+        isForced: parseBool(body.is_forced),
+      });
+      res.status(201).json(successResponse(track));
+    } finally {
+      await fs.unlink(file.path).catch(() => undefined);
+    }
   })
 );
 

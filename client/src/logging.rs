@@ -302,6 +302,9 @@ mod tests {
                 screen_index: 0,
                 window_width: None,
                 window_height: None,
+                enable_subtitles: false,
+                preferred_subtitle_language: None,
+                subtitle_font_size: None,
             },
             config_path: None,
         }

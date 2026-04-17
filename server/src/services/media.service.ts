@@ -33,6 +33,30 @@ export interface MediaMetadata {
   bitrate?: number;
 }
 
+/**
+ * Describes one subtitle stream discovered inside a video container by
+ * ffprobe. Maps directly onto a `subtitle_tracks(kind='embedded', ...)` row.
+ */
+export interface EmbeddedSubtitleStream {
+  stream_index: number;
+  codec: string;
+  language: string | null;
+  label: string | null;
+  is_default: boolean;
+  is_forced: boolean;
+}
+
+/**
+ * Bitmap subtitle codecs (PGS, DVD VobSub, HDMV) — these are out of scope
+ * for v1 since they can't be rendered as SRT/VTT text. Skip during ingest.
+ */
+const UNSUPPORTED_SUBTITLE_CODECS = new Set([
+  'hdmv_pgs_subtitle',
+  'dvd_subtitle',
+  'dvb_subtitle',
+  'xsub',
+]);
+
 export class MediaService {
   /**
    * Determines media type from MIME type
@@ -44,9 +68,14 @@ export class MediaService {
   }
 
   /**
-   * Extracts metadata from a video file using ffprobe
+   * Extracts metadata from a video file using ffprobe. Returns both the
+   * video-stream metadata we store on `media_files` and any text-based
+   * subtitle streams found in the container (so the caller can register
+   * them in `subtitle_tracks` as kind='embedded').
    */
-  private async extractVideoMetadata(filePath: string): Promise<MediaMetadata> {
+  private async extractVideoMetadata(
+    filePath: string
+  ): Promise<{ metadata: MediaMetadata; subtitles: EmbeddedSubtitleStream[] }> {
     try {
       const { stdout } = await execFile('ffprobe', [
         '-v',
@@ -59,9 +88,18 @@ export class MediaService {
       ]);
 
       const data = JSON.parse(stdout);
-      const videoStream = data.streams?.find(
-        (s: { codec_type: string }) => s.codec_type === 'video'
-      );
+      type RawStream = {
+        index: number;
+        codec_type: string;
+        codec_name?: string;
+        width?: number;
+        height?: number;
+        tags?: { language?: string; title?: string; LANGUAGE?: string; TITLE?: string };
+        disposition?: { default?: number; forced?: number };
+      };
+      const streams: RawStream[] = Array.isArray(data.streams) ? data.streams : [];
+
+      const videoStream = streams.find((s) => s.codec_type === 'video');
 
       const metadata: MediaMetadata = {
         duration: data.format?.duration ? parseFloat(data.format.duration) : undefined,
@@ -71,10 +109,22 @@ export class MediaService {
         bitrate: data.format?.bit_rate ? parseInt(data.format.bit_rate, 10) : undefined,
       };
 
-      return metadata;
+      const subtitles: EmbeddedSubtitleStream[] = streams
+        .filter((s) => s.codec_type === 'subtitle')
+        .filter((s) => !s.codec_name || !UNSUPPORTED_SUBTITLE_CODECS.has(s.codec_name))
+        .map((s) => ({
+          stream_index: s.index,
+          codec: s.codec_name ?? 'unknown',
+          language: s.tags?.language ?? s.tags?.LANGUAGE ?? null,
+          label: s.tags?.title ?? s.tags?.TITLE ?? null,
+          is_default: s.disposition?.default === 1,
+          is_forced: s.disposition?.forced === 1,
+        }));
+
+      return { metadata, subtitles };
     } catch (error) {
       logger.error('Failed to extract video metadata:', error);
-      return {};
+      return { metadata: {}, subtitles: [] };
     }
   }
 
@@ -173,8 +223,11 @@ export class MediaService {
 
       // Extract metadata based on type
       let metadata: MediaMetadata = {};
+      let embeddedSubtitles: EmbeddedSubtitleStream[] = [];
       if (mediaType === 'video') {
-        metadata = await this.extractVideoMetadata(fullPath);
+        const result = await this.extractVideoMetadata(fullPath);
+        metadata = result.metadata;
+        embeddedSubtitles = result.subtitles;
       } else if (mediaType === 'image') {
         metadata = await this.extractImageMetadata(fullPath);
       }
@@ -225,6 +278,11 @@ export class MediaService {
 
       const media = await db.createMedia(input);
 
+      // Register any embedded subtitle streams detected in the container.
+      if (embeddedSubtitles.length > 0) {
+        await this.persistEmbeddedSubtitles(media.id, embeddedSubtitles);
+      }
+
       // Generate thumbnail asynchronously (don't wait for it)
       this.generateThumbnailAsync(media.id, fullPath, storageInfo.filename, mediaType);
 
@@ -256,6 +314,7 @@ export class MediaService {
     // Gated by a global semaphore: three concurrent downloads of 500MB Spaces
     // files + ffprobe each OOM-killed the container.
     let metadata: MediaMetadata = {};
+    let embeddedSubtitles: EmbeddedSubtitleStream[] = [];
     let localPath: string | null = null;
     const MAX_METADATA_SIZE = 500 * 1024 * 1024;
     if (storageInfo.size <= MAX_METADATA_SIZE) {
@@ -263,7 +322,9 @@ export class MediaService {
         try {
           localPath = await storageService.downloadToTemp(storageInfo.filepath);
           if (mediaType === 'video') {
-            metadata = await this.extractVideoMetadata(localPath);
+            const result = await this.extractVideoMetadata(localPath);
+            metadata = result.metadata;
+            embeddedSubtitles = result.subtitles;
           } else if (mediaType === 'image') {
             metadata = await this.extractImageMetadata(localPath);
           }
@@ -325,6 +386,10 @@ export class MediaService {
 
     const media = await db.createMedia(input);
 
+    if (embeddedSubtitles.length > 0) {
+      await this.persistEmbeddedSubtitles(media.id, embeddedSubtitles);
+    }
+
     if (localPath) {
       this.generateThumbnailAsync(media.id, localPath, storageInfo.filename, mediaType);
     }
@@ -333,6 +398,43 @@ export class MediaService {
 
     logger.info(`Media created from chunked upload: ${media.id} - ${media.filename}`);
     return media;
+  }
+
+  /**
+   * Upsert embedded subtitle tracks for a media file based on ffprobe output.
+   * Kept private because call sites should always pair this with a successful
+   * media-row insert — orphan subtitle rows would be created otherwise.
+   */
+  private async persistEmbeddedSubtitles(
+    mediaId: number,
+    streams: EmbeddedSubtitleStream[]
+  ): Promise<void> {
+    const db = await getDatabase();
+    try {
+      for (const s of streams) {
+        await db.createEmbeddedSubtitle({
+          media_file_id: mediaId,
+          stream_index: s.stream_index,
+          codec: s.codec,
+          language: s.language,
+          label: s.label,
+          is_default: s.is_default,
+          is_forced: s.is_forced,
+        });
+      }
+      // Remove any stale rows for streams that no longer exist (handles
+      // re-upload of a variant with fewer subtitle tracks).
+      await db.pruneEmbeddedSubtitles(
+        mediaId,
+        streams.map((s) => s.stream_index)
+      );
+      logger.info(
+        `Registered ${streams.length} embedded subtitle track(s) for media ${mediaId}`
+      );
+    } catch (error) {
+      // Don't fail the whole upload because subtitle metadata insert failed.
+      logger.warn(`Failed to persist embedded subtitles for media ${mediaId}:`, error);
+    }
   }
 
   private fireApprovalNeededIfPending(media: MediaFile): void {

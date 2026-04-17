@@ -46,6 +46,8 @@ export interface IStorageService {
   getFileSize(filepath: string): Promise<number>;
   saveThumbnail(buffer: Buffer, mediaFilename: string): Promise<string>;
   getThumbnailPath(mediaFilename: string): Promise<string | null>;
+  /** Save a subtitle file. Returns storage-relative filepath (e.g. 'subtitles/<uuid>.srt'). */
+  saveSubtitle(buffer: Buffer, originalFilename: string, format: 'srt' | 'vtt'): Promise<StorageFileInfo>;
   cleanupTempFiles(maxAgeMs?: number): Promise<void>;
   getStorageStats(): Promise<{
     totalFiles: number;
@@ -83,6 +85,7 @@ export class LocalStorageService implements IStorageService {
       path.join(this.storagePath, 'thumbnails'),
       path.join(this.storagePath, 'temp'),
       path.join(this.storagePath, 'previews'),
+      path.join(this.storagePath, 'subtitles'),
     ];
 
     directories.forEach((dir) => {
@@ -256,6 +259,25 @@ export class LocalStorageService implements IStorageService {
       return filepath;
     }
     return null;
+  }
+
+  async saveSubtitle(
+    buffer: Buffer,
+    _originalFilename: string,
+    format: 'srt' | 'vtt'
+  ): Promise<StorageFileInfo> {
+    const uuid = crypto.randomBytes(16).toString('hex');
+    const filename = `${uuid}.${format}`;
+    const filepath = path.join('subtitles', filename);
+    const fullPath = path.join(this.storagePath, filepath);
+
+    await fs.writeFile(fullPath, buffer);
+
+    const checksum = this.calculateChecksum(buffer);
+    const size = buffer.length;
+
+    logger.info(`Subtitle saved: ${filepath} (${size} bytes)`);
+    return { filename, filepath, checksum, size };
   }
 
   /**
@@ -552,6 +574,34 @@ export class SpacesStorageService implements IStorageService {
       return key;
     }
     return null;
+  }
+
+  async saveSubtitle(
+    buffer: Buffer,
+    _originalFilename: string,
+    format: 'srt' | 'vtt'
+  ): Promise<StorageFileInfo> {
+    const uuid = crypto.randomBytes(16).toString('hex');
+    const filename = `${uuid}.${format}`;
+    const key = `subtitles/${filename}`;
+    const contentType = format === 'vtt' ? 'text/vtt' : 'application/x-subrip';
+
+    await this.s3Client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: buffer,
+        ContentType: contentType,
+      })
+    );
+    await this.s3Client.send(
+      new PutObjectAclCommand({ Bucket: this.bucket, Key: key, ACL: 'public-read' })
+    );
+
+    const checksum = this.calculateChecksum(buffer);
+    logger.info(`Subtitle saved to Spaces: ${key} (${buffer.length} bytes)`);
+
+    return { filename, filepath: key, checksum, size: buffer.length };
   }
 
   async cleanupTempFiles(maxAgeMs: number = 3600000): Promise<void> {

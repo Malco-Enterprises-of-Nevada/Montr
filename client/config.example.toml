@@ -32,3 +32,16 @@ log_max_files = 5
 [display]
 fullscreen = true
 screen_index = 0
+
+# Subtitle rendering (protocol 1.1.0+). Off by default; set to true to
+# display subtitles on videos that advertise them.
+enable_subtitles = false
+
+# Preferred subtitle language as an ISO 639-2 code ("eng", "spa", "fra"…).
+# When multiple tracks are available, the client picks the one whose
+# language matches this, falling back to `is_default` then any track.
+# preferred_subtitle_language = "eng"
+
+# Optional mpv `sub-font-size` override. Leave commented to keep mpv's
+# default (~55). Useful when the display viewing distance is unusual.
+# subtitle_font_size = 65

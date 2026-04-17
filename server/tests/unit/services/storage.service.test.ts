@@ -37,9 +37,14 @@ describe('StorageService', () => {
       // Create new instance to trigger initialization
       new StorageService();
 
-      expect(mockFsSync.mkdirSync).toHaveBeenCalledTimes(5);
+      // root + media + thumbnails + temp + previews + subtitles
+      expect(mockFsSync.mkdirSync).toHaveBeenCalledTimes(6);
       expect(mockFsSync.mkdirSync).toHaveBeenCalledWith(
         expect.stringContaining('media'),
+        expect.objectContaining({ recursive: true })
+      );
+      expect(mockFsSync.mkdirSync).toHaveBeenCalledWith(
+        expect.stringContaining('subtitles'),
         expect.objectContaining({ recursive: true })
       );
     });

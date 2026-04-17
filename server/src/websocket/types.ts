@@ -15,6 +15,28 @@ export interface ClientCapabilities {
 }
 
 /**
+ * Subtitle track associated with a playlist media item. Sent over the WS
+ * wire so the Rust client can pre-fetch external files and feed mpv the
+ * right `--sub-file` / `sid` parameters.
+ */
+export interface SubtitleTrackPayload {
+  id: number;
+  kind: 'external' | 'embedded';
+  language: string | null;
+  label: string | null;
+  isDefault: boolean;
+  isForced: boolean;
+  // External-only fields
+  downloadUrl?: string;
+  filename?: string;
+  format?: 'srt' | 'vtt';
+  checksum?: string;
+  // Embedded-only fields
+  streamIndex?: number;
+  codec?: string;
+}
+
+/**
  * Media item in playlist
  */
 export interface PlaylistMediaItem {
@@ -27,6 +49,8 @@ export interface PlaylistMediaItem {
   checksum: string | null;
   orderIndex: number;
   imageDuration: number;
+  /** Subtitle tracks for this media (always an array; empty if none). Added in protocol 1.1.0. */
+  subtitles: SubtitleTrackPayload[];
 }
 
 /**

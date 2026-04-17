@@ -45,6 +45,61 @@ export interface UpdateMediaFolderInput {
   parent_id?: number | null;
 }
 
+// Subtitle track types
+export type SubtitleKind = 'external' | 'embedded';
+export type SubtitleFormat = 'srt' | 'vtt';
+
+export interface SubtitleTrack {
+  id: number;
+  media_file_id: number;
+  kind: SubtitleKind;
+  // External-only fields
+  storage_filename: string | null;
+  original_filename: string | null;
+  format: SubtitleFormat | null;
+  size_bytes: number | null;
+  checksum: string | null;
+  // Embedded-only fields
+  stream_index: number | null;
+  codec: string | null;
+  // Common metadata
+  language: string | null;
+  label: string | null;
+  is_default: boolean;
+  is_forced: boolean;
+  created_at: string;
+}
+
+export interface CreateExternalSubtitleInput {
+  media_file_id: number;
+  storage_filename: string;
+  original_filename: string;
+  format: SubtitleFormat;
+  size_bytes: number;
+  checksum: string;
+  language?: string | null;
+  label?: string | null;
+  is_default?: boolean;
+  is_forced?: boolean;
+}
+
+export interface CreateEmbeddedSubtitleInput {
+  media_file_id: number;
+  stream_index: number;
+  codec: string;
+  language?: string | null;
+  label?: string | null;
+  is_default?: boolean;
+  is_forced?: boolean;
+}
+
+export interface UpdateSubtitleInput {
+  language?: string | null;
+  label?: string | null;
+  is_default?: boolean;
+  is_forced?: boolean;
+}
+
 export interface Playlist {
   id: number;
   name: string;

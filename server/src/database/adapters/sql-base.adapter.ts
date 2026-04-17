@@ -67,6 +67,10 @@ import {
   MediaFolder,
   CreateMediaFolderInput,
   UpdateMediaFolderInput,
+  SubtitleTrack,
+  CreateExternalSubtitleInput,
+  CreateEmbeddedSubtitleInput,
+  UpdateSubtitleInput,
 } from '../types';
 import { MigrationExecutor } from '../migrations/runner';
 
@@ -416,6 +420,228 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
       media: Number(mediaRows[0]?.count ?? 0),
       subfolders: Number(subfolderRows[0]?.count ?? 0),
     };
+  }
+
+  // ── Subtitle track operations ────────────────────────────────────────────
+
+  /** Map raw DB row (is_default/is_forced as INTEGER 0/1) to typed SubtitleTrack */
+  private mapSubtitleRow(row: Record<string, unknown>): SubtitleTrack {
+    return {
+      id: row.id as number,
+      media_file_id: row.media_file_id as number,
+      kind: row.kind as SubtitleTrack['kind'],
+      storage_filename: (row.storage_filename as string | null) ?? null,
+      original_filename: (row.original_filename as string | null) ?? null,
+      format: (row.format as SubtitleTrack['format']) ?? null,
+      size_bytes: row.size_bytes == null ? null : Number(row.size_bytes),
+      checksum: (row.checksum as string | null) ?? null,
+      stream_index: row.stream_index == null ? null : Number(row.stream_index),
+      codec: (row.codec as string | null) ?? null,
+      language: (row.language as string | null) ?? null,
+      label: (row.label as string | null) ?? null,
+      is_default: Boolean(row.is_default),
+      is_forced: Boolean(row.is_forced),
+      created_at: row.created_at as string,
+    };
+  }
+
+  /** If input.is_default, clear the flag on all other tracks of the same kind for this media. */
+  private async clearDefaultFlagSiblings(
+    mediaFileId: number,
+    kind: 'external' | 'embedded',
+    exceptId?: number
+  ): Promise<void> {
+    const params: unknown[] = [mediaFileId, kind];
+    let whereExcept = '';
+    if (exceptId !== undefined) {
+      whereExcept = ` AND id <> ${this.placeholder(3)}`;
+      params.push(exceptId);
+    }
+    await this.rawExecute(
+      `UPDATE subtitle_tracks SET is_default = 0
+       WHERE media_file_id = ${this.placeholder(1)} AND kind = ${this.placeholder(2)}${whereExcept}`,
+      params
+    );
+  }
+
+  async createExternalSubtitle(input: CreateExternalSubtitleInput): Promise<SubtitleTrack> {
+    if (input.is_default) {
+      await this.clearDefaultFlagSiblings(input.media_file_id, 'external');
+    }
+    const p = (i: number) => this.placeholder(i);
+    const result = await this.rawExecute(
+      `INSERT INTO subtitle_tracks (
+        media_file_id, kind, storage_filename, original_filename, format,
+        size_bytes, checksum, language, label, is_default, is_forced
+      ) VALUES (${p(1)}, 'external', ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)}, ${p(10)})`,
+      [
+        input.media_file_id,
+        input.storage_filename,
+        input.original_filename,
+        input.format,
+        input.size_bytes,
+        input.checksum,
+        input.language ?? null,
+        input.label ?? null,
+        input.is_default ? 1 : 0,
+        input.is_forced ? 1 : 0,
+      ]
+    );
+    const row = await this.getSubtitleById(result.lastInsertId);
+    if (!row) throw new Error('Failed to retrieve created subtitle');
+    return row;
+  }
+
+  async createEmbeddedSubtitle(input: CreateEmbeddedSubtitleInput): Promise<SubtitleTrack> {
+    // Idempotent upsert: if the row already exists for this (media, stream_index),
+    // update its metadata in place so re-ingests stay in sync with current flags.
+    const existing = await this.rawQueryOne<Record<string, unknown>>(
+      `SELECT * FROM subtitle_tracks
+       WHERE media_file_id = ${this.placeholder(1)} AND kind = 'embedded' AND stream_index = ${this.placeholder(2)}`,
+      [input.media_file_id, input.stream_index]
+    );
+
+    if (existing) {
+      const id = existing.id as number;
+      if (input.is_default) {
+        await this.clearDefaultFlagSiblings(input.media_file_id, 'embedded', id);
+      }
+      await this.rawExecute(
+        `UPDATE subtitle_tracks SET
+          codec = ${this.placeholder(1)}, language = ${this.placeholder(2)},
+          label = ${this.placeholder(3)}, is_default = ${this.placeholder(4)}, is_forced = ${this.placeholder(5)}
+         WHERE id = ${this.placeholder(6)}`,
+        [
+          input.codec,
+          input.language ?? null,
+          input.label ?? null,
+          input.is_default ? 1 : 0,
+          input.is_forced ? 1 : 0,
+          id,
+        ]
+      );
+      const row = await this.getSubtitleById(id);
+      if (!row) throw new Error('Failed to retrieve updated subtitle');
+      return row;
+    }
+
+    if (input.is_default) {
+      await this.clearDefaultFlagSiblings(input.media_file_id, 'embedded');
+    }
+    const p = (i: number) => this.placeholder(i);
+    const result = await this.rawExecute(
+      `INSERT INTO subtitle_tracks (
+        media_file_id, kind, stream_index, codec, language, label, is_default, is_forced
+      ) VALUES (${p(1)}, 'embedded', ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)})`,
+      [
+        input.media_file_id,
+        input.stream_index,
+        input.codec,
+        input.language ?? null,
+        input.label ?? null,
+        input.is_default ? 1 : 0,
+        input.is_forced ? 1 : 0,
+      ]
+    );
+    const row = await this.getSubtitleById(result.lastInsertId);
+    if (!row) throw new Error('Failed to retrieve created subtitle');
+    return row;
+  }
+
+  async getSubtitleById(id: number): Promise<SubtitleTrack | null> {
+    const row = await this.rawQueryOne<Record<string, unknown>>(
+      `SELECT * FROM subtitle_tracks WHERE id = ${this.placeholder(1)}`,
+      [id]
+    );
+    return row ? this.mapSubtitleRow(row) : null;
+  }
+
+  async getSubtitlesForMedia(mediaFileId: number): Promise<SubtitleTrack[]> {
+    const rows = await this.rawQuery<Record<string, unknown>>(
+      `SELECT * FROM subtitle_tracks
+       WHERE media_file_id = ${this.placeholder(1)}
+       ORDER BY is_default DESC, kind ASC, id ASC`,
+      [mediaFileId]
+    );
+    return rows.map((r) => this.mapSubtitleRow(r));
+  }
+
+  async updateSubtitle(id: number, input: UpdateSubtitleInput): Promise<SubtitleTrack> {
+    const existing = await this.getSubtitleById(id);
+    if (!existing) throw new Error(`Subtitle with ID ${id} not found`);
+
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    let paramIndex = 1;
+
+    if (input.language !== undefined) {
+      fields.push(`language = ${this.placeholder(paramIndex++)}`);
+      values.push(input.language);
+    }
+    if (input.label !== undefined) {
+      fields.push(`label = ${this.placeholder(paramIndex++)}`);
+      values.push(input.label);
+    }
+    if (input.is_default !== undefined) {
+      if (input.is_default) {
+        await this.clearDefaultFlagSiblings(existing.media_file_id, existing.kind, id);
+      }
+      fields.push(`is_default = ${this.placeholder(paramIndex++)}`);
+      values.push(input.is_default ? 1 : 0);
+    }
+    if (input.is_forced !== undefined) {
+      fields.push(`is_forced = ${this.placeholder(paramIndex++)}`);
+      values.push(input.is_forced ? 1 : 0);
+    }
+
+    if (fields.length === 0) return existing;
+
+    values.push(id);
+    await this.rawExecute(
+      `UPDATE subtitle_tracks SET ${fields.join(', ')} WHERE id = ${this.placeholder(paramIndex)}`,
+      values
+    );
+    const updated = await this.getSubtitleById(id);
+    if (!updated) throw new Error(`Subtitle with ID ${id} not found`);
+    return updated;
+  }
+
+  async deleteSubtitle(id: number): Promise<void> {
+    await this.rawExecute(`DELETE FROM subtitle_tracks WHERE id = ${this.placeholder(1)}`, [id]);
+  }
+
+  async getSubtitleCountsByMedia(): Promise<Record<number, number>> {
+    const rows = await this.rawQuery<{ media_file_id: number; cnt: number }>(
+      `SELECT media_file_id, COUNT(*) AS cnt FROM subtitle_tracks GROUP BY media_file_id`
+    );
+    const counts: Record<number, number> = {};
+    for (const row of rows) {
+      counts[Number(row.media_file_id)] = Number(row.cnt);
+    }
+    return counts;
+  }
+
+  async pruneEmbeddedSubtitles(
+    mediaFileId: number,
+    keepStreamIndexes: number[]
+  ): Promise<number> {
+    if (keepStreamIndexes.length === 0) {
+      const result = await this.rawExecute(
+        `DELETE FROM subtitle_tracks WHERE media_file_id = ${this.placeholder(1)} AND kind = 'embedded'`,
+        [mediaFileId]
+      );
+      return result.affectedRows;
+    }
+    const keepPlaceholders = keepStreamIndexes
+      .map((_, i) => this.placeholder(i + 2))
+      .join(', ');
+    const result = await this.rawExecute(
+      `DELETE FROM subtitle_tracks
+       WHERE media_file_id = ${this.placeholder(1)} AND kind = 'embedded'
+         AND stream_index NOT IN (${keepPlaceholders})`,
+      [mediaFileId, ...keepStreamIndexes]
+    );
+    return result.affectedRows;
   }
 
   // ── Playlist operations ──────────────────────────────────────────────────

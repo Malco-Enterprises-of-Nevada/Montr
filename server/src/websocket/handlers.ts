@@ -17,10 +17,13 @@ import {
   LogEventMessage,
   ExtendedWebSocket,
   PlaylistMediaItem,
+  SubtitleTrackPayload,
 } from './types';
 import { AppError, ErrorCode } from '../api/middleware/error-handler';
 import { config } from '../config/config';
 import { storageService } from '../services/storage.service';
+import { PlaylistItemWithMedia, SubtitleTrack } from '../database/types';
+import { getDatabase } from '../database/connection';
 
 const logger = getLogger();
 
@@ -29,6 +32,77 @@ function getMediaDownloadUrl(mediaId: number, filepath: string): string {
     return storageService.getDownloadUrl(filepath);
   }
   return `${config.server.publicUrl || `http://localhost:${config.server.port}`}/api/media/${mediaId}/download`;
+}
+
+function getSubtitleDownloadUrl(subtitleId: number): string {
+  return `${config.server.publicUrl || `http://localhost:${config.server.port}`}/api/subtitles/${subtitleId}/download`;
+}
+
+function toSubtitlePayload(row: SubtitleTrack): SubtitleTrackPayload {
+  if (row.kind === 'external') {
+    return {
+      id: row.id,
+      kind: 'external',
+      language: row.language,
+      label: row.label,
+      isDefault: row.is_default,
+      isForced: row.is_forced,
+      downloadUrl: getSubtitleDownloadUrl(row.id),
+      filename: row.storage_filename
+        ? `${row.id}.${row.format ?? 'srt'}`
+        : undefined,
+      format: row.format ?? undefined,
+      checksum: row.checksum ?? undefined,
+    };
+  }
+  return {
+    id: row.id,
+    kind: 'embedded',
+    language: row.language,
+    label: row.label,
+    isDefault: row.is_default,
+    isForced: row.is_forced,
+    streamIndex: row.stream_index ?? undefined,
+    codec: row.codec ?? undefined,
+  };
+}
+
+/**
+ * Fetch subtitle tracks for every video in the playlist in a single pass.
+ * Image items get an empty array without a DB round-trip. Returns a map
+ * keyed by media_file_id for O(1) lookup when shaping the payload.
+ */
+async function fetchSubtitlesByMedia(
+  items: PlaylistItemWithMedia[]
+): Promise<Map<number, SubtitleTrackPayload[]>> {
+  const db = await getDatabase();
+  const videoMediaIds = Array.from(
+    new Set(items.filter((i) => i.media.type === 'video').map((i) => i.media_id))
+  );
+  const result = new Map<number, SubtitleTrackPayload[]>();
+  for (const mediaId of videoMediaIds) {
+    const rows = await db.getSubtitlesForMedia(mediaId);
+    result.set(mediaId, rows.map(toSubtitlePayload));
+  }
+  return result;
+}
+
+function buildPlaylistItem(
+  item: PlaylistItemWithMedia,
+  subtitlesByMedia: Map<number, SubtitleTrackPayload[]>
+): PlaylistMediaItem {
+  return {
+    id: item.id,
+    mediaId: item.media_id,
+    filename: item.media.filename,
+    downloadUrl: getMediaDownloadUrl(item.media_id, item.media.filepath),
+    type: item.media.type,
+    duration: item.media.type === 'image' ? item.image_duration : item.media.duration || 0,
+    checksum: item.media.checksum,
+    orderIndex: item.order_index,
+    imageDuration: item.image_duration,
+    subtitles: subtitlesByMedia.get(item.media_id) ?? [],
+  };
 }
 
 /**
@@ -314,17 +388,10 @@ export async function sendPlaylistToClient(clientId: string, playlistId: number)
     const playlist = await playlistService.getPlaylistWithItems(playlistId);
 
     // Build playlist items with download URLs
-    const items: PlaylistMediaItem[] = playlist.items.map((item) => ({
-      id: item.id,
-      mediaId: item.media_id,
-      filename: item.media.filename,
-      downloadUrl: getMediaDownloadUrl(item.media_id, item.media.filepath),
-      type: item.media.type,
-      duration: item.media.type === 'image' ? item.image_duration : item.media.duration || 0,
-      checksum: item.media.checksum,
-      orderIndex: item.order_index,
-      imageDuration: item.image_duration,
-    }));
+    const subtitlesByMedia = await fetchSubtitlesByMedia(playlist.items);
+    const items: PlaylistMediaItem[] = playlist.items.map((item) =>
+      buildPlaylistItem(item, subtitlesByMedia)
+    );
 
     const sent = clientConnectionManager.sendToClient(clientId, {
       type: 'playlist_assigned',
@@ -355,17 +422,10 @@ export async function broadcastPlaylistUpdate(playlistId: number): Promise<void>
     const playlist = await playlistService.getPlaylistWithItems(playlistId);
 
     // Build playlist items with download URLs
-    const items: PlaylistMediaItem[] = playlist.items.map((item) => ({
-      id: item.id,
-      mediaId: item.media_id,
-      filename: item.media.filename,
-      downloadUrl: getMediaDownloadUrl(item.media_id, item.media.filepath),
-      type: item.media.type,
-      duration: item.media.type === 'image' ? item.image_duration : item.media.duration || 0,
-      checksum: item.media.checksum,
-      orderIndex: item.order_index,
-      imageDuration: item.image_duration,
-    }));
+    const subtitlesByMedia = await fetchSubtitlesByMedia(playlist.items);
+    const items: PlaylistMediaItem[] = playlist.items.map((item) =>
+      buildPlaylistItem(item, subtitlesByMedia)
+    );
 
     const sentCount = await clientConnectionManager.broadcastToPlaylist(playlistId, {
       type: 'playlist_updated',
@@ -469,17 +529,10 @@ export async function sendPlaylistInterrupt(
   try {
     const playlist = await playlistService.getPlaylistWithItems(playlistId);
 
-    const items: PlaylistMediaItem[] = playlist.items.map((item) => ({
-      id: item.id,
-      mediaId: item.media_id,
-      filename: item.media.filename,
-      downloadUrl: getMediaDownloadUrl(item.media_id, item.media.filepath),
-      type: item.media.type,
-      duration: item.media.type === 'image' ? item.image_duration : item.media.duration || 0,
-      checksum: item.media.checksum,
-      orderIndex: item.order_index,
-      imageDuration: item.image_duration,
-    }));
+    const subtitlesByMedia = await fetchSubtitlesByMedia(playlist.items);
+    const items: PlaylistMediaItem[] = playlist.items.map((item) =>
+      buildPlaylistItem(item, subtitlesByMedia)
+    );
 
     const sent = clientConnectionManager.sendToClient(clientId, {
       type: 'playlist_interrupt',
@@ -514,17 +567,8 @@ export async function sendPlaylistResume(
     if (playlistId) {
       const playlist = await playlistService.getPlaylistWithItems(playlistId);
       playlistName = playlist.name;
-      items = playlist.items.map((item) => ({
-        id: item.id,
-        mediaId: item.media_id,
-        filename: item.media.filename,
-        downloadUrl: getMediaDownloadUrl(item.media_id, item.media.filepath),
-        type: item.media.type,
-        duration: item.media.type === 'image' ? item.image_duration : item.media.duration || 0,
-        checksum: item.media.checksum,
-        orderIndex: item.order_index,
-        imageDuration: item.image_duration,
-      }));
+      const subtitlesByMedia = await fetchSubtitlesByMedia(playlist.items);
+      items = playlist.items.map((item) => buildPlaylistItem(item, subtitlesByMedia));
     }
 
     const sent = clientConnectionManager.sendToClient(clientId, {

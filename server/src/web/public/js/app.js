@@ -384,6 +384,40 @@ const mediaAPI = {
         return await apiCall(`/media/${id}/thumbnail/retry`, { method: 'POST' });
     },
 
+    async subtitleCounts() {
+        return await apiCall('/media/subtitle-counts');
+    },
+
+    async listSubtitles(mediaId) {
+        return await apiCall(`/media/${mediaId}/subtitles`);
+    },
+
+    async uploadSubtitle(mediaId, file, meta = {}) {
+        const fd = new FormData();
+        fd.append('subtitle', file);
+        if (meta.language) fd.append('language', meta.language);
+        if (meta.label) fd.append('label', meta.label);
+        if (meta.is_default) fd.append('is_default', 'true');
+        if (meta.is_forced) fd.append('is_forced', 'true');
+        const headers = {};
+        if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
+        const res = await fetch(API_BASE + `/media/${mediaId}/subtitles`, {
+            method: 'POST',
+            headers,
+            body: fd,
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            const msg = body?.error?.message || `Upload failed (${res.status})`;
+            throw new Error(msg);
+        }
+        return body.data ?? body;
+    },
+
+    async deleteSubtitle(subtitleId) {
+        return await apiCall(`/subtitles/${subtitleId}`, { method: 'DELETE' });
+    },
+
     async download(id) {
         const headers = {};
         if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
@@ -851,6 +885,7 @@ function renderMediaGrid(media) {
                 <img class="thumb-img" data-thumb-id="${item.id}" alt="" style="display:none">
                 <div class="thumb-fallback">${item.type === 'video' ? videoIcon : imageIcon}</div>
                 ${item.type === 'video' ? '<div class="thumb-play-badge">&#9654;</div>' : ''}
+                ${item.type === 'video' ? `<span class="badge-cc" data-cc-id="${item.id}" title="Has subtitles" style="display:none">CC</span>` : ''}
                 ${thumbFailed ? `<button class="thumb-retry-btn" data-retry-id="${item.id}" title="Thumbnail failed — click to retry">&#8634;</button>` : ''}
             </div>
             <div class="media-info">
@@ -922,7 +957,30 @@ function renderMediaGrid(media) {
 
     // Load thumbnails asynchronously
     loadThumbnails(media);
+    // Lazily stamp subtitle "CC" badges after the grid paints.
+    loadSubtitleBadges().catch((e) => console.warn('Failed to load subtitle badges:', e));
     updateBulkActionBar();
+}
+
+async function loadSubtitleBadges() {
+    let counts;
+    try {
+        counts = await mediaAPI.subtitleCounts();
+    } catch (e) {
+        // Non-fatal; badges are cosmetic.
+        return;
+    }
+    if (!counts || typeof counts !== 'object') return;
+    document.querySelectorAll('.badge-cc').forEach((el) => {
+        const id = el.dataset.ccId;
+        const n = id != null ? counts[id] : 0;
+        if (n && n > 0) {
+            el.style.display = '';
+            el.title = `${n} subtitle track${n === 1 ? '' : 's'}`;
+        } else {
+            el.style.display = 'none';
+        }
+    });
 }
 
 // ===== Folder Tree =====
@@ -1634,6 +1692,17 @@ async function openMediaPreview(id) {
         // Wire download button
         document.getElementById('mediaPreviewDownload').onclick = () => mediaAPI.download(id);
 
+        // Subtitle management — videos only; images never have subtitles.
+        const subsSection = document.getElementById('mediaPreviewSubtitles');
+        if (media.type === 'video') {
+            subsSection.style.display = '';
+            _previewingMediaId = id;
+            await refreshPreviewSubtitles(id);
+        } else {
+            subsSection.style.display = 'none';
+            _previewingMediaId = null;
+        }
+
         openModal('mediaPreviewModal');
     } catch (error) {
         console.error('Failed to open preview:', error);
@@ -1641,9 +1710,131 @@ async function openMediaPreview(id) {
     }
 }
 
+let _previewingMediaId = null;
+
+async function refreshPreviewSubtitles(mediaId) {
+    const listEl = document.getElementById('mediaPreviewSubtitlesList');
+    listEl.innerHTML = '<div class="loading text-muted">Loading subtitles…</div>';
+    try {
+        const tracks = await mediaAPI.listSubtitles(mediaId);
+        renderSubtitlesList(tracks || []);
+    } catch (e) {
+        console.error('Failed to load subtitles:', e);
+        listEl.innerHTML = '<div class="text-muted">Failed to load subtitles.</div>';
+    }
+}
+
+function renderSubtitlesList(tracks) {
+    const listEl = document.getElementById('mediaPreviewSubtitlesList');
+    const canEdit = auth.user?.role !== 'viewer';
+    if (!tracks.length) {
+        listEl.innerHTML = '<div class="text-muted">No subtitles attached.</div>';
+        return;
+    }
+    listEl.innerHTML = `
+        <table class="subtitle-list-table">
+            <thead>
+                <tr>
+                    <th>Label</th>
+                    <th>Language</th>
+                    <th>Kind</th>
+                    <th>Default</th>
+                    ${canEdit ? '<th></th>' : ''}
+                </tr>
+            </thead>
+            <tbody>
+                ${tracks.map((t) => {
+                    const canDelete = canEdit && t.kind === 'external';
+                    return `
+                        <tr>
+                            <td>${escapeHtml(t.label || '')}</td>
+                            <td>${escapeHtml(t.language || '—')}</td>
+                            <td>${escapeHtml(t.kind)}</td>
+                            <td>${t.is_default ? 'yes' : ''}</td>
+                            ${canEdit ? `<td>${canDelete ? `<button class="btn btn-sm btn-danger sub-delete-btn" data-sub-id="${t.id}">Delete</button>` : '<span class="text-muted">embedded</span>'}</td>` : ''}
+                        </tr>
+                    `;
+                }).join('')}
+            </tbody>
+        </table>
+    `;
+    listEl.querySelectorAll('.sub-delete-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+            const subId = parseInt(btn.dataset.subId, 10);
+            if (!confirm('Delete this subtitle?')) return;
+            btn.disabled = true;
+            try {
+                await mediaAPI.deleteSubtitle(subId);
+                showToast('Subtitle deleted', 'success');
+                if (_previewingMediaId != null) {
+                    await refreshPreviewSubtitles(_previewingMediaId);
+                }
+                loadSubtitleBadges().catch(() => {});
+            } catch (e) {
+                console.error('Delete subtitle failed:', e);
+                showToast(e.message || 'Delete failed', 'error');
+                btn.disabled = false;
+            }
+        });
+    });
+}
+
 function initMediaPreviewModal() {
     document.getElementById('closeMediaPreview').addEventListener('click', closeMediaPreview);
     document.getElementById('closeMediaPreviewBtn').addEventListener('click', closeMediaPreview);
+
+    // Subtitle upload form wiring
+    const addBtn = document.getElementById('addSubtitleBtn');
+    const cancelBtn = document.getElementById('cancelSubtitleBtn');
+    const form = document.getElementById('addSubtitleForm');
+    const listEl = document.getElementById('mediaPreviewSubtitlesList');
+
+    addBtn?.addEventListener('click', () => {
+        form.style.display = '';
+        listEl.style.display = 'none';
+        addBtn.style.display = 'none';
+    });
+    cancelBtn?.addEventListener('click', () => {
+        resetSubtitleForm();
+    });
+    form?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (_previewingMediaId == null) return;
+        const fileInput = document.getElementById('subtitleFile');
+        const file = fileInput.files?.[0];
+        if (!file) return;
+        const submitBtn = document.getElementById('submitSubtitleBtn');
+        submitBtn.disabled = true;
+        try {
+            await mediaAPI.uploadSubtitle(_previewingMediaId, file, {
+                language: document.getElementById('subtitleLanguage').value.trim() || undefined,
+                label: document.getElementById('subtitleLabel').value.trim() || undefined,
+                is_default: document.getElementById('subtitleIsDefault').checked,
+            });
+            showToast('Subtitle attached', 'success');
+            resetSubtitleForm();
+            await refreshPreviewSubtitles(_previewingMediaId);
+            loadSubtitleBadges().catch(() => {});
+        } catch (err) {
+            console.error('Subtitle upload failed:', err);
+            showToast(err.message || 'Subtitle upload failed', 'error');
+            submitBtn.disabled = false;
+        }
+    });
+}
+
+function resetSubtitleForm() {
+    const form = document.getElementById('addSubtitleForm');
+    const listEl = document.getElementById('mediaPreviewSubtitlesList');
+    const addBtn = document.getElementById('addSubtitleBtn');
+    const submitBtn = document.getElementById('submitSubtitleBtn');
+    if (form) {
+        form.reset();
+        form.style.display = 'none';
+    }
+    if (listEl) listEl.style.display = '';
+    if (addBtn) addBtn.style.display = '';
+    if (submitBtn) submitBtn.disabled = false;
 }
 
 function closeMediaPreview() {
@@ -1655,6 +1846,8 @@ function closeMediaPreview() {
         URL.revokeObjectURL(_previewBlobUrl);
         _previewBlobUrl = null;
     }
+    _previewingMediaId = null;
+    resetSubtitleForm();
     closeModal('mediaPreviewModal');
 }
 

@@ -261,6 +261,7 @@ mod tests {
             checksum: Some("abc123".to_string()),
             order_index: 0,
             image_duration: 5,
+            subtitles: Vec::new(),
         }];
 
         state.update_playlist(1, items, false).await.unwrap();

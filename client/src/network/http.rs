@@ -88,16 +88,36 @@ impl HttpClient {
         options: DownloadOptions,
     ) -> Result<()> {
         let url = format!("{}/api/media/{}/download", self.server_url, media_id);
+        self.download_url_with_retry(&url, dest_path, options).await
+    }
 
+    /// Download a subtitle file by subtitle-track ID. Hits
+    /// `/api/subtitles/:id/download`, which streams the on-disk `.srt`/`.vtt`.
+    pub async fn download_subtitle(
+        &self,
+        subtitle_id: u32,
+        dest_path: &Path,
+        options: DownloadOptions,
+    ) -> Result<()> {
+        let url = format!("{}/api/subtitles/{}/download", self.server_url, subtitle_id);
+        self.download_url_with_retry(&url, dest_path, options).await
+    }
+
+    async fn download_url_with_retry(
+        &self,
+        url: &str,
+        dest_path: &Path,
+        options: DownloadOptions,
+    ) -> Result<()> {
         let mut attempt = 0;
         loop {
-            match self.try_download(&url, dest_path, &options).await {
+            match self.try_download(url, dest_path, &options).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     attempt += 1;
                     if attempt >= options.max_retries {
                         return Err(MontrError::DownloadFailed {
-                            url: url.clone(),
+                            url: url.to_string(),
                             reason: format!("Failed after {} attempts: {}", attempt, e),
                         });
                     }
