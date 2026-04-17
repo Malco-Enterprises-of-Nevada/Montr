@@ -467,6 +467,7 @@ mod tests {
             checksum: Some(format!("checksum_{}", media_id)),
             order_index: id - 1,
             image_duration: 5,
+            subtitles: Vec::new(),
         }
     }
 

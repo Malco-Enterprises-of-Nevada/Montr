@@ -10,6 +10,7 @@ import { initLogger, getLogger } from './utils/logger';
 import { errorHandler, notFoundHandler, successResponse } from './api/middleware/error-handler';
 import { getDatabase, closeDatabase } from './database/connection';
 import mediaRoutes from './api/routes/media.routes';
+import subtitleRoutes from './api/routes/subtitle.routes';
 import foldersRoutes from './api/routes/folders.routes';
 import playlistRoutes from './api/routes/playlist.routes';
 import clientRoutes from './api/routes/client.routes';
@@ -147,6 +148,7 @@ class MontrServer {
 
     // API routes (JWT auth required — passes through in bootstrap mode when 0 users)
     this.app.use('/api/media', requireAuth(), mediaRoutes);
+    this.app.use('/api/subtitles', requireAuth(), subtitleRoutes);
     this.app.use('/api/folders', requireAuth(), foldersRoutes);
     this.app.use('/api/playlists', requireAuth(), playlistRoutes);
     this.app.use('/api/clients', requireAuth(), clientRoutes);

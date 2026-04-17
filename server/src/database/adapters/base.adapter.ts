@@ -57,6 +57,10 @@ import {
   MediaFolder,
   CreateMediaFolderInput,
   UpdateMediaFolderInput,
+  SubtitleTrack,
+  CreateExternalSubtitleInput,
+  CreateEmbeddedSubtitleInput,
+  UpdateSubtitleInput,
 } from '../types';
 
 export interface DatabaseAdapter {
@@ -88,6 +92,18 @@ export interface DatabaseAdapter {
   getMediaFolderDescendants(id: number): Promise<MediaFolder[]>;
   /** Count of media files + subfolders directly under this folder. */
   getMediaFolderContentCounts(id: number): Promise<{ media: number; subfolders: number }>;
+
+  // Subtitle track operations
+  createExternalSubtitle(input: CreateExternalSubtitleInput): Promise<SubtitleTrack>;
+  createEmbeddedSubtitle(input: CreateEmbeddedSubtitleInput): Promise<SubtitleTrack>;
+  getSubtitleById(id: number): Promise<SubtitleTrack | null>;
+  getSubtitlesForMedia(mediaFileId: number): Promise<SubtitleTrack[]>;
+  updateSubtitle(id: number, input: UpdateSubtitleInput): Promise<SubtitleTrack>;
+  deleteSubtitle(id: number): Promise<void>;
+  /** Removes embedded rows for a media whose stream_index is NOT in the keep set. */
+  pruneEmbeddedSubtitles(mediaFileId: number, keepStreamIndexes: number[]): Promise<number>;
+  /** Per-media subtitle counts across all media in the library. */
+  getSubtitleCountsByMedia(): Promise<Record<number, number>>;
 
   // Playlist operations
   createPlaylist(input: CreatePlaylistInput): Promise<Playlist>;

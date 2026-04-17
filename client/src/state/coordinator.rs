@@ -79,6 +79,13 @@ pub struct StateCoordinator {
     /// Directory used for persisting playlist snapshots for offline fallback.
     /// When `None`, no persistence or offline restore is attempted.
     cache_dir: Option<PathBuf>,
+    /// Whether the operator has opted into subtitle rendering. Defaults to
+    /// off — matches historical behavior for existing deployments.
+    subtitles_enabled: bool,
+    /// Preferred subtitle language as an ISO 639-2 code ("eng", "spa", …).
+    preferred_subtitle_language: Option<String>,
+    /// Optional `sub-font-size` override passed to mpv on each play.
+    subtitle_font_size: Option<u32>,
 }
 
 impl StateCoordinator {
@@ -110,7 +117,24 @@ impl StateCoordinator {
             playback_start_time: None,
             log_file: None,
             cache_dir: None,
+            subtitles_enabled: false,
+            preferred_subtitle_language: None,
+            subtitle_font_size: None,
         }
+    }
+
+    /// Opt into subtitle rendering and set the preferred language + font size.
+    /// Off by default so existing deployments keep their prior behavior after upgrade.
+    pub fn with_subtitle_preferences(
+        mut self,
+        enabled: bool,
+        preferred_language: Option<String>,
+        font_size: Option<u32>,
+    ) -> Self {
+        self.subtitles_enabled = enabled;
+        self.preferred_subtitle_language = preferred_language;
+        self.subtitle_font_size = font_size;
+        self
     }
 
     /// Set the path of the local log file. When configured, the coordinator
@@ -813,12 +837,22 @@ impl StateCoordinator {
             }
         }
 
+        // Build a subtitle plan: externals on disk + active selection. We
+        // only bother for video items — images never carry subs.
+        let is_video = item.media_type == "video";
+        let subtitles = if is_video {
+            Some(self.resolve_subtitles_for_item(&item).await)
+        } else {
+            None
+        };
+
         // Send play command to engine
         self.playback_tx
             .send(PlaybackCommand::Play {
                 path: cache_path,
-                is_video: item.media_type == "video",
+                is_video,
                 image_duration: Some(item.image_duration),
+                subtitles,
             })
             .map_err(|e| MontrError::Playback(format!("Failed to send play command: {}", e)))?;
 
@@ -826,6 +860,54 @@ impl StateCoordinator {
         self.start_analytics_session(media_id).await;
 
         Ok(())
+    }
+
+    /// Build a `ResolvedSubtitles` from the item's advertised tracks: checks
+    /// which externals have cached sidecar files, then applies the selector
+    /// policy using the operator's configured preferences. Always returns
+    /// something — an empty plan collapses to `sub-visibility no`.
+    async fn resolve_subtitles_for_item(
+        &self,
+        item: &PlaylistItem,
+    ) -> crate::playback::subtitle_selector::ResolvedSubtitles {
+        use crate::network::protocol::SubtitleKind;
+        use crate::playback::subtitle_selector::{self, SubtitleCandidate};
+
+        let mut candidates: Vec<SubtitleCandidate> = Vec::new();
+        for track in &item.subtitles {
+            match track.kind {
+                SubtitleKind::External => {
+                    let filename = track
+                        .filename
+                        .clone()
+                        .unwrap_or_else(|| match track.format.as_deref() {
+                            Some("vtt") => format!("{}.vtt", track.id),
+                            _ => format!("{}.srt", track.id),
+                        });
+                    let local_path = self
+                        .cache_manager
+                        .get_subtitle_cache_path(track.id, &filename);
+                    if local_path.exists() {
+                        candidates.push(SubtitleCandidate::external(track.clone(), local_path));
+                    } else {
+                        tracing::warn!(
+                            "External subtitle {} not on disk; skipping",
+                            track.id
+                        );
+                    }
+                }
+                SubtitleKind::Embedded => {
+                    candidates.push(SubtitleCandidate::embedded(track.clone()));
+                }
+            }
+        }
+
+        subtitle_selector::resolve(
+            candidates,
+            self.preferred_subtitle_language.as_deref(),
+            self.subtitles_enabled,
+            self.subtitle_font_size,
+        )
     }
 }
 
@@ -848,6 +930,7 @@ mod tests {
             checksum: Some(format!("checksum_{}", media_id)),
             order_index: id - 1,
             image_duration: 5,
+            subtitles: Vec::new(),
         }
     }
 

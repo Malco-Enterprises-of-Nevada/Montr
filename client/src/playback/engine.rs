@@ -42,6 +42,10 @@ pub enum PlaybackCommand {
         path: PathBuf,
         is_video: bool,
         image_duration: Option<u32>,
+        /// Optional subtitle plan resolved upstream (in the coordinator)
+        /// from the playlist item's advertised tracks + cached sidecars +
+        /// operator config. `None` = legacy behavior (no subtitles).
+        subtitles: Option<crate::playback::subtitle_selector::ResolvedSubtitles>,
     },
     /// Pause playback
     Pause,
@@ -438,11 +442,12 @@ impl PlaybackEngine {
                 path,
                 is_video,
                 image_duration,
+                subtitles,
             } => {
                 let duration = image_duration
                     .map(|d| d as u64)
                     .unwrap_or(self.default_image_duration);
-                self.play(&path, !is_video, duration).await
+                self.play(&path, !is_video, duration, subtitles.as_ref()).await
             }
             PlaybackCommand::Pause => self.pause().await,
             PlaybackCommand::Resume => self.resume().await,
@@ -467,6 +472,7 @@ impl PlaybackEngine {
         file_path: &Path,
         is_image: bool,
         image_duration_secs: u64,
+        subtitles: Option<&crate::playback::subtitle_selector::ResolvedSubtitles>,
     ) -> Result<()> {
         let path_str = file_path
             .to_str()
@@ -490,6 +496,26 @@ impl PlaybackEngine {
                 serde_json::json!(false),
             ])
             .await;
+
+        // Apply subtitle plan (videos only — images never carry subs).
+        if !is_image {
+            if let Some(plan) = subtitles {
+                if let Err(e) = self.apply_subtitle_plan(plan).await {
+                    // Subtitles are best-effort. A failure here must not keep
+                    // the video from playing — log and move on.
+                    tracing::warn!("Failed to apply subtitle plan: {}", e);
+                }
+            } else {
+                // No plan provided at all — hide whatever mpv picked by default.
+                let _ = self
+                    .send_command(&[
+                        serde_json::json!("set_property"),
+                        serde_json::json!("sub-visibility"),
+                        serde_json::json!(false),
+                    ])
+                    .await;
+            }
+        }
 
         // Update state
         {
@@ -520,6 +546,99 @@ impl PlaybackEngine {
                 file: path_str.to_string(),
             })
             .await;
+
+        Ok(())
+    }
+
+    /// Register all external subtitle sidecars with mpv and then set the
+    /// active track (or `sid=no` if nothing is selected). Called only on
+    /// video playback — images never carry subtitles.
+    async fn apply_subtitle_plan(
+        &self,
+        plan: &crate::playback::subtitle_selector::ResolvedSubtitles,
+    ) -> Result<()> {
+        use crate::playback::subtitle_selector::SubtitleSelection;
+
+        // `sub-add <path> auto` makes mpv aware of each sidecar without
+        // immediately switching to it. We'll pick the active one explicitly
+        // via `sid` below.
+        for sidecar in &plan.external_paths {
+            let path_str = match sidecar.to_str() {
+                Some(s) => s,
+                None => {
+                    tracing::warn!("Skipping subtitle with non-UTF-8 path: {:?}", sidecar);
+                    continue;
+                }
+            };
+            if let Err(e) = self
+                .send_command(&[
+                    serde_json::json!("sub-add"),
+                    serde_json::json!(path_str),
+                    serde_json::json!("auto"),
+                ])
+                .await
+            {
+                tracing::warn!("sub-add failed for {}: {}", path_str, e);
+            }
+        }
+
+        // Apply optional font-size override before selecting the track,
+        // so the first frame rendered already uses the right size.
+        if let Some(size) = plan.font_size {
+            let _ = self
+                .send_command(&[
+                    serde_json::json!("set_property"),
+                    serde_json::json!("sub-font-size"),
+                    serde_json::json!(size),
+                ])
+                .await;
+        }
+
+        match &plan.selected {
+            SubtitleSelection::None => {
+                self.send_command(&[
+                    serde_json::json!("set_property"),
+                    serde_json::json!("sub-visibility"),
+                    serde_json::json!(false),
+                ])
+                .await?;
+            }
+            SubtitleSelection::Embedded { sid } => {
+                self.send_command(&[
+                    serde_json::json!("set_property"),
+                    serde_json::json!("sid"),
+                    serde_json::json!(*sid),
+                ])
+                .await?;
+                self.send_command(&[
+                    serde_json::json!("set_property"),
+                    serde_json::json!("sub-visibility"),
+                    serde_json::json!(true),
+                ])
+                .await?;
+            }
+            SubtitleSelection::External { path } => {
+                // mpv assigns sids to `sub-add` entries after any embedded
+                // streams. Rather than track the exact sid returned by
+                // `sub-add`, we re-add the selected one with `select` which
+                // switches to it atomically.
+                let path_str = path
+                    .to_str()
+                    .ok_or_else(|| MontrError::Playback("Invalid subtitle path".to_string()))?;
+                self.send_command(&[
+                    serde_json::json!("sub-add"),
+                    serde_json::json!(path_str),
+                    serde_json::json!("select"),
+                ])
+                .await?;
+                self.send_command(&[
+                    serde_json::json!("set_property"),
+                    serde_json::json!("sub-visibility"),
+                    serde_json::json!(true),
+                ])
+                .await?;
+            }
+        }
 
         Ok(())
     }

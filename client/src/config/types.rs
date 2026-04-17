@@ -136,6 +136,21 @@ pub struct DisplayConfig {
     /// Window height (if not fullscreen)
     #[serde(default)]
     pub window_height: Option<u32>,
+
+    /// Render subtitles when a playlist item advertises them. Opt-in so
+    /// existing deployments keep their current behavior after upgrade.
+    #[serde(default)]
+    pub enable_subtitles: bool,
+
+    /// Preferred subtitle language as an ISO 639-2 code ("eng", "spa", …).
+    /// When multiple tracks are available, the selector prefers one whose
+    /// language matches this value.
+    #[serde(default)]
+    pub preferred_subtitle_language: Option<String>,
+
+    /// Subtitle font size override. `None` leaves mpv's default (~55).
+    #[serde(default)]
+    pub subtitle_font_size: Option<u32>,
 }
 
 // Default value functions
@@ -328,6 +343,9 @@ mod tests {
                 screen_index: 0,
                 window_width: None,
                 window_height: None,
+                enable_subtitles: false,
+                preferred_subtitle_language: None,
+                subtitle_font_size: None,
             },
             config_path: None,
         }

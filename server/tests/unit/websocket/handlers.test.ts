@@ -16,6 +16,7 @@ import {
 import { clientService } from '../../../src/services/client.service';
 import { playlistService } from '../../../src/services/playlist.service';
 import { clientConnectionManager } from '../../../src/websocket/client-manager';
+import { getDatabase } from '../../../src/database/connection';
 import {
   RegisterMessage,
   StatusUpdateMessage,
@@ -30,6 +31,7 @@ import WebSocket from 'ws';
 jest.mock('../../../src/services/client.service');
 jest.mock('../../../src/services/playlist.service');
 jest.mock('../../../src/websocket/client-manager');
+jest.mock('../../../src/database/connection');
 jest.mock('../../../src/utils/logger', () => ({
   getLogger: () => ({
     info: jest.fn(),
@@ -47,6 +49,13 @@ describe('WebSocket Handlers', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+
+    // Provide a minimal DB mock — enough for fetchSubtitlesByMedia to resolve
+    // without going to a real database. Every playlist-broadcasting helper
+    // hits this path.
+    (getDatabase as jest.Mock).mockResolvedValue({
+      getSubtitlesForMedia: jest.fn().mockResolvedValue([]),
+    });
 
     // Create mock WebSocket
     mockWs = {
@@ -530,6 +539,7 @@ describe('WebSocket Handlers', () => {
             checksum: 'abc123',
             orderIndex: 0,
             imageDuration: 5,
+            subtitles: [],
           },
         ],
       });

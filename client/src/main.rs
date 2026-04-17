@@ -243,7 +243,12 @@ async fn run_client(config: config::Config) -> Result<()> {
         config.server.api_key.clone(),
     )
     .with_log_file(config.system.log_file.clone())
-    .with_cache_dir(config.playback.media_cache_dir.clone());
+    .with_cache_dir(config.playback.media_cache_dir.clone())
+    .with_subtitle_preferences(
+        config.display.enable_subtitles,
+        config.display.preferred_subtitle_language.clone(),
+        config.display.subtitle_font_size,
+    );
 
     let coordinator_tx = coordinator.message_sender();
 

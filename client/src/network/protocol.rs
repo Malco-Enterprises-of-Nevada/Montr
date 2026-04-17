@@ -355,6 +355,72 @@ pub struct PlaylistItem {
     /// Duration override for images (seconds)
     #[serde(rename = "imageDuration")]
     pub image_duration: u32,
+
+    /// Subtitle tracks attached to this item. Always an array; empty when
+    /// none are attached. `serde(default)` keeps us compatible with servers
+    /// on protocol 1.0.0 that don't emit this field.
+    #[serde(default)]
+    pub subtitles: Vec<SubtitleTrack>,
+}
+
+/// Source of a subtitle track — either a sidecar file we fetch over HTTP,
+/// or a stream already embedded inside the parent video container.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SubtitleKind {
+    External,
+    Embedded,
+}
+
+/// One subtitle track as advertised by the server on a playlist item.
+/// Added in protocol 1.1.0.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct SubtitleTrack {
+    /// Subtitle row ID (unique across all videos)
+    pub id: u32,
+
+    /// External sidecar file vs embedded stream
+    pub kind: SubtitleKind,
+
+    /// ISO 639-2 language code ("eng", "spa", …) when known
+    pub language: Option<String>,
+
+    /// Display name shown in UI ("English SDH")
+    pub label: Option<String>,
+
+    /// Server-marked default track for this media
+    #[serde(rename = "isDefault")]
+    pub is_default: bool,
+
+    /// Forced-display track (plays without user toggle)
+    #[serde(rename = "isForced")]
+    pub is_forced: bool,
+
+    // ── External-only fields ────────────────────────────────────────────
+    /// HTTP path to download the sidecar file
+    #[serde(rename = "downloadUrl", skip_serializing_if = "Option::is_none")]
+    pub download_url: Option<String>,
+
+    /// Suggested cache-local filename hint
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+
+    /// Sidecar format (srt/vtt)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+
+    /// SHA-256 checksum of the sidecar file
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+
+    // ── Embedded-only fields ────────────────────────────────────────────
+    /// ffprobe global stream index inside the container
+    #[serde(rename = "streamIndex", skip_serializing_if = "Option::is_none")]
+    pub stream_index: Option<u32>,
+
+    /// Codec name (e.g. "subrip", "mov_text")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codec: Option<String>,
 }
 
 /// Media file information
@@ -738,6 +804,7 @@ mod tests {
             checksum: Some("abc123".to_string()),
             order_index: 0,
             image_duration: 5,
+            subtitles: Vec::new(),
         };
 
         let item2 = PlaylistItem {
@@ -750,6 +817,7 @@ mod tests {
             checksum: Some("abc123".to_string()),
             order_index: 0,
             image_duration: 5,
+            subtitles: Vec::new(),
         };
 
         assert_eq!(item1, item2);
