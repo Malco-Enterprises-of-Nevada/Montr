@@ -10,8 +10,11 @@ services:
       DB_TYPE: sqlite
       DB_PATH: ./data/montr.db
       STORAGE_PATH: ./storage
-      API_KEY_REQUIRED: "false"
-      LOG_LEVEL: info
+      API_KEY: ${API_KEY:-}
+      API_KEY_REQUIRED: ${API_KEY_REQUIRED:-false}
+      JWT_SECRET: ${JWT_SECRET:-}
+      LOG_FILE: ${LOG_FILE:-/opt/montr-server/logs/server.log}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     # unless-stopped: docker will restart the container if it dies (OOM-kill,
     # uncaughtException, crash) but not if we stop it manually via `compose down`.
     restart: unless-stopped
