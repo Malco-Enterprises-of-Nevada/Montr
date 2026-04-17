@@ -21,6 +21,7 @@ services:
     volumes:
       - server-data:/opt/montr-server/data
       - server-storage:/opt/montr-server/storage
+      - server-logs:/opt/montr-server/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 10s
@@ -65,5 +66,6 @@ services:
 volumes:
   server-data:
   server-storage:
+  server-logs:
   mysql-data:
   mongo-data:
