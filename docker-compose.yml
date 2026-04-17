@@ -12,6 +12,9 @@ services:
       STORAGE_PATH: ./storage
       API_KEY_REQUIRED: "false"
       LOG_LEVEL: info
+    # unless-stopped: docker will restart the container if it dies (OOM-kill,
+    # uncaughtException, crash) but not if we stop it manually via `compose down`.
+    restart: unless-stopped
     volumes:
       - server-data:/opt/montr-server/data
       - server-storage:/opt/montr-server/storage

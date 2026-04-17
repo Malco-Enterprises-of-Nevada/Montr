@@ -12,6 +12,7 @@ import { config } from '../config/config';
 import { storageService, StorageFileInfo } from './storage.service';
 import { getLogger } from '../utils/logger';
 import { AppError, ErrorCode } from '../api/middleware/error-handler';
+import { postProcessSemaphore } from './processing-limits';
 
 const logger = getLogger();
 
@@ -270,18 +271,22 @@ class ChunkedUploadService {
     );
     const filename = path.basename(session.s3Key!);
 
-    // Compute real checksum by downloading from Spaces (skip for files >500MB)
+    // Compute real checksum by downloading from Spaces (skip for files >500MB).
+    // Gated by the shared post-process semaphore: 3x concurrent 500MB downloads
+    // OOM-killed the container (docker exit 137) before this cap existed.
     const MAX_CHECKSUM_SIZE = 500 * 1024 * 1024;
     let checksum = '';
     if (totalSize <= MAX_CHECKSUM_SIZE) {
-      try {
-        const tempPath = await storageService.downloadToTemp(session.s3Key!);
-        checksum = await this.calculateFileChecksumStream(tempPath);
-        await fs.unlink(tempPath).catch(() => {});
-        logger.info(`Computed checksum for ${filename}: ${checksum}`);
-      } catch (error) {
-        logger.warn(`Failed to compute checksum for ${filename}, storing empty: ${error}`);
-      }
+      await postProcessSemaphore.run(async () => {
+        try {
+          const tempPath = await storageService.downloadToTemp(session.s3Key!);
+          checksum = await this.calculateFileChecksumStream(tempPath);
+          await fs.unlink(tempPath).catch(() => {});
+          logger.info(`Computed checksum for ${filename}: ${checksum}`);
+        } catch (error) {
+          logger.warn(`Failed to compute checksum for ${filename}, storing empty: ${error}`);
+        }
+      });
     } else {
       logger.info(
         `Skipping checksum for large file (${Math.round(totalSize / 1024 / 1024)}MB): ${filename}`
