@@ -262,8 +262,7 @@ async fn run_client(config: config::Config) -> Result<()> {
         use montr_client::state::coordinator::CoordinatorMessage;
         let tx = coordinator_tx.clone();
         let cancel = cancel_token.clone();
-        let grace =
-            tokio::time::Duration::from_secs(config.playback.offline_fallback_grace_secs);
+        let grace = tokio::time::Duration::from_secs(config.playback.offline_fallback_grace_secs);
         tokio::spawn(async move {
             tokio::select! {
                 _ = cancel.cancelled() => {}
