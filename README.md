@@ -182,6 +182,38 @@ See [docs/configuration.md](docs/configuration.md) for complete configuration re
 3. **Assign to Client**: Assign a playlist to one or more clients
 4. **Monitor**: View real-time playback status on the dashboard
 
+## Diagnostics / Accessing logs
+
+A small CLI is bundled at `scripts/montr-logs.mjs` (also wired up as `npm run logs`) for pulling logs off a running server without SSH. It talks to the admin HTTP API using the server's static API key.
+
+**Required environment** (either exported or in a `.env` file in the working directory):
+
+```
+MONTR_SERVER_URL=https://montr.example.com
+MONTR_API_KEY=<matches the server's API_KEY env var>
+```
+
+The server must have `API_KEY` set; in prod set `API_KEY_REQUIRED=true` as well.
+
+**Commands:**
+
+```bash
+# Tail the server's own Winston log file
+npm run logs -- server --lines 500 --level error
+npm run logs -- server --since 2026-04-17T00:00:00
+
+# List registered clients (id / online|offline / last-seen / name)
+npm run logs -- clients
+
+# Recent WARN/ERROR events auto-pushed by a client (from the DB)
+npm run logs -- client pi-lobby --lines 200
+
+# On-demand live tail of a connected client's log file
+npm run logs -- client pi-lobby --live --size 100k
+```
+
+Output is plain text on stdout so it pipes cleanly into `grep`, `less`, etc. Non-zero exit + stderr message on HTTP errors.
+
 ## Contributing
 
 1. Fork the repository
