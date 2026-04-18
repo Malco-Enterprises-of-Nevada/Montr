@@ -108,7 +108,8 @@ impl CacheManager {
     /// filename makes the (id, filename) tuple uniquely addressable and
     /// collision-free if two subtitles happen to share an original filename.
     pub fn get_subtitle_cache_path(&self, subtitle_id: u32, filename: &str) -> PathBuf {
-        self.subtitle_dir().join(format!("{}_{}", subtitle_id, filename))
+        self.subtitle_dir()
+            .join(format!("{}_{}", subtitle_id, filename))
     }
 
     /// Check if media file exists in cache
@@ -359,11 +360,7 @@ impl CacheManager {
                 })?;
 
         let temp_path = final_path.with_extension("tmp");
-        tracing::info!(
-            "Downloading subtitle {} to {:?}",
-            subtitle_id,
-            final_path
-        );
+        tracing::info!("Downloading subtitle {} to {:?}", subtitle_id, final_path);
 
         let options = DownloadOptions {
             show_progress: false,
@@ -517,12 +514,13 @@ impl CacheManager {
         // Also sweep cached subtitle sidecars so Clear Cache wipes both kinds.
         let subs_dir = self.subtitle_dir();
         if subs_dir.exists() {
-            let mut sub_entries = fs::read_dir(&subs_dir)
-                .await
-                .map_err(|e| MontrError::FileAccess {
-                    path: subs_dir.clone(),
-                    source: e,
-                })?;
+            let mut sub_entries =
+                fs::read_dir(&subs_dir)
+                    .await
+                    .map_err(|e| MontrError::FileAccess {
+                        path: subs_dir.clone(),
+                        source: e,
+                    })?;
             while let Some(entry) = sub_entries.next_entry().await.map_err(MontrError::Io)? {
                 if let Ok(metadata) = entry.metadata().await {
                     if metadata.is_file() {

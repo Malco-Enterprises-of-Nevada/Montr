@@ -877,23 +877,21 @@ impl StateCoordinator {
         for track in &item.subtitles {
             match track.kind {
                 SubtitleKind::External => {
-                    let filename = track
-                        .filename
-                        .clone()
-                        .unwrap_or_else(|| match track.format.as_deref() {
-                            Some("vtt") => format!("{}.vtt", track.id),
-                            _ => format!("{}.srt", track.id),
-                        });
+                    let filename =
+                        track
+                            .filename
+                            .clone()
+                            .unwrap_or_else(|| match track.format.as_deref() {
+                                Some("vtt") => format!("{}.vtt", track.id),
+                                _ => format!("{}.srt", track.id),
+                            });
                     let local_path = self
                         .cache_manager
                         .get_subtitle_cache_path(track.id, &filename);
                     if local_path.exists() {
                         candidates.push(SubtitleCandidate::external(track.clone(), local_path));
                     } else {
-                        tracing::warn!(
-                            "External subtitle {} not on disk; skipping",
-                            track.id
-                        );
+                        tracing::warn!("External subtitle {} not on disk; skipping", track.id);
                     }
                 }
                 SubtitleKind::Embedded => {

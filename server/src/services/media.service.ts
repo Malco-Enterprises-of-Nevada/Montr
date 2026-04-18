@@ -428,9 +428,7 @@ export class MediaService {
         mediaId,
         streams.map((s) => s.stream_index)
       );
-      logger.info(
-        `Registered ${streams.length} embedded subtitle track(s) for media ${mediaId}`
-      );
+      logger.info(`Registered ${streams.length} embedded subtitle track(s) for media ${mediaId}`);
     } catch (error) {
       // Don't fail the whole upload because subtitle metadata insert failed.
       logger.warn(`Failed to persist embedded subtitles for media ${mediaId}:`, error);

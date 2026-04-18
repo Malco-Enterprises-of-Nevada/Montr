@@ -621,10 +621,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     return counts;
   }
 
-  async pruneEmbeddedSubtitles(
-    mediaFileId: number,
-    keepStreamIndexes: number[]
-  ): Promise<number> {
+  async pruneEmbeddedSubtitles(mediaFileId: number, keepStreamIndexes: number[]): Promise<number> {
     if (keepStreamIndexes.length === 0) {
       const result = await this.rawExecute(
         `DELETE FROM subtitle_tracks WHERE media_file_id = ${this.placeholder(1)} AND kind = 'embedded'`,
@@ -632,9 +629,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
       );
       return result.affectedRows;
     }
-    const keepPlaceholders = keepStreamIndexes
-      .map((_, i) => this.placeholder(i + 2))
-      .join(', ');
+    const keepPlaceholders = keepStreamIndexes.map((_, i) => this.placeholder(i + 2)).join(', ');
     const result = await this.rawExecute(
       `DELETE FROM subtitle_tracks
        WHERE media_file_id = ${this.placeholder(1)} AND kind = 'embedded'

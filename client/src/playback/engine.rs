@@ -447,7 +447,8 @@ impl PlaybackEngine {
                 let duration = image_duration
                     .map(|d| d as u64)
                     .unwrap_or(self.default_image_duration);
-                self.play(&path, !is_video, duration, subtitles.as_ref()).await
+                self.play(&path, !is_video, duration, subtitles.as_ref())
+                    .await
             }
             PlaybackCommand::Pause => self.pause().await,
             PlaybackCommand::Resume => self.resume().await,

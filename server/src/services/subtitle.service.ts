@@ -61,12 +61,7 @@ export class SubtitleService {
       return swapped.toString('utf16le');
     }
     // UTF-8 BOM
-    if (
-      buffer.length >= 3 &&
-      buffer[0] === 0xef &&
-      buffer[1] === 0xbb &&
-      buffer[2] === 0xbf
-    ) {
+    if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
       return buffer.slice(3).toString('utf8');
     }
     return buffer.toString('utf8');

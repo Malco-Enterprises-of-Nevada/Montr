@@ -74,14 +74,20 @@ impl SubtitleCandidate {
     }
 }
 
+/// Alias for a bucket predicate used by `choose()`. Factored out of the
+/// `&[Box<dyn Fn(...)>]` literal so clippy's `type_complexity` lint is quiet.
+type BucketPredicate<'a> = Box<dyn Fn(&SubtitleCandidate) -> bool + 'a>;
+
 /// Select the visible track from a set of candidates.
 ///
 /// Precedence, from most to least specific:
+///
 /// 1. `preferred_language` match *and* `is_default`.
 /// 2. `preferred_language` match alone.
 /// 3. `is_default`.
 /// 4. Any `is_forced` track (likely burned-in signage).
 /// 5. Any track at all.
+///
 /// Within each bucket external sidecars beat embedded streams — they are
 /// usually the operator's explicit upload and so the more intentional choice.
 ///
@@ -101,7 +107,12 @@ pub fn choose(
 
     let pref_ok = |c: &SubtitleCandidate| {
         preferred_language
-            .and_then(|p| c.track.language.as_deref().map(|l| l.eq_ignore_ascii_case(p)))
+            .and_then(|p| {
+                c.track
+                    .language
+                    .as_deref()
+                    .map(|l| l.eq_ignore_ascii_case(p))
+            })
             .unwrap_or(false)
     };
 
@@ -120,7 +131,7 @@ pub fn choose(
     };
 
     // Each bucket prefers external-then-embedded inside it.
-    let buckets: &[Box<dyn Fn(&SubtitleCandidate) -> bool>] = &[
+    let buckets: &[BucketPredicate] = &[
         Box::new(|c: &SubtitleCandidate| pref_ok(c) && c.track.is_default),
         Box::new(|c: &SubtitleCandidate| pref_ok(c)),
         Box::new(|c: &SubtitleCandidate| c.track.is_default),
@@ -189,9 +200,7 @@ pub fn resolve(
 /// subtitle streams inside the container, in ffprobe stream_index order.
 /// Translate the server-advertised global `streamIndex` into an mpv sid for
 /// each embedded candidate.
-fn build_embedded_sid_map(
-    candidates: &[SubtitleCandidate],
-) -> std::collections::HashMap<u32, u32> {
+fn build_embedded_sid_map(candidates: &[SubtitleCandidate]) -> std::collections::HashMap<u32, u32> {
     let mut embedded: Vec<&SubtitleCandidate> = candidates
         .iter()
         .filter(|c| c.track.kind == SubtitleKind::Embedded)
