@@ -48,9 +48,7 @@ function toSubtitlePayload(row: SubtitleTrack): SubtitleTrackPayload {
       isDefault: row.is_default,
       isForced: row.is_forced,
       downloadUrl: getSubtitleDownloadUrl(row.id),
-      filename: row.storage_filename
-        ? `${row.id}.${row.format ?? 'srt'}`
-        : undefined,
+      filename: row.storage_filename ? `${row.id}.${row.format ?? 'srt'}` : undefined,
       format: row.format ?? undefined,
       checksum: row.checksum ?? undefined,
     };

@@ -542,9 +542,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
   }
 
   async getSubtitleCountsByMedia(): Promise<Record<number, number>> {
-    const pipeline = [
-      { $group: { _id: '$media_file_id', count: { $sum: 1 } } },
-    ];
+    const pipeline = [{ $group: { _id: '$media_file_id', count: { $sum: 1 } } }];
     const docs = await this.col('subtitle_tracks')
       .aggregate<{ _id: number; count: number }>(pipeline)
       .toArray();
@@ -555,10 +553,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
     return counts;
   }
 
-  async pruneEmbeddedSubtitles(
-    mediaFileId: number,
-    keepStreamIndexes: number[]
-  ): Promise<number> {
+  async pruneEmbeddedSubtitles(mediaFileId: number, keepStreamIndexes: number[]): Promise<number> {
     const query: Record<string, unknown> = { media_file_id: mediaFileId, kind: 'embedded' };
     if (keepStreamIndexes.length > 0) {
       query.stream_index = { $nin: keepStreamIndexes };

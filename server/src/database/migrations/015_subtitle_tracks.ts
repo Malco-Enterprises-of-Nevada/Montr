@@ -101,14 +101,18 @@ async function setupMongoDB(ctx: MigrationContext): Promise<void> {
   }
 
   await db.collection('subtitle_tracks').createIndex({ media_file_id: 1 });
-  await db.collection('subtitle_tracks').createIndex(
-    { media_file_id: 1, stream_index: 1 },
-    { unique: true, partialFilterExpression: { kind: 'embedded' } }
-  );
-  await db.collection('subtitle_tracks').createIndex(
-    { media_file_id: 1, storage_filename: 1 },
-    { unique: true, partialFilterExpression: { kind: 'external' } }
-  );
+  await db
+    .collection('subtitle_tracks')
+    .createIndex(
+      { media_file_id: 1, stream_index: 1 },
+      { unique: true, partialFilterExpression: { kind: 'embedded' } }
+    );
+  await db
+    .collection('subtitle_tracks')
+    .createIndex(
+      { media_file_id: 1, storage_filename: 1 },
+      { unique: true, partialFilterExpression: { kind: 'external' } }
+    );
 
   await db
     .collection('counters')

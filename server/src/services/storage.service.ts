@@ -47,7 +47,11 @@ export interface IStorageService {
   saveThumbnail(buffer: Buffer, mediaFilename: string): Promise<string>;
   getThumbnailPath(mediaFilename: string): Promise<string | null>;
   /** Save a subtitle file. Returns storage-relative filepath (e.g. 'subtitles/<uuid>.srt'). */
-  saveSubtitle(buffer: Buffer, originalFilename: string, format: 'srt' | 'vtt'): Promise<StorageFileInfo>;
+  saveSubtitle(
+    buffer: Buffer,
+    originalFilename: string,
+    format: 'srt' | 'vtt'
+  ): Promise<StorageFileInfo>;
   cleanupTempFiles(maxAgeMs?: number): Promise<void>;
   getStorageStats(): Promise<{
     totalFiles: number;
