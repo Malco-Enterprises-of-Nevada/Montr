@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import { pipeline } from 'stream/promises';
+import { Readable } from 'stream';
 import { createReadStream, createWriteStream } from 'fs';
 import { config } from '../config/config';
 import { storageService, StorageFileInfo } from './storage.service';
@@ -94,6 +95,59 @@ class ChunkedUploadService {
     );
 
     return { uploadId, chunkSize, totalChunks };
+  }
+
+  /**
+   * Stream a chunk body directly from the HTTP request to the local chunk
+   * file, bypassing the in-memory `Buffer` entirely. Essential for large
+   * chunk sizes (e.g. CHUNK_SIZE_MB=200) where buffering the body OOM-kills
+   * the container under concurrent uploads. Local backend only — S3 multipart
+   * parts still require a buffered `PutPart` with Content-Length.
+   */
+  async streamChunkFromRequest(
+    uploadId: string,
+    chunkIndex: number,
+    req: Readable
+  ): Promise<ChunkUploadResult> {
+    const session = this.getSession(uploadId);
+
+    if (chunkIndex < 0 || chunkIndex >= session.totalChunks) {
+      throw new AppError(
+        ErrorCode.BAD_REQUEST,
+        `Invalid chunk index ${chunkIndex}. Must be between 0 and ${session.totalChunks - 1}.`,
+        400
+      );
+    }
+    if (!session.localChunkDir) {
+      throw new AppError(
+        ErrorCode.BAD_REQUEST,
+        'Streaming chunk upload is only supported for the local storage backend',
+        400
+      );
+    }
+
+    const chunkPath = path.join(session.localChunkDir, `chunk_${chunkIndex}`);
+
+    try {
+      await pipeline(req, createWriteStream(chunkPath));
+    } catch (error) {
+      // Partial file on disk is useless — unlink so a retry starts clean.
+      await fs.unlink(chunkPath).catch(() => undefined);
+      throw error;
+    }
+
+    const stat = await fs.stat(chunkPath);
+    session.receivedChunks.set(chunkIndex, { size: stat.size });
+    session.lastActivity = Date.now();
+
+    logger.info(
+      `Chunk received (streamed): uploadId=${uploadId}, chunk=${chunkIndex + 1}/${session.totalChunks}, size=${stat.size}`
+    );
+
+    return {
+      received: session.receivedChunks.size,
+      total: session.totalChunks,
+    };
   }
 
   /**
@@ -211,6 +265,37 @@ class ChunkedUploadService {
     this.sessions.delete(uploadId);
 
     logger.info(`Chunked upload aborted: uploadId=${uploadId}`);
+  }
+
+  /**
+   * Remove `temp/chunks_*` directories left over from previous server
+   * lifecycles. The session map is in-memory only, so once a restart
+   * happens, no session can ever resume an existing `chunks_<uuid>/` —
+   * the dirs sit on disk forever otherwise. Safe to call at startup
+   * because any active upload's session would have been lost too.
+   */
+  async cleanupOrphanedChunks(): Promise<void> {
+    const tempDir = path.join(path.resolve(config.storage.path), 'temp');
+    let entries: string[];
+    try {
+      entries = await fs.readdir(tempDir);
+    } catch {
+      return;
+    }
+    let removed = 0;
+    for (const entry of entries) {
+      if (!entry.startsWith('chunks_')) continue;
+      const full = path.join(tempDir, entry);
+      try {
+        await fs.rm(full, { recursive: true, force: true });
+        removed += 1;
+      } catch (error) {
+        logger.warn(`Failed to clean orphaned chunk dir ${full}: ${String(error)}`);
+      }
+    }
+    if (removed > 0) {
+      logger.info(`Cleaned up ${removed} orphaned chunk director(ies) from previous lifecycle`);
+    }
   }
 
   /**
