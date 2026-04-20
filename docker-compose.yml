@@ -15,6 +15,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-}
       LOG_FILE: ${LOG_FILE:-/opt/montr-server/logs/server.log}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-2048}
+      CHUNK_SIZE_MB: ${CHUNK_SIZE_MB:-50}
     # unless-stopped: docker will restart the container if it dies (OOM-kill,
     # uncaughtException, crash) but not if we stop it manually via `compose down`.
     restart: unless-stopped
