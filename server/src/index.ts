@@ -26,6 +26,7 @@ import { requireAuth } from './api/middleware/jwt-auth';
 import { webSocketServer } from './websocket/server';
 import { scheduleService } from './services/schedule.service';
 import { notificationService } from './services/notification.service';
+import { chunkedUploadService } from './services/chunked-upload.service';
 import { getNodeHealth } from './cluster/health';
 
 /**
@@ -241,6 +242,13 @@ class MontrServer {
 
       // Initialize notification email transport
       notificationService.initializeEmail();
+
+      // Purge chunk dirs orphaned by a previous crash/restart. Sessions live
+      // only in memory, so once the process dies, those folders can never be
+      // resumed — leaving them on disk is a slow leak. Fire-and-forget.
+      void chunkedUploadService.cleanupOrphanedChunks().catch((err) => {
+        this.logger.warn(`Orphan chunk cleanup failed: ${String(err)}`);
+      });
 
       // Start listening
       await new Promise<void>((resolve, reject) => {

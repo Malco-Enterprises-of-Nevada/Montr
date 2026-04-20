@@ -3,7 +3,6 @@
  */
 
 import { Router, Request, Response } from 'express';
-import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
@@ -190,27 +189,43 @@ router.post(
 
 /**
  * POST /api/media/upload/:uploadId/chunk/:chunkIndex
- * Upload a single chunk
+ * Upload a single chunk.
+ *
+ * Local backend streams the request body straight to disk so a 200MB
+ * chunk doesn't have to live in the V8 heap — two concurrent buffered
+ * chunks would OOM the container. Spaces backend still buffers because
+ * S3 multipart `PutPart` needs a Content-Length-tagged buffer.
  */
 router.post(
   '/upload/:uploadId/chunk/:chunkIndex',
   requireRole('admin', 'editor'),
-  express.raw({ type: 'application/octet-stream', limit: `${config.storage.chunkSizeMB + 5}mb` }),
   asyncHandler(async (req: Request, res: Response) => {
     const uploadId = req.params.uploadId as string;
-    const chunkIndex = req.params.chunkIndex as string;
-    const buffer = req.body as Buffer;
+    const chunkIndex = parseInt(req.params.chunkIndex as string, 10);
 
-    if (!buffer || buffer.length === 0) {
-      throw new AppError(ErrorCode.BAD_REQUEST, 'Empty chunk', 400);
+    if (config.storage.backend === 'spaces') {
+      // Collect body into a Buffer ourselves (replacing express.raw()) so the
+      // local path above can skip this entirely.
+      const maxBytes = (config.storage.chunkSizeMB + 5) * 1024 * 1024;
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for await (const piece of req as AsyncIterable<Buffer>) {
+        total += piece.length;
+        if (total > maxBytes) {
+          throw new AppError(ErrorCode.BAD_REQUEST, 'Chunk exceeds size limit', 413);
+        }
+        chunks.push(piece);
+      }
+      if (total === 0) {
+        throw new AppError(ErrorCode.BAD_REQUEST, 'Empty chunk', 400);
+      }
+      const buffer = Buffer.concat(chunks, total);
+      const result = await chunkedUploadService.uploadChunk(uploadId, chunkIndex, buffer);
+      res.json(successResponse(result));
+      return;
     }
 
-    const result = await chunkedUploadService.uploadChunk(
-      uploadId,
-      parseInt(chunkIndex, 10),
-      buffer
-    );
-
+    const result = await chunkedUploadService.streamChunkFromRequest(uploadId, chunkIndex, req);
     res.json(successResponse(result));
   })
 );
