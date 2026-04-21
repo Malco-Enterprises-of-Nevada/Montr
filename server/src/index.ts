@@ -246,9 +246,26 @@ class MontrServer {
       // Purge chunk dirs orphaned by a previous crash/restart. Sessions live
       // only in memory, so once the process dies, those folders can never be
       // resumed — leaving them on disk is a slow leak. Fire-and-forget.
+      // Age-gated (1h) so crash-loop restarts don't wipe an in-flight upload.
       void chunkedUploadService.cleanupOrphanedChunks().catch((err) => {
         this.logger.warn(`Orphan chunk cleanup failed: ${String(err)}`);
       });
+
+      // Periodic memory snapshot so we can tell an OOM kill from a code
+      // crash next time this process disappears without logging an error.
+      // Kernel SIGKILL leaves no footprint; a steady RSS climb right
+      // before the last line logged is our smoking gun.
+      const memLogInterval = setInterval(() => {
+        const m = process.memoryUsage();
+        this.logger.info(
+          `mem rss=${Math.round(m.rss / 1024 / 1024)}MB heap=${Math.round(
+            m.heapUsed / 1024 / 1024
+          )}/${Math.round(m.heapTotal / 1024 / 1024)}MB external=${Math.round(
+            m.external / 1024 / 1024
+          )}MB`
+        );
+      }, 30_000);
+      memLogInterval.unref();
 
       // Start listening
       await new Promise<void>((resolve, reject) => {
