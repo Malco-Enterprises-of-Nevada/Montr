@@ -644,12 +644,13 @@ export class MediaService {
   }
 
   /** Above this size, we don't try to generate thumbnails on-demand. For
-   *  huge videos, spawning ffmpeg to seek a 10 GB file under load ties up
-   *  the event loop long enough to time out the request and pushes memory
-   *  high enough to OOM the container. Caller already marks such media
-   *  `thumbnail_status='pending'`; existing failed rows are short-circuited
-   *  on every subsequent GET. 500 MB matches the cap used at ingest time. */
-  private static readonly THUMBNAIL_MAX_SOURCE_BYTES = 500 * 1024 * 1024;
+   *  huge videos, spawning ffmpeg to seek the source ties up the event
+   *  loop long enough to time out the request and can push memory high
+   *  enough to OOM the container (seen at 2.7 GB external on a 10 GB MKV).
+   *  Tunable via MEDIA_THUMBNAIL_MAX_SOURCE_MB — 2 GB default covers
+   *  typical 1080p/4K feature-length content with fast-seek. */
+  private static readonly THUMBNAIL_MAX_SOURCE_BYTES =
+    Math.max(1, parseInt(process.env.MEDIA_THUMBNAIL_MAX_SOURCE_MB || '2048', 10)) * 1024 * 1024;
 
   /**
    * Gets or generates thumbnail for a media file
