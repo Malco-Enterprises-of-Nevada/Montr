@@ -553,6 +553,20 @@ export class MediaService {
       );
     }
 
+    // Same size ceiling as `getMediaThumbnail`. Without this, a retry
+    // click on a 10 GB video would spawn ffmpeg+sharp over the whole
+    // source and allocate multi-GB external buffers — last time this
+    // happened the process grew to 2.9 GB RSS.
+    if (media.file_size && media.file_size > MediaService.THUMBNAIL_MAX_SOURCE_BYTES) {
+      throw new AppError(
+        ErrorCode.BAD_REQUEST,
+        `Source file too large for thumbnail generation (${Math.round(
+          media.file_size / 1024 / 1024
+        )} MB, cap ${Math.round(MediaService.THUMBNAIL_MAX_SOURCE_BYTES / 1024 / 1024)} MB)`,
+        400
+      );
+    }
+
     const db = await getDatabase();
     await db.updateMedia(id, { thumbnail_status: 'pending' } as Partial<CreateMediaInput>);
 
