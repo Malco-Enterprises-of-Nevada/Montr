@@ -154,18 +154,26 @@ export class MediaService {
     const tempDir = path.resolve(config.storage.path, 'temp');
     const tempOutput = path.join(tempDir, `thumb_${Date.now()}.jpg`);
     try {
-      // Extract frame at 1 second (or 10% of duration)
-      await execFile('ffmpeg', [
-        '-i',
-        filePath,
-        '-ss',
-        '00:00:01.000',
-        '-vframes',
-        '1',
-        '-vf',
-        'scale=320:-1',
-        tempOutput,
-      ]);
+      // Seek before the input (fast-seek) so ffmpeg doesn't decode from 0
+      // on containers without a seek index, then grab one frame. 60s cap
+      // and bounded stderr buffer defend against runaway processes on
+      // malformed or very large inputs.
+      await execFile(
+        'ffmpeg',
+        [
+          '-ss',
+          '00:00:01.000',
+          '-i',
+          filePath,
+          '-vframes',
+          '1',
+          '-vf',
+          'scale=320:-1',
+          '-y',
+          tempOutput,
+        ],
+        { timeout: 60_000, maxBuffer: 2 * 1024 * 1024 }
+      );
 
       // Read the generated thumbnail and save it properly
       const sharp_instance = sharp(tempOutput);
@@ -621,16 +629,54 @@ export class MediaService {
     return fullPath;
   }
 
+  /** Above this size, we don't try to generate thumbnails on-demand. For
+   *  huge videos, spawning ffmpeg to seek a 10 GB file under load ties up
+   *  the event loop long enough to time out the request and pushes memory
+   *  high enough to OOM the container. Caller already marks such media
+   *  `thumbnail_status='pending'`; existing failed rows are short-circuited
+   *  on every subsequent GET. 500 MB matches the cap used at ingest time. */
+  private static readonly THUMBNAIL_MAX_SOURCE_BYTES = 500 * 1024 * 1024;
+
   /**
    * Gets or generates thumbnail for a media file
    */
   async getMediaThumbnail(id: number): Promise<string> {
     const media = await this.getMediaById(id);
 
+    // Don't keep retrying known-failed thumbnails — every browser render of
+    // the grid would otherwise re-spawn ffmpeg. The UI shows a Retry button
+    // that calls /thumbnail/retry explicitly when the operator wants another go.
+    if (media.thumbnail_status === 'failed') {
+      throw new AppError(
+        ErrorCode.MEDIA_NOT_FOUND,
+        'Thumbnail generation previously failed; use retry to regenerate',
+        404
+      );
+    }
+
     // Check if thumbnail already exists
     let thumbnailPath = await storageService.getThumbnailPath(media.filename);
 
     if (!thumbnailPath) {
+      // Refuse to generate on-demand for files above the size cap. A 10 GB
+      // MKV blows through memory and request timeouts while ffmpeg seeks
+      // the first frame. Mark failed so the UI surfaces retry instead.
+      if (media.file_size && media.file_size > MediaService.THUMBNAIL_MAX_SOURCE_BYTES) {
+        try {
+          const db = await getDatabase();
+          await db.updateMedia(id, {
+            thumbnail_status: 'failed',
+          } as Partial<CreateMediaInput>);
+        } catch (err) {
+          logger.warn(`Failed to mark media ${id} thumbnail as failed:`, err);
+        }
+        throw new AppError(
+          ErrorCode.MEDIA_NOT_FOUND,
+          'Source file too large for on-demand thumbnail generation',
+          404
+        );
+      }
+
       // Generate thumbnail on-demand. On Spaces this re-downloads the full
       // source (can be 500MB+), so serialise through the thumbnail semaphore —
       // browsers commonly fire 5-10 parallel /thumbnail requests at page load
