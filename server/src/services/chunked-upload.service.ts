@@ -198,6 +198,12 @@ class ChunkedUploadService {
 
   /**
    * Completes an upload session by assembling all chunks.
+   *
+   * Serialized through `postProcessSemaphore` so two large completes can't
+   * fight each other (and concurrent in-flight chunk writers) over disk
+   * and memory. A 10 GB assembly reads every chunk into the output file
+   * and SHA-256s the result — running two of those at once on a single
+   * disk is what took the container down under heavy upload load.
    */
   async completeUpload(uploadId: string): Promise<{
     storageInfo: StorageFileInfo;
@@ -216,13 +222,11 @@ class ChunkedUploadService {
       );
     }
 
-    let storageInfo: StorageFileInfo;
-
-    if (backend === 'spaces') {
-      storageInfo = await this.completeSpacesUpload(session);
-    } else {
-      storageInfo = await this.completeLocalUpload(session);
-    }
+    const storageInfo: StorageFileInfo = await postProcessSemaphore.run(async () => {
+      return backend === 'spaces'
+        ? this.completeSpacesUpload(session)
+        : this.completeLocalUpload(session);
+    });
 
     this.sessions.delete(uploadId);
 
@@ -269,12 +273,12 @@ class ChunkedUploadService {
 
   /**
    * Remove `temp/chunks_*` directories left over from previous server
-   * lifecycles. The session map is in-memory only, so once a restart
-   * happens, no session can ever resume an existing `chunks_<uuid>/` —
-   * the dirs sit on disk forever otherwise. Safe to call at startup
-   * because any active upload's session would have been lost too.
+   * lifecycles. Age-gated — only wipes dirs whose mtime is older than
+   * `minAgeMs` so that a crash-loop restart can't delete chunk data
+   * the user is still actively streaming in. A fresh restart reclaiming
+   * genuine orphans on the next pass is fine.
    */
-  async cleanupOrphanedChunks(): Promise<void> {
+  async cleanupOrphanedChunks(minAgeMs: number = 60 * 60 * 1000): Promise<void> {
     const tempDir = path.join(path.resolve(config.storage.path), 'temp');
     let entries: string[];
     try {
@@ -282,19 +286,28 @@ class ChunkedUploadService {
     } catch {
       return;
     }
+    const cutoff = Date.now() - minAgeMs;
     let removed = 0;
+    let skipped = 0;
     for (const entry of entries) {
       if (!entry.startsWith('chunks_')) continue;
       const full = path.join(tempDir, entry);
       try {
+        const stat = await fs.stat(full);
+        if (stat.mtimeMs > cutoff) {
+          skipped += 1;
+          continue;
+        }
         await fs.rm(full, { recursive: true, force: true });
         removed += 1;
       } catch (error) {
         logger.warn(`Failed to clean orphaned chunk dir ${full}: ${String(error)}`);
       }
     }
-    if (removed > 0) {
-      logger.info(`Cleaned up ${removed} orphaned chunk director(ies) from previous lifecycle`);
+    if (removed > 0 || skipped > 0) {
+      logger.info(
+        `Orphan chunk cleanup: removed ${removed}, preserved ${skipped} (younger than ${minAgeMs}ms)`
+      );
     }
   }
 
@@ -357,21 +370,19 @@ class ChunkedUploadService {
     const filename = path.basename(session.s3Key!);
 
     // Compute real checksum by downloading from Spaces (skip for files >500MB).
-    // Gated by the shared post-process semaphore: 3x concurrent 500MB downloads
-    // OOM-killed the container (docker exit 137) before this cap existed.
+    // The outer `completeUpload` already holds `postProcessSemaphore`, so
+    // we don't re-acquire here — that would deadlock when max=1.
     const MAX_CHECKSUM_SIZE = 500 * 1024 * 1024;
     let checksum = '';
     if (totalSize <= MAX_CHECKSUM_SIZE) {
-      await postProcessSemaphore.run(async () => {
-        try {
-          const tempPath = await storageService.downloadToTemp(session.s3Key!);
-          checksum = await this.calculateFileChecksumStream(tempPath);
-          await fs.unlink(tempPath).catch(() => {});
-          logger.info(`Computed checksum for ${filename}: ${checksum}`);
-        } catch (error) {
-          logger.warn(`Failed to compute checksum for ${filename}, storing empty: ${error}`);
-        }
-      });
+      try {
+        const tempPath = await storageService.downloadToTemp(session.s3Key!);
+        checksum = await this.calculateFileChecksumStream(tempPath);
+        await fs.unlink(tempPath).catch(() => {});
+        logger.info(`Computed checksum for ${filename}: ${checksum}`);
+      } catch (error) {
+        logger.warn(`Failed to compute checksum for ${filename}, storing empty: ${error}`);
+      }
     } else {
       logger.info(
         `Skipping checksum for large file (${Math.round(totalSize / 1024 / 1024)}MB): ${filename}`
