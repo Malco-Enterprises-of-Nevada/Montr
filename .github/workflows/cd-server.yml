@@ -43,6 +43,19 @@ jobs:
             git reset --hard FETCH_HEAD
             docker compose build server
             docker compose up -d
-            sleep 15
-            curl -sf http://localhost:3000/api/health || (echo "Health check failed!" && docker logs montr-server-1 --tail 30 && exit 1)
-            echo "Deploy successful!"
+            # Poll /api/health via caddy (self-signed cert → -k). Server is
+            # on `expose: 3000` now so hitting localhost:3000 won't work.
+            # Give the container up to 90s to boot before giving up.
+            for i in $(seq 1 30); do
+              sleep 3
+              code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost/api/health || true)
+              if [ "$code" = "200" ]; then
+                echo "Deploy successful! (healthy in ${i}x3s)"
+                exit 0
+              fi
+            done
+            echo "Health check failed after 90s. Compose state + logs:"
+            docker compose ps
+            docker compose logs --tail 50 caddy || true
+            docker compose logs --tail 50 server || true
+            exit 1
