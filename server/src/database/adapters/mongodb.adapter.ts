@@ -352,6 +352,119 @@ export class MongoDBAdapter implements DatabaseAdapter {
     return this.docToObj<import('../types').ThumbnailJob>(doc);
   }
 
+  // ── Upload completion job queue ──────────────────────────────────────
+
+  async enqueueUploadCompletionJob(
+    input: import('../types').UploadCompletionJobInput
+  ): Promise<import('../types').UploadCompletionJob> {
+    const now = new Date().toISOString();
+    // Idempotent upsert on upload_id. setOnInsert only runs when creating
+    // the row, so retried /complete calls for the same uploadId get the
+    // original row back unchanged.
+    const id = await this.nextId('upload_completion_jobs');
+    await this.col('upload_completion_jobs').updateOne(
+      { upload_id: input.uploadId },
+      {
+        $setOnInsert: {
+          id,
+          upload_id: input.uploadId,
+          storage_backend: input.storageBackend,
+          storage_key: input.storageKey,
+          original_filename: input.originalFilename,
+          mime_type: input.mimeType,
+          total_size: input.totalSize,
+          folder_id: input.folderId,
+          state: 'queued' as const,
+          attempts: 0,
+          last_error: null,
+          media_id: null,
+          existing_media_id: null,
+          created_at: now,
+          updated_at: now,
+        },
+      },
+      { upsert: true }
+    );
+    const doc = await this.col('upload_completion_jobs').findOne({
+      upload_id: input.uploadId,
+    });
+    const job = this.docToObj<import('../types').UploadCompletionJob>(doc);
+    if (!job) {
+      throw new Error(`Upload completion job for ${input.uploadId} not found after insert`);
+    }
+    return job;
+  }
+
+  async claimNextUploadCompletionJob(): Promise<import('../types').UploadCompletionJob | null> {
+    const now = new Date().toISOString();
+    const result = await this.col('upload_completion_jobs').findOneAndUpdate(
+      { state: 'queued' },
+      { $set: { state: 'running', updated_at: now }, $inc: { attempts: 1 } },
+      { sort: { created_at: 1, id: 1 }, returnDocument: 'after' }
+    );
+    if (!result) return null;
+    return this.docToObj<import('../types').UploadCompletionJob>(result);
+  }
+
+  async markUploadCompletionJobDone(jobId: number, mediaId: number): Promise<void> {
+    await this.col('upload_completion_jobs').updateOne(
+      { id: jobId },
+      {
+        $set: {
+          state: 'done',
+          media_id: mediaId,
+          last_error: null,
+          updated_at: new Date().toISOString(),
+        },
+      }
+    );
+  }
+
+  async markUploadCompletionJobDuplicate(
+    jobId: number,
+    existingMediaId: number
+  ): Promise<void> {
+    await this.col('upload_completion_jobs').updateOne(
+      { id: jobId },
+      {
+        $set: {
+          state: 'duplicate',
+          existing_media_id: existingMediaId,
+          last_error: null,
+          updated_at: new Date().toISOString(),
+        },
+      }
+    );
+  }
+
+  async markUploadCompletionJobFailed(jobId: number, error: string): Promise<void> {
+    await this.col('upload_completion_jobs').updateOne(
+      { id: jobId },
+      {
+        $set: {
+          state: 'failed',
+          last_error: error.slice(0, 2000),
+          updated_at: new Date().toISOString(),
+        },
+      }
+    );
+  }
+
+  async requeueRunningUploadCompletionJobs(): Promise<number> {
+    const result = await this.col('upload_completion_jobs').updateMany(
+      { state: 'running' },
+      { $set: { state: 'queued', updated_at: new Date().toISOString() } }
+    );
+    return result.modifiedCount;
+  }
+
+  async getUploadCompletionJobByUploadId(
+    uploadId: string
+  ): Promise<import('../types').UploadCompletionJob | null> {
+    const doc = await this.col('upload_completion_jobs').findOne({ upload_id: uploadId });
+    return this.docToObj<import('../types').UploadCompletionJob>(doc);
+  }
+
   // ── Media folder operations ──────────────────────────────────────────────
 
   async createMediaFolder(

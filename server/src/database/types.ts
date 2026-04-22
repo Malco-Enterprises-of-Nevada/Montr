@@ -16,6 +16,41 @@ export interface ThumbnailJob {
   updated_at: string;
 }
 
+export type UploadCompletionJobState =
+  | 'queued'
+  | 'running'
+  | 'done'
+  | 'duplicate'
+  | 'failed';
+
+export interface UploadCompletionJob {
+  id: number;
+  upload_id: string;
+  storage_backend: 'spaces' | 'local';
+  storage_key: string;
+  original_filename: string;
+  mime_type: string;
+  total_size: number;
+  folder_id: number | null;
+  state: UploadCompletionJobState;
+  attempts: number;
+  last_error: string | null;
+  media_id: number | null;
+  existing_media_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UploadCompletionJobInput {
+  uploadId: string;
+  storageBackend: 'spaces' | 'local';
+  storageKey: string;
+  originalFilename: string;
+  mimeType: string;
+  totalSize: number;
+  folderId: number | null;
+}
+
 export interface MediaFile {
   id: number;
   filename: string;

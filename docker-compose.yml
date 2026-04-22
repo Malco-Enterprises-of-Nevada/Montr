@@ -42,7 +42,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:-}
       LOG_FILE: ${LOG_FILE:-/opt/montr-server/logs/server.log}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-2048}
+      # 100 GB default. Safe now that /complete is async and checksum +
+      # ffprobe run in the upload-completion queue — Cloudflare Free's
+      # 100 s origin timeout no longer caps us. Override via .env if
+      # the droplet's free disk can't hold a 100 GB scratch file.
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-102400}
       CHUNK_SIZE_MB: ${CHUNK_SIZE_MB:-50}
     # unless-stopped: docker will restart the container if it dies (OOM-kill,
     # uncaughtException, crash) but not if we stop it manually via `compose down`.

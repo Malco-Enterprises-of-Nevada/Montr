@@ -27,6 +27,9 @@ jest.mock('../../../src/services/notification.service', () => ({
   },
 }));
 jest.mock('sharp');
+jest.mock('../../../src/utils/checksum', () => ({
+  calculateFileChecksumStream: jest.fn().mockResolvedValue('fake-checksum'),
+}));
 
 // Mock util.promisify to return a mock exec function
 jest.mock('util', () => {
@@ -398,6 +401,78 @@ describe('MediaService', () => {
         images: 0,
         totalSize: 0,
       });
+    });
+  });
+
+  describe('processUploadCompletionJob', () => {
+    const baseJob = {
+      id: 42,
+      upload_id: 'u-123',
+      storage_backend: 'spaces' as const,
+      storage_key: 'media/test_video.mp4',
+      original_filename: 'test_video.mp4',
+      mime_type: 'video/mp4',
+      total_size: 10_485_760,
+      folder_id: null,
+      state: 'running' as const,
+      attempts: 1,
+      last_error: null,
+      media_id: null,
+      existing_media_id: null,
+      created_at: '2026-04-22T00:00:00Z',
+      updated_at: '2026-04-22T00:00:00Z',
+    };
+
+    beforeEach(() => {
+      (storageService.downloadToTemp as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue('/storage/temp/test_video.mp4');
+    });
+
+    it('creates a new media row when checksum is unique', async () => {
+      mockDb.getMediaByChecksum.mockResolvedValue(null);
+      mockDb.createMedia.mockResolvedValue(mockVideoFile);
+
+      const result = await mediaService.processUploadCompletionJob(baseJob);
+
+      expect(result).toEqual({ kind: 'created', mediaId: mockVideoFile.id });
+      expect(mockDb.createMedia).toHaveBeenCalledTimes(1);
+      // Newly created row carries the file path + size from the job input.
+      expect(mockDb.createMedia).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filepath: baseJob.storage_key,
+          file_size: baseJob.total_size,
+          original_filename: baseJob.original_filename,
+        })
+      );
+      // Thumbnail is enqueued as a side effect (fire-and-forget).
+      expect(mockDb.enqueueThumbnailJob).toHaveBeenCalledWith(mockVideoFile.id);
+      // No delete on the happy path.
+      expect(storageService.deleteFile).not.toHaveBeenCalled();
+    });
+
+    it('returns duplicate and deletes the new object when checksum already exists', async () => {
+      const existing = { ...mockVideoFile, id: 7 };
+      mockDb.getMediaByChecksum.mockResolvedValue(existing);
+
+      const result = await mediaService.processUploadCompletionJob(baseJob);
+
+      expect(result).toEqual({ kind: 'duplicate', existingMediaId: 7 });
+      expect(storageService.deleteFile).toHaveBeenCalledWith(baseJob.storage_key);
+      expect(mockDb.createMedia).not.toHaveBeenCalled();
+      expect(mockDb.enqueueThumbnailJob).not.toHaveBeenCalled();
+    });
+
+    it('rejects when folder_id refers to a missing folder', async () => {
+      const withFolder = { ...baseJob, folder_id: 99 };
+      mockDb.getMediaFolderById.mockResolvedValue(null);
+
+      await expect(mediaService.processUploadCompletionJob(withFolder)).rejects.toThrow(
+        AppError
+      );
+      // We blew up before checksum / createMedia — S3 object is cleaned up.
+      expect(storageService.deleteFile).toHaveBeenCalledWith(baseJob.storage_key);
+      expect(mockDb.createMedia).not.toHaveBeenCalled();
     });
   });
 });

@@ -11,6 +11,7 @@ import { subtitleService } from '../../services/subtitle.service';
 import { config } from '../../config/config';
 import { storageService } from '../../services/storage.service';
 import { chunkedUploadService } from '../../services/chunked-upload.service';
+import { getDatabase } from '../../database/connection';
 import { asyncHandler, successResponse, AppError, ErrorCode } from '../middleware/error-handler';
 import {
   validateParams,
@@ -240,22 +241,94 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const uploadId = req.params.uploadId as string;
 
-    const { storageInfo, originalFilename, mimeType, folderId } =
-      await chunkedUploadService.completeUpload(uploadId);
+    // Fast: finalise S3 multipart OR concatenate local chunks. No checksum,
+    // no ffprobe — that work has moved to the upload-completion queue so a
+    // 100 GB upload's /complete request returns in under 10 s and doesn't
+    // trip Cloudflare's 100 s origin timeout.
+    const finalized = await chunkedUploadService.completeUpload(uploadId);
 
-    const media = await mediaService.createMediaFromStorageInfo(
-      storageInfo,
-      originalFilename,
-      mimeType,
-      { folderId }
-    );
+    // Enqueue the slow work. Idempotent on upload_id — a retried /complete
+    // call for the same session returns the same job row.
+    const db = await getDatabase();
+    let job;
+    try {
+      job = await db.enqueueUploadCompletionJob({
+        uploadId,
+        storageBackend: finalized.storageBackend,
+        storageKey: finalized.storageKey,
+        originalFilename: finalized.originalFilename,
+        mimeType: finalized.mimeType,
+        totalSize: finalized.totalSize,
+        folderId: finalized.folderId,
+      });
+    } catch (err) {
+      // Orphan-cleanup: if persisting the job row failed (disk full, DB
+      // lock, etc.) the S3 object still exists. Best-effort delete so we
+      // don't leak storage. Surface the original error to the client.
+      await storageService.deleteFile(finalized.storageKey).catch(() => {});
+      throw err;
+    }
 
-    res.status(201).json(
+    res.setHeader('Retry-After', '5');
+    res.status(202).json(
       successResponse({
-        uploaded: [media],
-        count: 1,
+        jobId: job.id,
+        uploadId,
+        state: 'processing' as const,
       })
     );
+  })
+);
+
+/**
+ * GET /api/media/upload/:uploadId/status
+ *
+ * Polling endpoint for the async /complete flow. Client calls every few
+ * seconds until the state is terminal (done, duplicate, or failed). The
+ * `uploadId` is a random v4 UUID from initUpload — unguessable — so the
+ * endpoint needs no additional auth beyond what the chunk endpoints use.
+ */
+router.get(
+  '/upload/:uploadId/status',
+  requireRole('admin', 'editor'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const uploadId = req.params.uploadId as string;
+    const db = await getDatabase();
+    const job = await db.getUploadCompletionJobByUploadId(uploadId);
+    if (!job) {
+      throw new AppError(ErrorCode.NOT_FOUND, `Unknown upload: ${uploadId}`, 404);
+    }
+
+    switch (job.state) {
+      case 'queued':
+      case 'running':
+        res.setHeader('Retry-After', '5');
+        res.status(202).json(
+          successResponse({ state: 'processing' as const, attempts: job.attempts })
+        );
+        return;
+      case 'done': {
+        const media = job.media_id != null ? await db.getMediaById(job.media_id) : null;
+        res.json(successResponse({ state: 'done' as const, media }));
+        return;
+      }
+      case 'duplicate':
+        res.json(
+          successResponse({
+            state: 'duplicate' as const,
+            existingMediaId: job.existing_media_id,
+          })
+        );
+        return;
+      case 'failed':
+        res.json(
+          successResponse({
+            state: 'failed' as const,
+            error: job.last_error ?? 'Upload processing failed',
+          })
+        );
+        return;
+    }
   })
 );
 
