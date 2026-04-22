@@ -12,6 +12,9 @@ concurrency:
   group: deploy-server
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     name: Deploy to Production
@@ -20,23 +23,24 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         env:
-          # Ephemeral run-scoped token — passed via http.extraheader so it
-          # never lands in .git/config. Each CD run gets a fresh one; no
-          # long-lived PAT to rotate.
-          GH_TOKEN: ${{ github.token }}
+          # URL-embedded token matches the pattern that worked in
+          # provision-server.yml. Pass the fetch URL directly to `git
+          # fetch` so nothing with the token gets persisted in
+          # .git/config — the remote stays at the clean URL.
+          REPO_URL_WITH_TOKEN: https://x-access-token:${{ github.token }}@github.com/Malco-Enterprises-of-Nevada/Montr.git
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           command_timeout: 20m
-          envs: GH_TOKEN
+          envs: REPO_URL_WITH_TOKEN
           script: |
             set -euo pipefail
             cd /opt/montr
-            git -c http.extraheader="AUTHORIZATION: bearer $GH_TOKEN" fetch origin main
-            git reset --hard origin/main
+            git fetch "$REPO_URL_WITH_TOKEN" main
+            git reset --hard FETCH_HEAD
             docker compose build server
             docker compose up -d
-            sleep 10
-            curl -sf http://localhost:3000/api/health || (echo "Health check failed!" && docker logs montr-server-1 --tail 20 && exit 1)
+            sleep 15
+            curl -sf http://localhost:3000/api/health || (echo "Health check failed!" && docker logs montr-server-1 --tail 30 && exit 1)
             echo "Deploy successful!"
