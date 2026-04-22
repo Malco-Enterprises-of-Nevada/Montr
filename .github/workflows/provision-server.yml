@@ -54,19 +54,17 @@ jobs:
             docker --version
             docker compose version
 
-            echo "=== clone repo to /opt/montr (if missing) ==="
+            echo "=== clone or refresh repo at /opt/montr ==="
             if [ ! -d /opt/montr/.git ]; then
               mkdir -p /opt
               git clone "$REPO_URL_WITH_TOKEN" /opt/montr
-              # Strip the token from .git/config immediately — it expires at
-              # end-of-run anyway, but no reason to leave it there. Future
-              # fetches in cd-server.yml pass their own fresh token via
-              # http.extraheader.
               cd /opt/montr && git remote set-url origin "$REPO_URL_CLEAN"
             else
               cd /opt/montr
-              git -c http.extraheader="AUTHORIZATION: bearer $GH_TOKEN" fetch origin main
-              git reset --hard origin/main
+              # Pass the token-bearing URL straight to fetch so it never
+              # lands in .git/config. Matches cd-server.yml.
+              git fetch "$REPO_URL_WITH_TOKEN" main
+              git reset --hard FETCH_HEAD
             fi
 
             echo "=== write /opt/montr/.env from secrets ==="
