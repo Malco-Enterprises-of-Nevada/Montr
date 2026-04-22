@@ -1283,18 +1283,48 @@ async function loadThumbnails(media) {
         // which downloads the full source file from Spaces. User must click
         // the retry button on the card to try again.
         if (item.thumbnail_status === 'failed') continue;
-        try {
-            const headers = {};
-            if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
-            const response = await fetch(API_BASE + `/media/${item.id}/thumbnail`, { headers });
-            if (!response.ok) continue;
+        fetchThumbnailWithRetry(item.id, img).catch(() => {
+            // Keep fallback icon
+        });
+    }
+}
+
+/**
+ * Fetch a thumbnail with graceful retry. The /thumbnail endpoint now
+ * returns 202 Accepted when the job is queued but not yet complete —
+ * poll up to MAX_POLLS times with exponential-ish backoff before giving
+ * up (the fallback icon stays visible).
+ */
+async function fetchThumbnailWithRetry(mediaId, img) {
+    const MAX_POLLS = 10;         // ~60s total worst case
+    const INITIAL_DELAY_MS = 1500;
+    const MAX_DELAY_MS = 10_000;
+    let delay = INITIAL_DELAY_MS;
+
+    const headers = {};
+    if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
+
+    for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
+        const response = await fetch(API_BASE + `/media/${mediaId}/thumbnail`, { headers });
+        if (response.status === 200) {
             const blob = await response.blob();
             img.src = URL.createObjectURL(blob);
             img.style.display = '';
-            img.parentElement.querySelector('.thumb-fallback').style.display = 'none';
-        } catch {
-            // Keep fallback icon
+            const fallback = img.parentElement?.querySelector('.thumb-fallback');
+            if (fallback) fallback.style.display = 'none';
+            return;
         }
+        if (response.status === 202) {
+            // Server accepted the job but it's not ready — honor Retry-After
+            // if present, otherwise use our own backoff.
+            const retryAfter = parseInt(response.headers.get('Retry-After') || '0', 10);
+            const waitMs = retryAfter > 0 ? retryAfter * 1000 : delay;
+            await new Promise((r) => setTimeout(r, waitMs));
+            delay = Math.min(delay * 1.5, MAX_DELAY_MS);
+            continue;
+        }
+        // 404 / 5xx → give up; fallback icon stays.
+        return;
     }
 }
 

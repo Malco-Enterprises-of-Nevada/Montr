@@ -276,6 +276,82 @@ export class MongoDBAdapter implements DatabaseAdapter {
     return result.modifiedCount;
   }
 
+  async resetStuckThumbnails(): Promise<number> {
+    const result = await this.col('media_files').updateMany(
+      { thumbnail_status: 'generating' },
+      { $set: { thumbnail_status: 'failed', updated_at: new Date().toISOString() } }
+    );
+    return result.modifiedCount;
+  }
+
+  // ── Thumbnail job queue ──────────────────────────────────────────────
+
+  async enqueueThumbnailJob(mediaId: number): Promise<import('../types').ThumbnailJob> {
+    const id = await this.nextId('thumbnail_jobs');
+    const now = new Date().toISOString();
+    const doc: import('../types').ThumbnailJob = {
+      id,
+      media_id: mediaId,
+      state: 'queued',
+      attempts: 0,
+      last_error: null,
+      created_at: now,
+      updated_at: now,
+    };
+    await this.col('thumbnail_jobs').insertOne(doc as unknown as Document);
+    return doc;
+  }
+
+  async claimNextThumbnailJob(): Promise<import('../types').ThumbnailJob | null> {
+    const now = new Date().toISOString();
+    // findOneAndUpdate with sort = atomic claim.
+    const result = await this.col('thumbnail_jobs').findOneAndUpdate(
+      { state: 'queued' },
+      { $set: { state: 'running', updated_at: now }, $inc: { attempts: 1 } },
+      { sort: { created_at: 1, id: 1 }, returnDocument: 'after' }
+    );
+    if (!result) return null;
+    return this.docToObj<import('../types').ThumbnailJob>(result);
+  }
+
+  async markThumbnailJobDone(jobId: number): Promise<void> {
+    await this.col('thumbnail_jobs').updateOne(
+      { id: jobId },
+      { $set: { state: 'done', last_error: null, updated_at: new Date().toISOString() } }
+    );
+  }
+
+  async markThumbnailJobFailed(jobId: number, error: string): Promise<void> {
+    await this.col('thumbnail_jobs').updateOne(
+      { id: jobId },
+      {
+        $set: {
+          state: 'failed',
+          last_error: error.slice(0, 2000),
+          updated_at: new Date().toISOString(),
+        },
+      }
+    );
+  }
+
+  async requeueRunningThumbnailJobs(): Promise<number> {
+    const result = await this.col('thumbnail_jobs').updateMany(
+      { state: 'running' },
+      { $set: { state: 'queued', updated_at: new Date().toISOString() } }
+    );
+    return result.modifiedCount;
+  }
+
+  async getLatestThumbnailJobForMedia(
+    mediaId: number
+  ): Promise<import('../types').ThumbnailJob | null> {
+    const doc = await this.col('thumbnail_jobs').findOne(
+      { media_id: mediaId },
+      { sort: { id: -1 } }
+    );
+    return this.docToObj<import('../types').ThumbnailJob>(doc);
+  }
+
   // ── Media folder operations ──────────────────────────────────────────────
 
   async createMediaFolder(

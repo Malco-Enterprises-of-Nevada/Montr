@@ -536,15 +536,35 @@ router.get(
     const params = req.params as unknown as { id: number };
     const { id } = params;
 
+    const result = await mediaService.getMediaThumbnail(id);
+
+    if (result.kind === 'pending') {
+      // Non-blocking: job is queued and will be picked up by the
+      // thumbnail queue poller. Client should retry in a few seconds.
+      // The old behavior held the socket for 30-60s while ffmpeg ran.
+      res.setHeader('Retry-After', '5');
+      res.status(202).json({
+        status: 'pending',
+        message: 'Thumbnail generation in progress, retry shortly',
+      });
+      return;
+    }
+
+    if (result.kind === 'failed') {
+      res.status(404).json({
+        status: 'failed',
+        message: 'Thumbnail generation previously failed; use retry to regenerate',
+      });
+      return;
+    }
+
     if (config.storage.backend === 'spaces') {
       // Proxy thumbnail content to avoid CORS issues with CDN redirects
-      const thumbnailKey = await mediaService.getMediaThumbnail(id);
-      const tempPath = await storageService.downloadToTemp(thumbnailKey);
+      const tempPath = await storageService.downloadToTemp(result.path);
       res.setHeader('Content-Type', 'image/jpeg');
       res.sendFile(tempPath);
     } else {
-      const thumbnailPath = await mediaService.getMediaThumbnail(id);
-      res.sendFile(thumbnailPath);
+      res.sendFile(result.path);
     }
   })
 );

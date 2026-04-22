@@ -5,7 +5,6 @@
 
 import { promisify } from 'util';
 import { execFile as execFileCallback } from 'child_process';
-import path from 'path';
 import sharp from 'sharp';
 import { getDatabase } from '../database/connection';
 import { config } from '../config/config';
@@ -21,6 +20,7 @@ import {
 import { getLogger } from '../utils/logger';
 import { AppError, ErrorCode } from '../api/middleware/error-handler';
 import { postProcessSemaphore, thumbnailSemaphore } from './processing-limits';
+import { runThumbnailWorker } from '../workers/thumbnail-runner';
 
 const execFile = promisify(execFileCallback);
 const logger = getLogger();
@@ -145,67 +145,34 @@ export class MediaService {
   }
 
   /**
-   * Generates a thumbnail for a video file using ffmpeg
+   * Generates a thumbnail for a video file by forking a worker process
+   * that runs ffmpeg+sharp with a tight heap cap. Isolates decode errors
+   * and memory spikes from the main API event loop.
    */
   private async generateVideoThumbnail(
-    filePath: string,
+    source: string,
     mediaFilename: string
   ): Promise<string | null> {
-    const tempDir = path.resolve(config.storage.path, 'temp');
-    const tempOutput = path.join(tempDir, `thumb_${Date.now()}.jpg`);
     try {
-      // Seek before the input (fast-seek) so ffmpeg doesn't decode from 0
-      // on containers without a seek index, then grab one frame. 60s cap
-      // and bounded stderr buffer defend against runaway processes on
-      // malformed or very large inputs.
-      await execFile(
-        'ffmpeg',
-        [
-          '-ss',
-          '00:00:01.000',
-          '-i',
-          filePath,
-          '-vframes',
-          '1',
-          '-vf',
-          'scale=320:-1',
-          '-y',
-          tempOutput,
-        ],
-        { timeout: 60_000, maxBuffer: 2 * 1024 * 1024 }
-      );
-
-      // Read the generated thumbnail and save it properly
-      const sharp_instance = sharp(tempOutput);
-      const buffer = await sharp_instance.jpeg({ quality: 80 }).toBuffer();
-      const thumbnailPath = await storageService.saveThumbnail(buffer, mediaFilename);
-
-      return thumbnailPath;
+      const buffer = await runThumbnailWorker({ type: 'video', source });
+      return await storageService.saveThumbnail(buffer, mediaFilename);
     } catch (error) {
       logger.error('Failed to generate video thumbnail:', error);
       return null;
-    } finally {
-      // Clean up temp ffmpeg output
-      const fs = await import('fs/promises');
-      await fs.unlink(tempOutput).catch(() => {});
     }
   }
 
   /**
-   * Generates a thumbnail for an image file using sharp
+   * Generates a thumbnail for an image file (forked worker for parity with
+   * video path — libvips can allocate large native buffers on huge PNGs).
    */
   private async generateImageThumbnail(
-    filePath: string,
+    source: string,
     mediaFilename: string
   ): Promise<string | null> {
     try {
-      const buffer = await sharp(filePath)
-        .resize(320, 320, { fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality: 80 })
-        .toBuffer();
-
-      const thumbnailPath = await storageService.saveThumbnail(buffer, mediaFilename);
-      return thumbnailPath;
+      const buffer = await runThumbnailWorker({ type: 'image', source });
+      return await storageService.saveThumbnail(buffer, mediaFilename);
     } catch (error) {
       logger.error('Failed to generate image thumbnail:', error);
       return null;
@@ -291,8 +258,9 @@ export class MediaService {
         await this.persistEmbeddedSubtitles(media.id, embeddedSubtitles);
       }
 
-      // Generate thumbnail asynchronously (don't wait for it)
-      this.generateThumbnailAsync(media.id, fullPath, storageInfo.filename, mediaType);
+      // Enqueue thumbnail job — picked up by the background queue poller,
+      // persists across crashes and restarts.
+      void this.enqueueThumbnail(media.id);
 
       this.fireApprovalNeededIfPending(media);
 
@@ -318,39 +286,34 @@ export class MediaService {
   ): Promise<MediaFile> {
     const mediaType = this.getMediaType(mimeType);
 
-    // Extract metadata — skip temp download for large files (>500MB) to avoid timeout.
-    // Gated by a global semaphore: three concurrent downloads of 500MB Spaces
-    // files + ffprobe each OOM-killed the container.
+    // Extract metadata. downloadToTemp now streams chunk-by-chunk so
+    // the old 500 MB cap is obsolete — it silently left width/height/
+    // duration null for every file larger than that. Still gated by
+    // postProcessSemaphore so a burst of uploads doesn't stack N parallel
+    // ffprobe processes on top of an already-loaded event loop.
     let metadata: MediaMetadata = {};
     let embeddedSubtitles: EmbeddedSubtitleStream[] = [];
     let localPath: string | null = null;
-    const MAX_METADATA_SIZE = 500 * 1024 * 1024;
-    if (storageInfo.size <= MAX_METADATA_SIZE) {
-      await postProcessSemaphore.run(async () => {
-        try {
-          localPath = await storageService.downloadToTemp(storageInfo.filepath);
-          if (mediaType === 'video') {
-            const result = await this.extractVideoMetadata(localPath);
-            metadata = result.metadata;
-            embeddedSubtitles = result.subtitles;
-          } else if (mediaType === 'image') {
-            metadata = await this.extractImageMetadata(localPath);
-          }
-          // Clean up temp file for Spaces backend
-          if (config.storage.backend === 'spaces') {
-            const fs = await import('fs/promises');
-            await fs.unlink(localPath).catch(() => {});
-            localPath = null;
-          }
-        } catch (error) {
-          logger.warn(`Failed to extract metadata for ${originalFilename}:`, error);
+    await postProcessSemaphore.run(async () => {
+      try {
+        localPath = await storageService.downloadToTemp(storageInfo.filepath);
+        if (mediaType === 'video') {
+          const result = await this.extractVideoMetadata(localPath);
+          metadata = result.metadata;
+          embeddedSubtitles = result.subtitles;
+        } else if (mediaType === 'image') {
+          metadata = await this.extractImageMetadata(localPath);
         }
-      });
-    } else {
-      logger.info(
-        `Skipping metadata extraction for large file (${Math.round(storageInfo.size / 1024 / 1024)}MB): ${originalFilename}`
-      );
-    }
+        // Clean up temp file for Spaces backend
+        if (config.storage.backend === 'spaces') {
+          const fs = await import('fs/promises');
+          await fs.unlink(localPath).catch(() => {});
+          localPath = null;
+        }
+      } catch (error) {
+        logger.warn(`Failed to extract metadata for ${originalFilename}:`, error);
+      }
+    });
 
     // Check for duplicate by checksum
     const db = await getDatabase();
@@ -398,9 +361,10 @@ export class MediaService {
       await this.persistEmbeddedSubtitles(media.id, embeddedSubtitles);
     }
 
-    if (localPath) {
-      this.generateThumbnailAsync(media.id, localPath, storageInfo.filename, mediaType);
-    }
+    // Enqueue thumbnail work regardless of local metadata staging — the
+    // queue fetches the source fresh when it runs (streaming fast-seek for
+    // video on Spaces, local path for local backend).
+    void this.enqueueThumbnail(media.id);
 
     this.fireApprovalNeededIfPending(media);
 
@@ -460,83 +424,98 @@ export class MediaService {
   }
 
   /**
-   * Generates thumbnail asynchronously and persists status to the database.
+   * Enqueue a thumbnail job for the given media. The actual work runs
+   * in the background via `thumbnailQueueService`, which picks the job
+   * up and calls `processThumbnailJob()` below. Never throws — if the
+   * insert fails we just log; the worst case is a missing thumbnail.
    */
-  private generateThumbnailAsync(
-    mediaId: number,
-    filePath: string,
-    filename: string,
-    type: 'video' | 'image'
-  ): void {
-    // Fire-and-forget: the returned promise MUST have a terminal .catch so
-    // any unexpected throw (e.g. dynamic import failure in finally) can't
-    // reach process.on('unhandledRejection').
-    //
-    // Serialised by thumbnailSemaphore (default 1) to keep ffmpeg/ffprobe
-    // off the OOM killer's radar when multiple uploads finish back-to-back.
-    void thumbnailSemaphore
-      .run(async () => {
-        let sourcePath = filePath;
-        let needsCleanup = false;
-        try {
-          // Mark as generating
-          const db = await getDatabase();
-          await db.updateMedia(mediaId, {
-            thumbnail_status: 'generating',
-          } as Partial<CreateMediaInput>);
+  async enqueueThumbnail(mediaId: number): Promise<void> {
+    try {
+      const db = await getDatabase();
+      await db.enqueueThumbnailJob(mediaId);
+    } catch (err) {
+      logger.error(`Failed to enqueue thumbnail job for media ${mediaId}:`, err);
+    }
+  }
 
-          // For Spaces, download source file from S3 (filePath may not exist locally)
-          if (config.storage.backend === 'spaces') {
-            const media = await db.getMediaById(mediaId);
-            if (!media) throw new Error(`Media ${mediaId} not found`);
-            sourcePath = await storageService.downloadToTemp(media.filepath);
-            needsCleanup = true;
-          }
+  /**
+   * Do the actual thumbnail generation for one media item. Called by
+   * `thumbnailQueueService` for each claimed job. Throws on failure so
+   * the caller can mark the job 'failed' and record the error.
+   *
+   * Serialised globally by `thumbnailSemaphore` so bursts of queued jobs
+   * don't stack concurrent ffmpeg forks / libvips buffers on top of
+   * in-flight HTTP work on the main event loop.
+   */
+  async processThumbnailJob(mediaId: number): Promise<void> {
+    return thumbnailSemaphore.run(async () => {
+      const db = await getDatabase();
+      const media = await db.getMediaById(mediaId);
+      if (!media) throw new Error(`Media ${mediaId} not found`);
 
-          let thumbnailPath: string | null = null;
-          if (type === 'video') {
-            thumbnailPath = await this.generateVideoThumbnail(sourcePath, filename);
-          } else if (type === 'image') {
-            thumbnailPath = await this.generateImageThumbnail(sourcePath, filename);
-          }
+      await db.updateMedia(mediaId, {
+        thumbnail_status: 'generating',
+      } as Partial<CreateMediaInput>);
 
-          if (thumbnailPath) {
-            await db.updateMedia(mediaId, {
-              thumbnail_status: 'generated',
-            } as Partial<CreateMediaInput>);
-            logger.info(`Thumbnail generated for media ${mediaId}: ${thumbnailPath}`);
-          } else {
-            await db.updateMedia(mediaId, {
-              thumbnail_status: 'failed',
-            } as Partial<CreateMediaInput>);
-          }
-        } catch (error) {
-          logger.error(`Failed to generate thumbnail for media ${mediaId}:`, error);
-          try {
-            const db = await getDatabase();
-            await db.updateMedia(mediaId, {
-              thumbnail_status: 'failed',
-            } as Partial<CreateMediaInput>);
-          } catch (updateError) {
-            logger.error(
-              `Failed to update thumbnail_status to failed for media ${mediaId}:`,
-              updateError
-            );
-          }
-        } finally {
-          if (needsCleanup) {
-            try {
-              const fs = await import('fs/promises');
-              await fs.unlink(sourcePath).catch(() => {});
-            } catch (cleanupError) {
-              logger.warn(`Thumbnail temp cleanup failed for media ${mediaId}:`, cleanupError);
-            }
-          }
+      // For video on Spaces, hand ffmpeg the public CDN/endpoint URL
+      // directly — combined with `-ss <t>` before `-i`, ffmpeg issues
+      // HTTP range reads and fetches only a few MB near the seek point,
+      // avoiding a multi-GB re-download of the whole object. For images
+      // we still need the full file locally because sharp/libvips can't
+      // read from HTTP, and images are small enough that this is fine.
+      let sourcePath: string;
+      let needsCleanup = false;
+      if (config.storage.backend === 'spaces') {
+        if (media.type === 'video') {
+          sourcePath = storageService.getStreamingSource(media.filepath);
+        } else {
+          sourcePath = await storageService.downloadToTemp(media.filepath);
+          needsCleanup = true;
         }
-      })
-      .catch((err) => {
-        logger.error(`Unhandled error in generateThumbnailAsync for media ${mediaId}:`, err);
-      });
+      } else {
+        sourcePath = storageService.getFullPath(media.filepath);
+      }
+
+      try {
+        let thumbnailPath: string | null = null;
+        if (media.type === 'video') {
+          thumbnailPath = await this.generateVideoThumbnail(sourcePath, media.filename);
+        } else if (media.type === 'image') {
+          thumbnailPath = await this.generateImageThumbnail(sourcePath, media.filename);
+        }
+
+        if (thumbnailPath) {
+          await db.updateMedia(mediaId, {
+            thumbnail_status: 'generated',
+          } as Partial<CreateMediaInput>);
+          logger.info(`Thumbnail generated for media ${mediaId}: ${thumbnailPath}`);
+        } else {
+          await db.updateMedia(mediaId, {
+            thumbnail_status: 'failed',
+          } as Partial<CreateMediaInput>);
+          throw new Error('Thumbnail generator returned null');
+        }
+      } catch (error) {
+        // Mark the media row failed too, even though the queue also records
+        // the error on the job — the UI reads media.thumbnail_status.
+        try {
+          await db.updateMedia(mediaId, {
+            thumbnail_status: 'failed',
+          } as Partial<CreateMediaInput>);
+        } catch (updateError) {
+          logger.error(
+            `Failed to update thumbnail_status to failed for media ${mediaId}:`,
+            updateError
+          );
+        }
+        throw error;
+      } finally {
+        if (needsCleanup) {
+          const fs = await import('fs/promises');
+          await fs.unlink(sourcePath).catch(() => {});
+        }
+      }
+    });
   }
 
   /**
@@ -553,25 +532,15 @@ export class MediaService {
       );
     }
 
-    // Same size ceiling as `getMediaThumbnail`. Without this, a retry
-    // click on a 10 GB video would spawn ffmpeg+sharp over the whole
-    // source and allocate multi-GB external buffers — last time this
-    // happened the process grew to 2.9 GB RSS.
-    if (media.file_size && media.file_size > MediaService.THUMBNAIL_MAX_SOURCE_BYTES) {
-      throw new AppError(
-        ErrorCode.BAD_REQUEST,
-        `Source file too large for thumbnail generation (${Math.round(
-          media.file_size / 1024 / 1024
-        )} MB, cap ${Math.round(MediaService.THUMBNAIL_MAX_SOURCE_BYTES / 1024 / 1024)} MB)`,
-        400
-      );
-    }
+    // The old THUMBNAIL_MAX_SOURCE_BYTES cap is gone: thumbnail generation
+    // now runs in an isolated worker with its own heap cap, and for Spaces
+    // videos ffmpeg does HTTP range reads against the CDN URL (fetches a
+    // few MB near the seek point, not the whole file). A pathological
+    // source can only kill its worker, not the server.
 
     const db = await getDatabase();
     await db.updateMedia(id, { thumbnail_status: 'pending' } as Partial<CreateMediaInput>);
-
-    const fullPath = storageService.getFullPath(media.filepath);
-    this.generateThumbnailAsync(id, fullPath, media.filename, media.type);
+    await this.enqueueThumbnail(id);
 
     return this.getMediaById(id);
   }
@@ -643,103 +612,46 @@ export class MediaService {
     return fullPath;
   }
 
-  /** Above this size, we don't try to generate thumbnails on-demand. For
-   *  huge videos, spawning ffmpeg to seek the source ties up the event
-   *  loop long enough to time out the request and can push memory high
-   *  enough to OOM the container (seen at 2.7 GB external on a 10 GB MKV).
-   *  Tunable via MEDIA_THUMBNAIL_MAX_SOURCE_MB — 2 GB default covers
-   *  typical 1080p/4K feature-length content with fast-seek. */
-  private static readonly THUMBNAIL_MAX_SOURCE_BYTES =
-    Math.max(1, parseInt(process.env.MEDIA_THUMBNAIL_MAX_SOURCE_MB || '2048', 10)) * 1024 * 1024;
-
   /**
-   * Gets or generates thumbnail for a media file
+   * Lookup the thumbnail for a media file. Non-blocking: if the thumb
+   * doesn't exist yet, enqueues a job and signals the caller to retry.
+   *
+   * Return shape:
+   *   { kind: 'ready', path }    — thumbnail exists, serve it
+   *   { kind: 'failed' }         — prior generation failed, UI shows retry
+   *   { kind: 'pending' }        — job queued/enqueued, client should retry
+   *
+   * For Spaces, `path` is the S3 key (caller proxies or redirects).
+   * For local, `path` is an absolute filesystem path.
    */
-  async getMediaThumbnail(id: number): Promise<string> {
+  async getMediaThumbnail(
+    id: number
+  ): Promise<{ kind: 'ready'; path: string } | { kind: 'failed' } | { kind: 'pending' }> {
     const media = await this.getMediaById(id);
 
-    // Don't keep retrying known-failed thumbnails — every browser render of
-    // the grid would otherwise re-spawn ffmpeg. The UI shows a Retry button
-    // that calls /thumbnail/retry explicitly when the operator wants another go.
+    const existing = await storageService.getThumbnailPath(media.filename);
+    if (existing) {
+      const path =
+        config.storage.backend === 'spaces' ? existing : storageService.getFullPath(existing);
+      return { kind: 'ready', path };
+    }
+
+    // No thumbnail yet. 'failed' means a prior attempt hit a permanent
+    // error — the UI surfaces a Retry button and should NOT re-enqueue
+    // on every grid render, which would spin the worker on a bad file.
     if (media.thumbnail_status === 'failed') {
-      throw new AppError(
-        ErrorCode.MEDIA_NOT_FOUND,
-        'Thumbnail generation previously failed; use retry to regenerate',
-        404
-      );
+      return { kind: 'failed' };
     }
 
-    // Check if thumbnail already exists
-    let thumbnailPath = await storageService.getThumbnailPath(media.filename);
-
-    if (!thumbnailPath) {
-      // Refuse to generate on-demand for files above the size cap. A 10 GB
-      // MKV blows through memory and request timeouts while ffmpeg seeks
-      // the first frame. Mark failed so the UI surfaces retry instead.
-      if (media.file_size && media.file_size > MediaService.THUMBNAIL_MAX_SOURCE_BYTES) {
-        try {
-          const db = await getDatabase();
-          await db.updateMedia(id, {
-            thumbnail_status: 'failed',
-          } as Partial<CreateMediaInput>);
-        } catch (err) {
-          logger.warn(`Failed to mark media ${id} thumbnail as failed:`, err);
-        }
-        throw new AppError(
-          ErrorCode.MEDIA_NOT_FOUND,
-          'Source file too large for on-demand thumbnail generation',
-          404
-        );
-      }
-
-      // Generate thumbnail on-demand. On Spaces this re-downloads the full
-      // source (can be 500MB+), so serialise through the thumbnail semaphore —
-      // browsers commonly fire 5-10 parallel /thumbnail requests at page load
-      // and that burst previously OOM-killed the container.
-      thumbnailPath = await thumbnailSemaphore.run(async () => {
-        // Re-check inside the semaphore: a prior waiter may have just
-        // generated this exact thumbnail while we were queued.
-        const already = await storageService.getThumbnailPath(media.filename);
-        if (already) return already;
-
-        const sourcePath = await storageService.downloadToTemp(media.filepath);
-        let generated: string | null = null;
-        try {
-          if (media.type === 'video') {
-            generated = await this.generateVideoThumbnail(sourcePath, media.filename);
-          } else if (media.type === 'image') {
-            generated = await this.generateImageThumbnail(sourcePath, media.filename);
-          }
-        } finally {
-          // Clean up downloaded temp file for Spaces
-          if (config.storage.backend === 'spaces') {
-            const fs = await import('fs/promises');
-            await fs.unlink(sourcePath).catch(() => {});
-          }
-        }
-        return generated;
-      });
-
-      if (!thumbnailPath) {
-        // Mark as failed so the UI can surface the retry button and stop
-        // hammering this endpoint on every render.
-        try {
-          const db = await getDatabase();
-          await db.updateMedia(id, {
-            thumbnail_status: 'failed',
-          } as Partial<CreateMediaInput>);
-        } catch (err) {
-          logger.warn(`Failed to mark media ${id} thumbnail as failed:`, err);
-        }
-        throw new AppError(ErrorCode.MEDIA_NOT_FOUND, 'Failed to generate thumbnail', 500);
-      }
+    // Make sure there's an outstanding job. If the latest job for this
+    // media is already queued/running, don't pile up duplicates.
+    const db = await getDatabase();
+    const latest = await db.getLatestThumbnailJobForMedia(id);
+    const alreadyInFlight = latest && (latest.state === 'queued' || latest.state === 'running');
+    if (!alreadyInFlight) {
+      await this.enqueueThumbnail(id);
     }
-
-    // For Spaces, return S3 key (caller will redirect to CDN); for local, return absolute path
-    if (config.storage.backend === 'spaces') {
-      return thumbnailPath;
-    }
-    return storageService.getFullPath(thumbnailPath);
+    return { kind: 'pending' };
   }
 
   /**

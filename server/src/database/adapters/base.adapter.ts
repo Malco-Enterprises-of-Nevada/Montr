@@ -61,6 +61,7 @@ import {
   CreateExternalSubtitleInput,
   CreateEmbeddedSubtitleInput,
   UpdateSubtitleInput,
+  ThumbnailJob,
 } from '../types';
 
 export interface DatabaseAdapter {
@@ -81,6 +82,27 @@ export interface DatabaseAdapter {
   getMediaByChecksum(checksum: string): Promise<MediaFile | null>;
   /** Bulk move media to folder (null = root). Returns number of rows affected. */
   moveMediaToFolder(mediaIds: number[], folderId: number | null): Promise<number>;
+  /**
+   * Reset any rows stuck at thumbnail_status='generating' (from a prior crash)
+   * to 'failed' so the UI shows a retry button instead of silently hanging.
+   * Returns the number of rows updated. Called once at startup.
+   */
+  resetStuckThumbnails(): Promise<number>;
+
+  // ── Thumbnail job queue ──────────────────────────────────────────────
+  /** Insert a new queued thumbnail job for the given media. */
+  enqueueThumbnailJob(mediaId: number): Promise<ThumbnailJob>;
+  /** Atomically claim the oldest queued job: mark it 'running' and return it.
+   *  Returns null when the queue is empty. */
+  claimNextThumbnailJob(): Promise<ThumbnailJob | null>;
+  /** Mark a job successfully complete. */
+  markThumbnailJobDone(jobId: number): Promise<void>;
+  /** Mark a job failed; increments `attempts` and stores the error. */
+  markThumbnailJobFailed(jobId: number, error: string): Promise<void>;
+  /** On startup: flip any jobs stuck at 'running' back to 'queued'. */
+  requeueRunningThumbnailJobs(): Promise<number>;
+  /** Look up the most recent job for a given media (any state). */
+  getLatestThumbnailJobForMedia(mediaId: number): Promise<ThumbnailJob | null>;
 
   // Media folder operations
   createMediaFolder(input: CreateMediaFolderInput): Promise<MediaFolder>;

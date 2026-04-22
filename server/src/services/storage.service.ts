@@ -8,6 +8,7 @@ import fsSync from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import {
   S3Client,
   PutObjectCommand,
@@ -60,6 +61,13 @@ export interface IStorageService {
     thumbnails: number;
   }>;
   getDownloadUrl(filepath: string): string;
+  /**
+   * Returns a source identifier suitable for passing to ffmpeg's `-i` input.
+   * Local backend: absolute local path (ffmpeg reads from disk).
+   * Spaces backend: public CDN/endpoint URL (ffmpeg issues HTTP range reads,
+   * so `-ss <t>` before `-i` fetches only a few MB near the seek point).
+   */
+  getStreamingSource(filepath: string): string;
   downloadToTemp(filepath: string): Promise<string>;
   initMultipartUpload(key: string): Promise<string>;
   uploadPart(key: string, uploadId: string, partNumber: number, body: Buffer): Promise<string>;
@@ -341,6 +349,11 @@ export class LocalStorageService implements IStorageService {
 
   getDownloadUrl(_filepath: string): string {
     return '';
+  }
+
+  getStreamingSource(filepath: string): string {
+    // Local backend: ffmpeg reads directly from the filesystem.
+    return this.getFullPath(filepath);
   }
 
   downloadToTemp(filepath: string): Promise<string> {
@@ -693,6 +706,15 @@ export class SpacesStorageService implements IStorageService {
     return `${this.endpoint}/${this.bucket}/${filepath}`;
   }
 
+  getStreamingSource(filepath: string): string {
+    // Spaces backend: media is uploaded with ACL=public-read, so ffmpeg
+    // can consume the object directly via HTTP range requests. Combined
+    // with `-ss <t>` *before* `-i`, this fetches only a few MB near the
+    // seek point instead of downloading the entire file. Prefer the CDN
+    // endpoint when configured to offload bandwidth from the origin.
+    return this.getDownloadUrl(filepath);
+  }
+
   async downloadToTemp(filepath: string): Promise<string> {
     const tempPath = this.getFullPath(filepath);
 
@@ -707,12 +729,11 @@ export class SpacesStorageService implements IStorageService {
       throw new AppError(ErrorCode.FILE_NOT_FOUND, `File not found in Spaces: ${filepath}`, 404);
     }
 
-    const readable = response.Body as Readable;
-    const chunks: Buffer[] = [];
-    for await (const chunk of readable) {
-      chunks.push(Buffer.from(chunk as Uint8Array));
-    }
-    await fs.writeFile(tempPath, Buffer.concat(chunks));
+    // Stream directly to disk. The previous implementation buffered the
+    // entire object in a Buffer[] then Buffer.concat'd before writing —
+    // allocating ~2x the file size in transient heap. A 2 GB object became
+    // ~4 GB of V8 allocations and was the primary OOM trigger.
+    await pipeline(response.Body as Readable, fsSync.createWriteStream(tempPath));
 
     return tempPath;
   }

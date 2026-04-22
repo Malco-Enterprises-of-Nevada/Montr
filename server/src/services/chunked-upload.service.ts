@@ -369,24 +369,21 @@ class ChunkedUploadService {
     );
     const filename = path.basename(session.s3Key!);
 
-    // Compute real checksum by downloading from Spaces (skip for files >500MB).
+    // Compute real checksum by downloading from Spaces. downloadToTemp now
+    // streams straight to disk and calculateFileChecksumStream reads in
+    // chunks, so RSS stays ~constant regardless of file size. The old
+    // 500 MB cap existed only to paper over the buffered-download bug and
+    // silently broke dedup for any file larger than that.
     // The outer `completeUpload` already holds `postProcessSemaphore`, so
     // we don't re-acquire here — that would deadlock when max=1.
-    const MAX_CHECKSUM_SIZE = 500 * 1024 * 1024;
     let checksum = '';
-    if (totalSize <= MAX_CHECKSUM_SIZE) {
-      try {
-        const tempPath = await storageService.downloadToTemp(session.s3Key!);
-        checksum = await this.calculateFileChecksumStream(tempPath);
-        await fs.unlink(tempPath).catch(() => {});
-        logger.info(`Computed checksum for ${filename}: ${checksum}`);
-      } catch (error) {
-        logger.warn(`Failed to compute checksum for ${filename}, storing empty: ${error}`);
-      }
-    } else {
-      logger.info(
-        `Skipping checksum for large file (${Math.round(totalSize / 1024 / 1024)}MB): ${filename}`
-      );
+    try {
+      const tempPath = await storageService.downloadToTemp(session.s3Key!);
+      checksum = await this.calculateFileChecksumStream(tempPath);
+      await fs.unlink(tempPath).catch(() => {});
+      logger.info(`Computed checksum for ${filename}: ${checksum}`);
+    } catch (error) {
+      logger.warn(`Failed to compute checksum for ${filename}, storing empty: ${error}`);
     }
 
     return {
