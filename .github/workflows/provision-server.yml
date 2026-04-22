@@ -84,7 +84,7 @@ jobs:
             SPACES_CDN_ENDPOINT=${{ secrets.SPACES_CDN_ENDPOINT }}
             LOG_FILE=/opt/montr-server/logs/server.log
             LOG_LEVEL=info
-            MAX_UPLOAD_SIZE_MB=10240
+            MAX_UPLOAD_SIZE_MB=102400
             CHUNK_SIZE_MB=50
             EOF
             chmod 600 /opt/montr/.env

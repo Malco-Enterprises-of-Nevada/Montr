@@ -10,10 +10,9 @@ import { pipeline } from 'stream/promises';
 import { Readable } from 'stream';
 import { createReadStream, createWriteStream } from 'fs';
 import { config } from '../config/config';
-import { storageService, StorageFileInfo } from './storage.service';
+import { storageService } from './storage.service';
 import { getLogger } from '../utils/logger';
 import { AppError, ErrorCode } from '../api/middleware/error-handler';
-import { postProcessSemaphore } from './processing-limits';
 
 const logger = getLogger();
 
@@ -197,16 +196,18 @@ class ChunkedUploadService {
   }
 
   /**
-   * Completes an upload session by assembling all chunks.
-   *
-   * Serialized through `postProcessSemaphore` so two large completes can't
-   * fight each other (and concurrent in-flight chunk writers) over disk
-   * and memory. A 10 GB assembly reads every chunk into the output file
-   * and SHA-256s the result — running two of those at once on a single
-   * disk is what took the container down under heavy upload load.
+   * Finalises an upload session's storage (S3 multipart complete OR local
+   * chunk concatenation) and returns the handle the completion-queue job
+   * needs to carry on. Intentionally does NOT compute checksum, run ffprobe,
+   * or create the media row — all slow work moved to the upload-completion
+   * queue so this stays well under Cloudflare's 100 s origin timeout even
+   * for 100 GB uploads.
    */
   async completeUpload(uploadId: string): Promise<{
-    storageInfo: StorageFileInfo;
+    storageBackend: 'spaces' | 'local';
+    storageKey: string;
+    filename: string;
+    totalSize: number;
     originalFilename: string;
     mimeType: string;
     folderId: number | null;
@@ -222,21 +223,23 @@ class ChunkedUploadService {
       );
     }
 
-    const storageInfo: StorageFileInfo = await postProcessSemaphore.run(async () => {
-      return backend === 'spaces'
-        ? this.completeSpacesUpload(session)
-        : this.completeLocalUpload(session);
-    });
+    const storage =
+      backend === 'spaces'
+        ? await this.finalizeSpacesUpload(session)
+        : await this.finalizeLocalUpload(session);
 
     this.sessions.delete(uploadId);
 
     logger.info(
-      `Chunked upload completed: uploadId=${uploadId}, filename=${storageInfo.filename}, ` +
-        `size=${storageInfo.size}, checksum=${storageInfo.checksum}`
+      `Chunked upload finalised: uploadId=${uploadId}, filename=${storage.filename}, ` +
+        `size=${storage.totalSize}`
     );
 
     return {
-      storageInfo,
+      storageBackend: backend,
+      storageKey: storage.storageKey,
+      filename: storage.filename,
+      totalSize: storage.totalSize,
       originalFilename: session.originalFilename,
       mimeType: session.mimeType,
       folderId: session.folderId,
@@ -347,18 +350,16 @@ class ChunkedUploadService {
   }
 
   /**
-   * Completes a Spaces/S3 multipart upload.
+   * Finish the S3 multipart upload. Just CompleteMultipartUpload — no
+   * checksum download. Typically <10 s even for 2000 parts.
    */
-  private async completeSpacesUpload(session: UploadSession): Promise<StorageFileInfo> {
+  private async finalizeSpacesUpload(
+    session: UploadSession
+  ): Promise<{ storageKey: string; filename: string; totalSize: number }> {
     const parts: Array<{ PartNumber: number; ETag: string }> = [];
-
     for (const [chunkIndex, chunkInfo] of session.receivedChunks) {
-      parts.push({
-        PartNumber: chunkIndex + 1,
-        ETag: chunkInfo.etag!,
-      });
+      parts.push({ PartNumber: chunkIndex + 1, ETag: chunkInfo.etag! });
     }
-
     parts.sort((a, b) => a.PartNumber - b.PartNumber);
 
     await storageService.completeMultipartUpload(session.s3Key!, session.s3UploadId!, parts);
@@ -367,45 +368,25 @@ class ChunkedUploadService {
       (sum, chunk) => sum + chunk.size,
       0
     );
-    const filename = path.basename(session.s3Key!);
-
-    // Compute real checksum by downloading from Spaces. downloadToTemp now
-    // streams straight to disk and calculateFileChecksumStream reads in
-    // chunks, so RSS stays ~constant regardless of file size. The old
-    // 500 MB cap existed only to paper over the buffered-download bug and
-    // silently broke dedup for any file larger than that.
-    // The outer `completeUpload` already holds `postProcessSemaphore`, so
-    // we don't re-acquire here — that would deadlock when max=1.
-    let checksum = '';
-    try {
-      const tempPath = await storageService.downloadToTemp(session.s3Key!);
-      checksum = await this.calculateFileChecksumStream(tempPath);
-      await fs.unlink(tempPath).catch(() => {});
-      logger.info(`Computed checksum for ${filename}: ${checksum}`);
-    } catch (error) {
-      logger.warn(`Failed to compute checksum for ${filename}, storing empty: ${error}`);
-    }
-
     return {
-      filename,
-      filepath: session.s3Key!,
-      checksum,
-      size: totalSize,
+      storageKey: session.s3Key!,
+      filename: path.basename(session.s3Key!),
+      totalSize,
     };
   }
 
   /**
-   * Completes a local upload by streaming chunks into a single file,
-   * then computing the checksum from the assembled file.
+   * Stream-concat chunks into the final local file. Also deletes the
+   * chunk directory. No checksum here — the queue worker handles that.
    */
-  private async completeLocalUpload(session: UploadSession): Promise<StorageFileInfo> {
+  private async finalizeLocalUpload(
+    session: UploadSession
+  ): Promise<{ storageKey: string; filename: string; totalSize: number }> {
     const uniqueFilename = storageService.generateUniqueFilename(session.originalFilename);
     const relativeFilepath = path.join('media', uniqueFilename);
     const fullPath = path.join(path.resolve(config.storage.path), relativeFilepath);
 
-    // Stream each chunk sequentially into the output file
     const writeStream = createWriteStream(fullPath);
-
     try {
       for (let i = 0; i < session.totalChunks; i++) {
         const chunkPath = path.join(session.localChunkDir!, `chunk_${i}`);
@@ -413,30 +394,18 @@ class ChunkedUploadService {
         await pipeline(readStream, writeStream, { end: false });
       }
       writeStream.end();
-
-      // Wait for the write stream to finish
       await new Promise<void>((resolve, reject) => {
         writeStream.on('finish', resolve);
         writeStream.on('error', reject);
       });
     } catch (error) {
       writeStream.destroy();
-      // Clean up partial output file
-      try {
-        await fs.unlink(fullPath);
-      } catch {
-        // Ignore cleanup errors
-      }
+      await fs.unlink(fullPath).catch(() => {});
       throw error;
     }
 
-    // Compute checksum by streaming the assembled file
-    const checksum = await this.calculateFileChecksumStream(fullPath);
-
-    // Get actual file size
     const stats = await fs.stat(fullPath);
 
-    // Clean up chunk directory
     try {
       await fs.rm(session.localChunkDir!, { recursive: true, force: true });
     } catch (error) {
@@ -446,33 +415,10 @@ class ChunkedUploadService {
     }
 
     return {
+      storageKey: relativeFilepath,
       filename: uniqueFilename,
-      filepath: relativeFilepath,
-      checksum,
-      size: stats.size,
+      totalSize: stats.size,
     };
-  }
-
-  /**
-   * Computes SHA-256 checksum of a file using streams (memory-efficient).
-   */
-  private async calculateFileChecksumStream(filePath: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const hash = crypto.createHash('sha256');
-      const stream = createReadStream(filePath);
-
-      stream.on('data', (data: string | Buffer) => {
-        hash.update(data);
-      });
-
-      stream.on('end', () => {
-        resolve(hash.digest('hex'));
-      });
-
-      stream.on('error', (error) => {
-        reject(error);
-      });
-    });
   }
 }
 

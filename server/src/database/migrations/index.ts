@@ -20,6 +20,7 @@ import { migration as m013 } from './013_advanced_scheduling';
 import { migration as m014 } from './014_media_folders';
 import { migration as m015 } from './015_subtitle_tracks';
 import { migration as m016 } from './016_thumbnail_jobs';
+import { migration as m017 } from './017_upload_completion_jobs';
 
 export const migrations: Migration[] = [
   m001,
@@ -38,4 +39,5 @@ export const migrations: Migration[] = [
   m014,
   m015,
   m016,
+  m017,
 ];

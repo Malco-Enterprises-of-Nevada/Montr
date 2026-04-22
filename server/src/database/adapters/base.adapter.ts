@@ -62,6 +62,8 @@ import {
   CreateEmbeddedSubtitleInput,
   UpdateSubtitleInput,
   ThumbnailJob,
+  UploadCompletionJob,
+  UploadCompletionJobInput,
 } from '../types';
 
 export interface DatabaseAdapter {
@@ -103,6 +105,25 @@ export interface DatabaseAdapter {
   requeueRunningThumbnailJobs(): Promise<number>;
   /** Look up the most recent job for a given media (any state). */
   getLatestThumbnailJobForMedia(mediaId: number): Promise<ThumbnailJob | null>;
+
+  // ── Upload completion job queue ──────────────────────────────────────
+  /**
+   * Insert (or return existing) a queued upload-completion job. Idempotent
+   * on `upload_id` — repeat calls for the same session yield the same row.
+   */
+  enqueueUploadCompletionJob(input: UploadCompletionJobInput): Promise<UploadCompletionJob>;
+  /** Atomically claim the oldest queued job. Returns null when empty. */
+  claimNextUploadCompletionJob(): Promise<UploadCompletionJob | null>;
+  /** Terminal: job produced a new media row. */
+  markUploadCompletionJobDone(jobId: number, mediaId: number): Promise<void>;
+  /** Terminal: checksum matched an existing media row; no new row created. */
+  markUploadCompletionJobDuplicate(jobId: number, existingMediaId: number): Promise<void>;
+  /** Terminal: processing failed. `error` is truncated to 2000 chars. */
+  markUploadCompletionJobFailed(jobId: number, error: string): Promise<void>;
+  /** On startup: flip any jobs stuck at 'running' back to 'queued'. */
+  requeueRunningUploadCompletionJobs(): Promise<number>;
+  /** Drives `GET /api/media/upload/:uploadId/status`. */
+  getUploadCompletionJobByUploadId(uploadId: string): Promise<UploadCompletionJob | null>;
 
   // Media folder operations
   createMediaFolder(input: CreateMediaFolderInput): Promise<MediaFolder>;

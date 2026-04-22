@@ -99,6 +99,30 @@ export class MSSQLAdapter extends SqlBaseAdapter {
     return [offset, limit];
   }
 
+  /**
+   * SQL Server doesn't have a lightweight `INSERT OR IGNORE`. Wrap the
+   * INSERT so a duplicate-key collision on `uniqueColumn` becomes a no-op
+   * via a `WHERE NOT EXISTS` guard. Only works for single-row inserts —
+   * which is all our queue-enqueue paths do.
+   */
+  protected upsertIgnoreSql(insertSql: string, uniqueColumn: string): string {
+    // Transform: INSERT INTO tbl (cols...) VALUES (vals...)
+    //   →      INSERT INTO tbl (cols...) SELECT vals... WHERE NOT EXISTS
+    //                  (SELECT 1 FROM tbl WHERE uniqueColumn = {first value})
+    // Caller already arranges for the first placeholder/value to be the
+    // unique-column value (true for enqueueUploadCompletionJob).
+    const m = insertSql.match(
+      /^INSERT\s+INTO\s+(\w+)\s*\((.+?)\)\s*VALUES\s*\((.+?)\)\s*$/is
+    );
+    if (!m) return insertSql;
+    const [, table, cols, vals] = m;
+    return (
+      `INSERT INTO ${table} (${cols}) ` +
+      `SELECT ${vals} ` +
+      `WHERE NOT EXISTS (SELECT 1 FROM ${table} WHERE ${uniqueColumn} = @p1)`
+    );
+  }
+
   private getPool(): ConnectionPool {
     if (!this.pool) {
       throw new Error('Database not connected');

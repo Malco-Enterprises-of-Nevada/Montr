@@ -50,6 +50,31 @@ export const createMockDatabase = (): jest.Mocked<DatabaseAdapter> => ({
   requeueRunningThumbnailJobs: jest.fn().mockResolvedValue(0),
   getLatestThumbnailJobForMedia: jest.fn().mockResolvedValue(null),
 
+  // Upload completion job queue methods
+  enqueueUploadCompletionJob: jest.fn().mockResolvedValue({
+    id: 1,
+    upload_id: 'mock-upload-id',
+    storage_backend: 'spaces' as const,
+    storage_key: 'media/mock.mp4',
+    original_filename: 'mock.mp4',
+    mime_type: 'video/mp4',
+    total_size: 1024,
+    folder_id: null,
+    state: 'queued' as const,
+    attempts: 0,
+    last_error: null,
+    media_id: null,
+    existing_media_id: null,
+    created_at: '2024-01-01T00:00:00Z',
+    updated_at: '2024-01-01T00:00:00Z',
+  }),
+  claimNextUploadCompletionJob: jest.fn().mockResolvedValue(null),
+  markUploadCompletionJobDone: jest.fn().mockResolvedValue(undefined),
+  markUploadCompletionJobDuplicate: jest.fn().mockResolvedValue(undefined),
+  markUploadCompletionJobFailed: jest.fn().mockResolvedValue(undefined),
+  requeueRunningUploadCompletionJobs: jest.fn().mockResolvedValue(0),
+  getUploadCompletionJobByUploadId: jest.fn().mockResolvedValue(null),
+
   // Media folder methods
   createMediaFolder: jest.fn(),
   getMediaFolderById: jest.fn(),

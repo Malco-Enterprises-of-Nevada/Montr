@@ -208,6 +208,60 @@ function _uploadChunkWithRetry({ uploadId, chunkIndex, chunk, fileSize, alreadyU
     });
 }
 
+/**
+ * Poll /api/media/upload/:uploadId/status until the async completion job
+ * reaches a terminal state. Returns the job outcome payload on success
+ * (including duplicates) or throws on `failed`. Mirrors the shape of
+ * fetchThumbnailWithRetry — server sends Retry-After, we respect it and
+ * fall back to exponential-ish backoff capped at 30 s.
+ */
+async function _pollCompletionStatus(uploadId, { signal } = {}) {
+    const MAX_WAIT_MS = 30 * 60 * 1000; // 30 min — generous for 100 GB
+    const startedAt = Date.now();
+    let delay = 5_000;
+
+    while (true) {
+        if (signal?.aborted) throw new Error('Upload cancelled');
+        if (Date.now() - startedAt > MAX_WAIT_MS) {
+            throw new Error('Upload processing timed out (server still working)');
+        }
+
+        const headers = {};
+        if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
+        const res = await fetch(
+            API_BASE + `/media/upload/${uploadId}/status`,
+            { headers, signal }
+        );
+        const body = await res.json();
+
+        if (res.status === 202) {
+            // Still processing. Honor Retry-After if the server set one.
+            const retryAfter = parseInt(res.headers.get('Retry-After') || '0', 10);
+            const waitMs = retryAfter > 0 ? retryAfter * 1000 : delay;
+            await new Promise((r) => setTimeout(r, waitMs));
+            delay = Math.min(delay * 1.3, 30_000);
+            continue;
+        }
+        if (!res.ok) {
+            throw new Error(body?.error?.message || `Status check failed (HTTP ${res.status})`);
+        }
+
+        const data = body?.data ?? {};
+        if (data.state === 'done') return data;
+        if (data.state === 'duplicate') {
+            const err = new Error('A file with identical content already exists');
+            err.code = 'DUPLICATE';
+            err.existingMediaId = data.existingMediaId;
+            throw err;
+        }
+        if (data.state === 'failed') {
+            throw new Error(data.error || 'Upload processing failed');
+        }
+        // Unknown state — treat as still processing and keep polling.
+        await new Promise((r) => setTimeout(r, delay));
+    }
+}
+
 // Folders API
 const foldersAPI = {
     async list() {
@@ -302,7 +356,11 @@ const mediaAPI = {
             totalUploaded += (end - start);
         }
 
-        return await apiCall(`/media/upload/${uploadId}/complete`, { method: 'POST' });
+        // Kick off the async completion — this returns 202 within seconds
+        // even for 100 GB files, then we poll /status. The server's queue
+        // runs checksum + ffprobe + dedup + create media in the background.
+        await apiCall(`/media/upload/${uploadId}/complete`, { method: 'POST' });
+        return await _pollCompletionStatus(uploadId, { signal });
     },
 
     _simpleUpload(file, opts = {}) {

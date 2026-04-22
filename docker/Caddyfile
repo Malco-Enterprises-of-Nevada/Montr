@@ -5,13 +5,18 @@ montr.budgetvegas.com {
 	# If/when we want Full-strict, swap for a Cloudflare Origin CA cert.
 	tls internal
 
-	# Upstream timeouts sized for the upload path: a 1-2 GB chunked
-	# upload's complete step can legitimately take a minute or two while
-	# the server streams the S3 download for checksumming + ffprobe.
+	# Upstream timeouts cover two distinct long operations:
+	#   - Individual chunk POSTs from slow client connections (rare for
+	#     local gigabit clients, common on 4G/5G). A 50 MB chunk at
+	#     2 Mbps is ~3 min.
+	#   - The /status polling endpoint itself is always fast (<100 ms).
+	# The old /complete synchronous path could run 10-20 min; that work
+	# is now in the upload-completion queue, so /complete returns in
+	# under 10 s. 30 min is plenty of headroom.
 	reverse_proxy server:3000 {
 		transport http {
-			read_timeout 10m
-			write_timeout 10m
+			read_timeout 30m
+			write_timeout 30m
 			dial_timeout 10s
 		}
 	}

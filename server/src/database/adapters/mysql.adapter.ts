@@ -76,6 +76,10 @@ export class MySQLAdapter extends SqlBaseAdapter {
     return 'NOW()';
   }
 
+  protected upsertIgnoreSql(insertSql: string, _uniqueColumn: string): string {
+    return insertSql.replace(/^INSERT\s+INTO/, 'INSERT IGNORE INTO');
+  }
+
   private getPool(): Pool {
     if (!this.pool) {
       throw new Error('Database not connected');

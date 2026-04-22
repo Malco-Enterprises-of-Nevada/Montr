@@ -4,6 +4,7 @@
  */
 
 import { promisify } from 'util';
+import path from 'path';
 import { execFile as execFileCallback } from 'child_process';
 import sharp from 'sharp';
 import { getDatabase } from '../database/connection';
@@ -16,11 +17,13 @@ import {
   PaginationParams,
   PaginatedResult,
   MediaFilter,
+  UploadCompletionJob,
 } from '../database/types';
 import { getLogger } from '../utils/logger';
 import { AppError, ErrorCode } from '../api/middleware/error-handler';
 import { postProcessSemaphore, thumbnailSemaphore } from './processing-limits';
 import { runThumbnailWorker } from '../workers/thumbnail-runner';
+import { calculateFileChecksumStream } from '../utils/checksum';
 
 const execFile = promisify(execFileCallback);
 const logger = getLogger();
@@ -276,100 +279,123 @@ export class MediaService {
   }
 
   /**
-   * Creates a media entry from pre-stored file info (used by chunked uploads)
+   * Finish a chunked upload asynchronously. Invoked by
+   * `uploadCompletionQueueService` after POST /api/media/upload/:id/complete
+   * returns 202. Responsible for the slow work that used to live inline:
+   *   1. Download source to a single temp file (one network round-trip).
+   *   2. SHA-256 the temp file.
+   *   3. If the checksum matches an existing media row → delete the newly
+   *      uploaded object and return `{ kind: 'duplicate' }`. No throw.
+   *   4. Run ffprobe/sharp metadata extraction on the same temp file.
+   *   5. Insert the media row, persist embedded subtitles, enqueue thumbnail.
+   *
+   * Wrapped in `postProcessSemaphore.run()` so two 100 GB uploads never run
+   * concurrent downloads on the same disk.
    */
-  async createMediaFromStorageInfo(
-    storageInfo: StorageFileInfo,
-    originalFilename: string,
-    mimeType: string,
-    options?: { folderId?: number | null }
-  ): Promise<MediaFile> {
-    const mediaType = this.getMediaType(mimeType);
+  async processUploadCompletionJob(
+    job: UploadCompletionJob
+  ): Promise<
+    | { kind: 'created'; mediaId: number }
+    | { kind: 'duplicate'; existingMediaId: number }
+  > {
+    return postProcessSemaphore.run(async () => {
+      const db = await getDatabase();
+      const mediaType = this.getMediaType(job.mime_type);
 
-    // Extract metadata. downloadToTemp now streams chunk-by-chunk so
-    // the old 500 MB cap is obsolete — it silently left width/height/
-    // duration null for every file larger than that. Still gated by
-    // postProcessSemaphore so a burst of uploads doesn't stack N parallel
-    // ffprobe processes on top of an already-loaded event loop.
-    let metadata: MediaMetadata = {};
-    let embeddedSubtitles: EmbeddedSubtitleStream[] = [];
-    let localPath: string | null = null;
-    await postProcessSemaphore.run(async () => {
+      // Validate folder ASAP — cheap lookup that avoids doing all the
+      // heavy work if the target folder is gone.
+      if (job.folder_id != null) {
+        const folder = await db.getMediaFolderById(job.folder_id);
+        if (!folder) {
+          await storageService.deleteFile(job.storage_key).catch(() => {});
+          throw new AppError(
+            ErrorCode.FOLDER_NOT_FOUND,
+            `Folder with ID ${job.folder_id} not found`,
+            404
+          );
+        }
+      }
+
+      // Stage one local copy of the file. downloadToTemp streams to disk
+      // so RSS stays constant; for local backend this is just a filesystem
+      // path (no copy). We reuse the same temp file for checksum AND
+      // ffprobe so we only pay the S3 download cost once.
+      let localPath: string | null = null;
+      let createdTemp = false;
       try {
-        localPath = await storageService.downloadToTemp(storageInfo.filepath);
-        if (mediaType === 'video') {
-          const result = await this.extractVideoMetadata(localPath);
-          metadata = result.metadata;
-          embeddedSubtitles = result.subtitles;
-        } else if (mediaType === 'image') {
-          metadata = await this.extractImageMetadata(localPath);
-        }
-        // Clean up temp file for Spaces backend
         if (config.storage.backend === 'spaces') {
-          const fs = await import('fs/promises');
-          await fs.unlink(localPath).catch(() => {});
-          localPath = null;
+          localPath = await storageService.downloadToTemp(job.storage_key);
+          createdTemp = true;
+        } else {
+          localPath = storageService.getFullPath(job.storage_key);
         }
-      } catch (error) {
-        logger.warn(`Failed to extract metadata for ${originalFilename}:`, error);
+
+        // Checksum first so we can short-circuit duplicates before running
+        // ffprobe (which can itself take a minute on a long video).
+        const checksum = await calculateFileChecksumStream(localPath);
+        logger.info(
+          `Upload job ${job.id} (${job.original_filename}): checksum=${checksum}`
+        );
+
+        const existing = await db.getMediaByChecksum(checksum);
+        if (existing) {
+          await storageService.deleteFile(job.storage_key).catch(() => {});
+          logger.info(
+            `Upload job ${job.id}: duplicate of media ${existing.id}, discarded`
+          );
+          return { kind: 'duplicate' as const, existingMediaId: existing.id };
+        }
+
+        // Not a duplicate — extract metadata.
+        let metadata: MediaMetadata = {};
+        let embeddedSubtitles: EmbeddedSubtitleStream[] = [];
+        try {
+          if (mediaType === 'video') {
+            const result = await this.extractVideoMetadata(localPath);
+            metadata = result.metadata;
+            embeddedSubtitles = result.subtitles;
+          } else if (mediaType === 'image') {
+            metadata = await this.extractImageMetadata(localPath);
+          }
+        } catch (error) {
+          // Non-fatal: still create the row with null width/height/duration.
+          logger.warn(
+            `Failed to extract metadata for ${job.original_filename}:`,
+            error
+          );
+        }
+
+        const input: CreateMediaInput = {
+          filename: path.basename(job.storage_key),
+          original_filename: job.original_filename,
+          filepath: job.storage_key,
+          type: mediaType,
+          mime_type: job.mime_type,
+          file_size: job.total_size,
+          duration: metadata.duration,
+          width: metadata.width,
+          height: metadata.height,
+          checksum,
+          folder_id: job.folder_id,
+        };
+        const media = await db.createMedia(input);
+
+        if (embeddedSubtitles.length > 0) {
+          await this.persistEmbeddedSubtitles(media.id, embeddedSubtitles);
+        }
+
+        void this.enqueueThumbnail(media.id);
+        this.fireApprovalNeededIfPending(media);
+
+        logger.info(`Upload job ${job.id}: created media ${media.id} (${media.filename})`);
+        return { kind: 'created' as const, mediaId: media.id };
+      } finally {
+        if (createdTemp && localPath) {
+          const fsp = await import('fs/promises');
+          await fsp.unlink(localPath).catch(() => {});
+        }
       }
     });
-
-    // Check for duplicate by checksum
-    const db = await getDatabase();
-    const existingMedia = await db.getMediaByChecksum(storageInfo.checksum);
-    if (existingMedia) {
-      await storageService.deleteFile(storageInfo.filepath);
-      throw new AppError(
-        ErrorCode.RESOURCE_ALREADY_EXISTS,
-        'A media file with the same content already exists',
-        409,
-        true,
-        { existingMediaId: existingMedia.id }
-      );
-    }
-
-    if (options?.folderId != null) {
-      const folder = await db.getMediaFolderById(options.folderId);
-      if (!folder) {
-        await storageService.deleteFile(storageInfo.filepath);
-        throw new AppError(
-          ErrorCode.FOLDER_NOT_FOUND,
-          `Folder with ID ${options.folderId} not found`,
-          404
-        );
-      }
-    }
-
-    const input: CreateMediaInput = {
-      filename: storageInfo.filename,
-      original_filename: originalFilename,
-      filepath: storageInfo.filepath,
-      type: mediaType,
-      mime_type: mimeType,
-      file_size: storageInfo.size,
-      duration: metadata.duration,
-      width: metadata.width,
-      height: metadata.height,
-      checksum: storageInfo.checksum,
-      folder_id: options?.folderId ?? null,
-    };
-
-    const media = await db.createMedia(input);
-
-    if (embeddedSubtitles.length > 0) {
-      await this.persistEmbeddedSubtitles(media.id, embeddedSubtitles);
-    }
-
-    // Enqueue thumbnail work regardless of local metadata staging — the
-    // queue fetches the source fresh when it runs (streaming fast-seek for
-    // video on Spaces, local path for local backend).
-    void this.enqueueThumbnail(media.id);
-
-    this.fireApprovalNeededIfPending(media);
-
-    logger.info(`Media created from chunked upload: ${media.id} - ${media.filename}`);
-    return media;
   }
 
   /**

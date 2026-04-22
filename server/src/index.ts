@@ -28,6 +28,7 @@ import { scheduleService } from './services/schedule.service';
 import { notificationService } from './services/notification.service';
 import { chunkedUploadService } from './services/chunked-upload.service';
 import { thumbnailQueueService } from './services/thumbnail-queue.service';
+import { uploadCompletionQueueService } from './services/upload-completion-queue.service';
 import { storageService } from './services/storage.service';
 import { getNodeHealth } from './cluster/health';
 
@@ -277,6 +278,13 @@ class MontrServer {
       // thumbnail_jobs table (state='running' → 'queued' on its own).
       await thumbnailQueueService.start();
 
+      // Start the upload-completion queue. Picks up slow post-/complete
+      // work (checksum, ffprobe, dedup, createMedia) so /complete itself
+      // can return 202 within Cloudflare's 100 s origin timeout even for
+      // 100 GB uploads. Flips stranded 'running' jobs back to 'queued' on
+      // startup for crash recovery.
+      await uploadCompletionQueueService.start();
+
       // Purge chunk dirs orphaned by a previous crash/restart. Sessions live
       // only in memory, so once the process dies, those folders can never be
       // resumed — leaving them on disk is a slow leak. Fire-and-forget.
@@ -394,6 +402,13 @@ class MontrServer {
       await thumbnailQueueService.stop();
     } catch (error) {
       this.logger.error('Error shutting down thumbnail queue:', error);
+    }
+
+    // Stop upload-completion queue (same reasoning as thumbnail queue).
+    try {
+      await uploadCompletionQueueService.stop();
+    } catch (error) {
+      this.logger.error('Error shutting down upload-completion queue:', error);
     }
 
     // Shutdown WebSocket server first

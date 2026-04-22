@@ -72,6 +72,8 @@ import {
   CreateEmbeddedSubtitleInput,
   UpdateSubtitleInput,
   ThumbnailJob,
+  UploadCompletionJob,
+  UploadCompletionJobInput,
 } from '../types';
 import { MigrationExecutor } from '../migrations/runner';
 
@@ -377,6 +379,117 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
       `SELECT * FROM thumbnail_jobs WHERE media_id = ${this.placeholder(1)} ORDER BY id DESC LIMIT 1`,
       [mediaId]
     );
+  }
+
+  // ── Upload completion job queue ──────────────────────────────────────
+
+  async enqueueUploadCompletionJob(
+    input: UploadCompletionJobInput
+  ): Promise<UploadCompletionJob> {
+    // Idempotent on upload_id: if a row exists (from a retried /complete),
+    // return that one. Uses INSERT with a uniqueness collision tolerated
+    // via the dialect-specific upsert hint; fall back to SELECT either way.
+    const insertSql = this.upsertIgnoreSql(
+      `INSERT INTO upload_completion_jobs (
+        upload_id, storage_backend, storage_key, original_filename,
+        mime_type, total_size, folder_id, state
+      ) VALUES (
+        ${this.placeholder(1)}, ${this.placeholder(2)}, ${this.placeholder(3)},
+        ${this.placeholder(4)}, ${this.placeholder(5)}, ${this.placeholder(6)},
+        ${this.placeholder(7)}, 'queued'
+      )`,
+      'upload_id'
+    );
+    await this.rawExecute(insertSql, [
+      input.uploadId,
+      input.storageBackend,
+      input.storageKey,
+      input.originalFilename,
+      input.mimeType,
+      input.totalSize,
+      input.folderId,
+    ]);
+    const job = await this.rawQueryOne<UploadCompletionJob>(
+      `SELECT * FROM upload_completion_jobs WHERE upload_id = ${this.placeholder(1)}`,
+      [input.uploadId]
+    );
+    if (!job) {
+      throw new Error(`Upload completion job for ${input.uploadId} not found after insert`);
+    }
+    return job;
+  }
+
+  async claimNextUploadCompletionJob(): Promise<UploadCompletionJob | null> {
+    // Same atomic compare-and-set pattern as claimNextThumbnailJob.
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const candidate = await this.rawQueryOne<UploadCompletionJob>(
+        `SELECT * FROM upload_completion_jobs WHERE state = 'queued' ORDER BY created_at ASC, id ASC LIMIT 1`
+      );
+      if (!candidate) return null;
+
+      const claim = await this.rawExecute(
+        `UPDATE upload_completion_jobs SET state = 'running', attempts = attempts + 1, updated_at = ${this.currentTimestampFn()}
+         WHERE id = ${this.placeholder(1)} AND state = 'queued'`,
+        [candidate.id]
+      );
+      if (claim.affectedRows === 1) {
+        return await this.rawQueryOne<UploadCompletionJob>(
+          `SELECT * FROM upload_completion_jobs WHERE id = ${this.placeholder(1)}`,
+          [candidate.id]
+        );
+      }
+    }
+  }
+
+  async markUploadCompletionJobDone(jobId: number, mediaId: number): Promise<void> {
+    await this.rawExecute(
+      `UPDATE upload_completion_jobs SET state = 'done', media_id = ${this.placeholder(1)}, last_error = NULL, updated_at = ${this.currentTimestampFn()} WHERE id = ${this.placeholder(2)}`,
+      [mediaId, jobId]
+    );
+  }
+
+  async markUploadCompletionJobDuplicate(
+    jobId: number,
+    existingMediaId: number
+  ): Promise<void> {
+    await this.rawExecute(
+      `UPDATE upload_completion_jobs SET state = 'duplicate', existing_media_id = ${this.placeholder(1)}, last_error = NULL, updated_at = ${this.currentTimestampFn()} WHERE id = ${this.placeholder(2)}`,
+      [existingMediaId, jobId]
+    );
+  }
+
+  async markUploadCompletionJobFailed(jobId: number, error: string): Promise<void> {
+    await this.rawExecute(
+      `UPDATE upload_completion_jobs SET state = 'failed', last_error = ${this.placeholder(1)}, updated_at = ${this.currentTimestampFn()} WHERE id = ${this.placeholder(2)}`,
+      [error.slice(0, 2000), jobId]
+    );
+  }
+
+  async requeueRunningUploadCompletionJobs(): Promise<number> {
+    const result = await this.rawExecute(
+      `UPDATE upload_completion_jobs SET state = 'queued', updated_at = ${this.currentTimestampFn()} WHERE state = 'running'`
+    );
+    return result.affectedRows;
+  }
+
+  async getUploadCompletionJobByUploadId(
+    uploadId: string
+  ): Promise<UploadCompletionJob | null> {
+    return this.rawQueryOne<UploadCompletionJob>(
+      `SELECT * FROM upload_completion_jobs WHERE upload_id = ${this.placeholder(1)}`,
+      [uploadId]
+    );
+  }
+
+  /**
+   * Dialect-specific "INSERT but ignore duplicate-key collision". Default is
+   * SQLite's `INSERT OR IGNORE`; MySQL overrides to `INSERT IGNORE`, MSSQL
+   * would override to a MERGE-based pattern. `uniqueColumn` is only used by
+   * adapters that need explicit ON CONFLICT targets.
+   */
+  protected upsertIgnoreSql(insertSql: string, _uniqueColumn: string): string {
+    return insertSql.replace(/^INSERT\s+INTO/, 'INSERT OR IGNORE INTO');
   }
 
   // ── Media folder operations ──────────────────────────────────────────────
