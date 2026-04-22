@@ -28,7 +28,38 @@ import { scheduleService } from './services/schedule.service';
 import { notificationService } from './services/notification.service';
 import { chunkedUploadService } from './services/chunked-upload.service';
 import { thumbnailQueueService } from './services/thumbnail-queue.service';
+import { storageService } from './services/storage.service';
 import { getNodeHealth } from './cluster/health';
+
+/**
+ * Best-effort filesystem free-space lookup. Returns null on any error so the
+ * memory logger can keep going even if statfs is unavailable (older Node, or
+ * a filesystem that doesn't report stats).
+ *
+ * Node 18.15+ / 20+ ships `fs.statfs`; the production container runs Node 20.
+ */
+async function getDiskStats(
+  targetPath: string
+): Promise<{ freeMB: number; totalMB: number; freePct: number } | null> {
+  try {
+    // fs.promises.statfs is typed loosely in older @types/node; cast through
+    // unknown so we don't depend on a specific @types version.
+    const statfs = (fs.promises as unknown as {
+      statfs?: (p: string) => Promise<{ bsize: number; blocks: number; bavail: number }>;
+    }).statfs;
+    if (!statfs) return null;
+    const s = await statfs(targetPath);
+    const freeBytes = s.bavail * s.bsize;
+    const totalBytes = s.blocks * s.bsize;
+    return {
+      freeMB: Math.round(freeBytes / 1024 / 1024),
+      totalMB: Math.round(totalBytes / 1024 / 1024),
+      freePct: totalBytes > 0 ? (freeBytes / totalBytes) * 100 : 0,
+    };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Montr Server Application
@@ -254,21 +285,55 @@ class MontrServer {
         this.logger.warn(`Orphan chunk cleanup failed: ${String(err)}`);
       });
 
-      // Periodic memory snapshot so we can tell an OOM kill from a code
-      // crash next time this process disappears without logging an error.
-      // Kernel SIGKILL leaves no footprint; a steady RSS climb right
-      // before the last line logged is our smoking gun.
-      const memLogInterval = setInterval(() => {
+      // Periodic memory + disk snapshot so we can tell an OOM kill from a
+      // code crash next time this process disappears without logging an
+      // error, and catch an ENOSPC-in-the-making before uploads start 500ing.
+      // Kernel SIGKILL leaves no footprint; a steady RSS climb or a disk
+      // dropping toward 0 right before the last line logged is our smoking
+      // gun.
+      let diskLowWarned = false;
+      const memLogInterval = setInterval(async () => {
         const m = process.memoryUsage();
+        const disk = await getDiskStats(config.storage.path);
+        const diskStr = disk
+          ? ` disk=${disk.freeMB}/${disk.totalMB}MB(${disk.freePct.toFixed(1)}%free)`
+          : '';
         this.logger.info(
           `mem rss=${Math.round(m.rss / 1024 / 1024)}MB heap=${Math.round(
             m.heapUsed / 1024 / 1024
           )}/${Math.round(m.heapTotal / 1024 / 1024)}MB external=${Math.round(
             m.external / 1024 / 1024
-          )}MB`
+          )}MB${diskStr}`
         );
+
+        // Once free space drops under 10%, yell every interval so nobody
+        // misses it. Reset the one-shot warn flag once we're back above 15%
+        // (hysteresis so normal fluctuation doesn't re-trigger).
+        if (disk) {
+          if (disk.freePct < 10) {
+            this.logger.warn(
+              `LOW DISK: only ${disk.freePct.toFixed(1)}% free (${disk.freeMB}/${disk.totalMB}MB) on ${config.storage.path} — uploads will 500 with ENOSPC soon`
+            );
+            diskLowWarned = true;
+          } else if (diskLowWarned && disk.freePct > 15) {
+            this.logger.info(`Disk pressure recovered: ${disk.freePct.toFixed(1)}% free`);
+            diskLowWarned = false;
+          }
+        }
       }, 30_000);
       memLogInterval.unref();
+
+      // Purge temp files older than 1h every hour. `downloadToTemp` usually
+      // cleans up after itself, but a crashed request mid-download leaves
+      // the file behind — those accumulated into a disk-full event on
+      // 2026-04-22 that 500'd every upload. Age-gated at 1h so we never
+      // clobber an in-flight download.
+      const tempCleanupInterval = setInterval(() => {
+        void storageService.cleanupTempFiles(60 * 60 * 1000).catch((err) => {
+          this.logger.warn(`Periodic temp cleanup failed: ${String(err)}`);
+        });
+      }, 60 * 60 * 1000);
+      tempCleanupInterval.unref();
 
       // Start listening
       await new Promise<void>((resolve, reject) => {
