@@ -19,14 +19,21 @@ jobs:
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
+        env:
+          # Ephemeral run-scoped token — passed via http.extraheader so it
+          # never lands in .git/config. Each CD run gets a fresh one; no
+          # long-lived PAT to rotate.
+          GH_TOKEN: ${{ github.token }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           command_timeout: 20m
+          envs: GH_TOKEN
           script: |
+            set -euo pipefail
             cd /opt/montr
-            git fetch origin main
+            git -c http.extraheader="AUTHORIZATION: bearer $GH_TOKEN" fetch origin main
             git reset --hard origin/main
             docker compose build server
             docker compose up -d
