@@ -12,6 +12,11 @@ on:
         type: boolean
         required: false
         default: false
+      cleanup:
+        description: 'Clean orphan temp files + docker system prune (safe; 60m age gate)'
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: deploy-server
@@ -36,6 +41,25 @@ jobs:
             echo "=== docker inspect (state) ==="
             docker inspect --format '{{.State.Status}} exitCode={{.State.ExitCode}} oomKilled={{.State.OOMKilled}} startedAt={{.State.StartedAt}} finishedAt={{.State.FinishedAt}}' montr-server-1 || true
             echo
+            if [ "${{ inputs.cleanup }}" = "true" ]; then
+              echo "=== disk BEFORE cleanup ==="
+              df -h / 2>/dev/null || true
+              docker exec montr-server-1 df -h /opt/montr-server 2>/dev/null || true
+              echo
+              echo "=== purging storage/temp files older than 60m ==="
+              # Container's internal temp dir: mapped to the server-storage
+              # volume, used by downloadToTemp + chunked upload completes.
+              docker exec montr-server-1 find /opt/montr-server/storage/temp \
+                -type f -mmin +60 -print -delete 2>/dev/null || true
+              echo
+              echo "=== docker system prune (unused images/networks; keeps volumes) ==="
+              docker system prune -f 2>/dev/null || true
+              echo
+              echo "=== disk AFTER cleanup ==="
+              df -h / 2>/dev/null || true
+              docker exec montr-server-1 df -h /opt/montr-server 2>/dev/null || true
+              echo
+            fi
             if [ "${{ inputs.restart }}" = "true" ]; then
               echo "=== restarting container ==="
               cd /opt/montr && docker compose up -d
