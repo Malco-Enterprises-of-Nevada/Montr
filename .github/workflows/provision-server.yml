@@ -24,11 +24,20 @@ jobs:
     steps:
       - name: SSH bootstrap
         uses: appleboy/ssh-action@v1
+        env:
+          # Forwarded into the remote shell via `envs:` so we can auth `git
+          # clone` against a private repo without baking a long-lived PAT
+          # into .git/config. This is the workflow's ephemeral token, valid
+          # only for the duration of this run.
+          GH_TOKEN: ${{ github.token }}
+          REPO_URL_WITH_TOKEN: https://x-access-token:${{ github.token }}@github.com/Malco-Enterprises-of-Nevada/Montr.git
+          REPO_URL_CLEAN: https://github.com/Malco-Enterprises-of-Nevada/Montr.git
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           command_timeout: 15m
+          envs: GH_TOKEN,REPO_URL_WITH_TOKEN,REPO_URL_CLEAN
           script: |
             set -euo pipefail
 
@@ -48,9 +57,16 @@ jobs:
             echo "=== clone repo to /opt/montr (if missing) ==="
             if [ ! -d /opt/montr/.git ]; then
               mkdir -p /opt
-              git clone https://github.com/Malco-Enterprises-of-Nevada/Montr.git /opt/montr
+              git clone "$REPO_URL_WITH_TOKEN" /opt/montr
+              # Strip the token from .git/config immediately — it expires at
+              # end-of-run anyway, but no reason to leave it there. Future
+              # fetches in cd-server.yml pass their own fresh token via
+              # http.extraheader.
+              cd /opt/montr && git remote set-url origin "$REPO_URL_CLEAN"
             else
-              cd /opt/montr && git fetch origin main && git reset --hard origin/main
+              cd /opt/montr
+              git -c http.extraheader="AUTHORIZATION: bearer $GH_TOKEN" fetch origin main
+              git reset --hard origin/main
             fi
 
             echo "=== write /opt/montr/.env from secrets ==="
