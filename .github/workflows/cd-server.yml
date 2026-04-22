@@ -7,6 +7,8 @@ on:
       - 'server/**'
       - 'docker/server.Dockerfile'
       - 'docker-compose.yml'
+      - 'docker/Caddyfile'
+  workflow_dispatch:
 
 concurrency:
   group: deploy-server
