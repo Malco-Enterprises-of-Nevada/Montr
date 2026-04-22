@@ -95,16 +95,28 @@ jobs:
             docker compose build server
             docker compose up -d
 
-            echo "=== wait for /api/health (up to 90s) ==="
+            echo "=== docker compose ps ==="
+            docker compose ps
+
+            echo "=== wait for /api/health via caddy (up to 90s) ==="
+            # Server is no longer exposed on host port 3000; it's on the
+            # internal docker network behind caddy (which terminates TLS
+            # with a self-signed cert, so we use -k).
             for i in $(seq 1 30); do
               sleep 3
-              code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/health || true)
+              code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost/api/health || true)
               echo "attempt $i: HTTP $code"
               if [ "$code" = "200" ]; then
                 echo "Server is healthy."
+                echo "=== caddy listener check ==="
+                ss -tlnp 2>/dev/null | grep -E ':80|:443' || true
                 exit 0
               fi
             done
-            echo "Server did not become healthy; showing logs:"
-            docker logs --tail 100 montr-server-1 || true
+            echo "Server did not become healthy; showing diagnostics:"
+            docker compose ps
+            echo "--- caddy logs ---"
+            docker compose logs --tail 50 caddy || true
+            echo "--- server logs ---"
+            docker compose logs --tail 50 server || true
             exit 1
