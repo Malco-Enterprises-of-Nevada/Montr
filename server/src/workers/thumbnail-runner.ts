@@ -55,10 +55,19 @@ export async function runThumbnailWorker(req: ThumbnailRequest): Promise<Buffer>
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (msg.ok) {
-        resolve(Buffer.from(msg.buffer));
-      } else {
-        reject(new Error(msg.error));
+      // Wrap the decode step in try/catch: a malformed payload from the
+      // worker (or a mismatch between worker/runner protocol versions)
+      // must NOT propagate as an uncaughtException. Crashing the server
+      // process to fail one thumbnail is exactly the kind of blast-radius
+      // issue the worker was introduced to prevent.
+      try {
+        if (msg.ok) {
+          resolve(Buffer.from(msg.bufferBase64, 'base64'));
+        } else {
+          reject(new Error(msg.error));
+        }
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
       }
     });
 

@@ -43,7 +43,11 @@ export interface ThumbnailRequest {
 }
 
 export type ThumbnailResponse =
-  | { ok: true; buffer: Uint8Array }
+  // `bufferBase64` not raw bytes: Node's child_process IPC serializes the
+  // payload through JSON, which turns a Uint8Array into a plain object
+  // with numeric keys (\`{"0":255,"1":216,...}\`) and Buffer.from() rejects
+  // that. Base64 round-trips cleanly.
+  | { ok: true; bufferBase64: string }
   | { ok: false; error: string };
 
 /**
@@ -179,7 +183,7 @@ async function handle(req: ThumbnailRequest): Promise<ThumbnailResponse> {
       req.type === 'video'
         ? await generateVideoFrame(req.source, width, quality)
         : await generateImage(req.source, width, quality);
-    return { ok: true, buffer: new Uint8Array(buffer) };
+    return { ok: true, bufferBase64: buffer.toString('base64') };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
