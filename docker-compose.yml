@@ -5,8 +5,20 @@ services:
       dockerfile: docker/server.Dockerfile
     ports:
       - "3000:3000"
+    # Container memory ceiling for a 4 GB host: server gets ~2 GB, leaving
+    # 2 GB for the OS, disk cache, and any ffmpeg-in-worker RSS that lives
+    # in the same cgroup. Without a limit, Node grew until the kernel
+    # SIGKILL'd the container — no stack trace, no graceful degradation.
+    mem_limit: 2g
+    mem_reservation: 1g
     environment:
-      NODE_ENV: development
+      # Flip to production: disables verbose error pages, enables view caching,
+      # and unlocks a few V8 optimizations. Dev mode inflates heap needlessly.
+      NODE_ENV: production
+      # Cap V8 old-space below mem_limit so Node throws a catchable
+      # ERR_OUT_OF_MEMORY before the kernel SIGKILL hits. 1536 MB heap +
+      # ~512 MB headroom for ffmpeg/native allocations stays under 2 GB.
+      NODE_OPTIONS: "--max-old-space-size=1536"
       DB_TYPE: sqlite
       DB_PATH: ./data/montr.db
       STORAGE_PATH: ./storage

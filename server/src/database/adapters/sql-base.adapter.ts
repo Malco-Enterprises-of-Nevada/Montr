@@ -71,6 +71,7 @@ import {
   CreateExternalSubtitleInput,
   CreateEmbeddedSubtitleInput,
   UpdateSubtitleInput,
+  ThumbnailJob,
 } from '../types';
 import { MigrationExecutor } from '../migrations/runner';
 
@@ -299,6 +300,83 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
       [folderId, ...mediaIds]
     );
     return result.affectedRows;
+  }
+
+  async resetStuckThumbnails(): Promise<number> {
+    const result = await this.rawExecute(
+      `UPDATE media_files SET thumbnail_status = ${this.placeholder(1)} WHERE thumbnail_status = ${this.placeholder(2)}`,
+      ['failed', 'generating']
+    );
+    return result.affectedRows;
+  }
+
+  // ── Thumbnail job queue ──────────────────────────────────────────────
+
+  async enqueueThumbnailJob(mediaId: number): Promise<ThumbnailJob> {
+    const result = await this.rawExecute(
+      `INSERT INTO thumbnail_jobs (media_id, state) VALUES (${this.placeholder(1)}, 'queued')`,
+      [mediaId]
+    );
+    const job = await this.rawQueryOne<ThumbnailJob>(
+      `SELECT * FROM thumbnail_jobs WHERE id = ${this.placeholder(1)}`,
+      [result.lastInsertId]
+    );
+    if (!job) throw new Error(`Thumbnail job ${result.lastInsertId} not found after insert`);
+    return job;
+  }
+
+  async claimNextThumbnailJob(): Promise<ThumbnailJob | null> {
+    // Atomic claim via compare-and-set. Single-process SQLite has no real
+    // contention but this works correctly if we ever add a second poller.
+    // Loop until we either claim or the queue is empty.
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const candidate = await this.rawQueryOne<ThumbnailJob>(
+        `SELECT * FROM thumbnail_jobs WHERE state = 'queued' ORDER BY created_at ASC, id ASC LIMIT 1`
+      );
+      if (!candidate) return null;
+
+      const claim = await this.rawExecute(
+        `UPDATE thumbnail_jobs SET state = 'running', attempts = attempts + 1, updated_at = ${this.currentTimestampFn()}
+         WHERE id = ${this.placeholder(1)} AND state = 'queued'`,
+        [candidate.id]
+      );
+      if (claim.affectedRows === 1) {
+        return await this.rawQueryOne<ThumbnailJob>(
+          `SELECT * FROM thumbnail_jobs WHERE id = ${this.placeholder(1)}`,
+          [candidate.id]
+        );
+      }
+      // Someone else claimed it — try the next one.
+    }
+  }
+
+  async markThumbnailJobDone(jobId: number): Promise<void> {
+    await this.rawExecute(
+      `UPDATE thumbnail_jobs SET state = 'done', last_error = NULL, updated_at = ${this.currentTimestampFn()} WHERE id = ${this.placeholder(1)}`,
+      [jobId]
+    );
+  }
+
+  async markThumbnailJobFailed(jobId: number, error: string): Promise<void> {
+    await this.rawExecute(
+      `UPDATE thumbnail_jobs SET state = 'failed', last_error = ${this.placeholder(1)}, updated_at = ${this.currentTimestampFn()} WHERE id = ${this.placeholder(2)}`,
+      [error.slice(0, 2000), jobId]
+    );
+  }
+
+  async requeueRunningThumbnailJobs(): Promise<number> {
+    const result = await this.rawExecute(
+      `UPDATE thumbnail_jobs SET state = 'queued', updated_at = ${this.currentTimestampFn()} WHERE state = 'running'`
+    );
+    return result.affectedRows;
+  }
+
+  async getLatestThumbnailJobForMedia(mediaId: number): Promise<ThumbnailJob | null> {
+    return this.rawQueryOne<ThumbnailJob>(
+      `SELECT * FROM thumbnail_jobs WHERE media_id = ${this.placeholder(1)} ORDER BY id DESC LIMIT 1`,
+      [mediaId]
+    );
   }
 
   // ── Media folder operations ──────────────────────────────────────────────

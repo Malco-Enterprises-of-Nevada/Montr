@@ -32,6 +32,23 @@ export const createMockDatabase = (): jest.Mocked<DatabaseAdapter> => ({
   updateMedia: jest.fn(),
   deleteMedia: jest.fn(),
   moveMediaToFolder: jest.fn().mockResolvedValue(0),
+  resetStuckThumbnails: jest.fn().mockResolvedValue(0),
+
+  // Thumbnail job queue methods
+  enqueueThumbnailJob: jest.fn().mockResolvedValue({
+    id: 1,
+    media_id: 1,
+    state: 'queued',
+    attempts: 0,
+    last_error: null,
+    created_at: '2024-01-01T00:00:00Z',
+    updated_at: '2024-01-01T00:00:00Z',
+  }),
+  claimNextThumbnailJob: jest.fn().mockResolvedValue(null),
+  markThumbnailJobDone: jest.fn().mockResolvedValue(undefined),
+  markThumbnailJobFailed: jest.fn().mockResolvedValue(undefined),
+  requeueRunningThumbnailJobs: jest.fn().mockResolvedValue(0),
+  getLatestThumbnailJobForMedia: jest.fn().mockResolvedValue(null),
 
   // Media folder methods
   createMediaFolder: jest.fn(),

@@ -4,6 +4,18 @@
 
 export type ThumbnailStatus = 'pending' | 'generating' | 'generated' | 'failed';
 
+export type ThumbnailJobState = 'queued' | 'running' | 'done' | 'failed';
+
+export interface ThumbnailJob {
+  id: number;
+  media_id: number;
+  state: ThumbnailJobState;
+  attempts: number;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface MediaFile {
   id: number;
   filename: string;

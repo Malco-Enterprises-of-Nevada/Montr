@@ -27,6 +27,7 @@ import { webSocketServer } from './websocket/server';
 import { scheduleService } from './services/schedule.service';
 import { notificationService } from './services/notification.service';
 import { chunkedUploadService } from './services/chunked-upload.service';
+import { thumbnailQueueService } from './services/thumbnail-queue.service';
 import { getNodeHealth } from './cluster/health';
 
 /**
@@ -190,17 +191,13 @@ class MontrServer {
       // any media stuck at thumbnail_status='generating' will never progress.
       // Flip them to 'failed' so the UI shows the retry button instead of
       // hammering /thumbnail and re-triggering the expensive generator.
+      // Direct SQL UPDATE scans all rows in one statement — the previous
+      // paginated approach silently missed anything past page 1 (limit 1000).
       try {
-        const stuck = await db.getAllMedia({ page: 1, limit: 1000 });
-        const generating = stuck.data.filter((m) => m.thumbnail_status === 'generating');
-        for (const m of generating) {
-          await db.updateMedia(m.id, { thumbnail_status: 'failed' } as Parameters<
-            typeof db.updateMedia
-          >[1]);
-        }
-        if (generating.length > 0) {
+        const count = await db.resetStuckThumbnails();
+        if (count > 0) {
           this.logger.warn(
-            `Reset ${generating.length} stuck thumbnail_status='generating' rows to 'failed' on startup`
+            `Reset ${count} stuck thumbnail_status='generating' rows to 'failed' on startup`
           );
         }
       } catch (err) {
@@ -242,6 +239,12 @@ class MontrServer {
 
       // Initialize notification email transport
       notificationService.initializeEmail();
+
+      // Start thumbnail job queue poller. Pairs with resetStuckThumbnails
+      // above: any media row stuck at 'generating' became 'failed', and
+      // the queue service then resurrects still-queued jobs from the
+      // thumbnail_jobs table (state='running' → 'queued' on its own).
+      await thumbnailQueueService.start();
 
       // Purge chunk dirs orphaned by a previous crash/restart. Sessions live
       // only in memory, so once the process dies, those folders can never be
@@ -320,6 +323,13 @@ class MontrServer {
 
     // Stop schedule evaluation
     scheduleService.stopEvaluation();
+
+    // Stop thumbnail queue so we don't claim new jobs during shutdown.
+    try {
+      await thumbnailQueueService.stop();
+    } catch (error) {
+      this.logger.error('Error shutting down thumbnail queue:', error);
+    }
 
     // Shutdown WebSocket server first
     try {

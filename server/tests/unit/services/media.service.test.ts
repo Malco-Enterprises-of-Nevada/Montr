@@ -316,39 +316,59 @@ describe('MediaService', () => {
 
       const result = await mediaService.getMediaThumbnail(1);
 
-      expect(result).toBe('/storage/thumbnails/test_thumb.jpg');
+      expect(result).toEqual({ kind: 'ready', path: '/storage/thumbnails/test_thumb.jpg' });
       expect(storageService.getThumbnailPath).toHaveBeenCalledWith(mockVideoFile.filename);
     });
 
-    it('should generate thumbnail on-demand for video', async () => {
+    it('should enqueue a job and return pending when no thumbnail exists (video)', async () => {
       mockDb.getMediaById.mockResolvedValue(mockVideoFile);
       (storageService.getThumbnailPath as jest.Mock).mockResolvedValue(null);
-      mockExecFn.mockResolvedValue({ stdout: '', stderr: '' });
 
       const result = await mediaService.getMediaThumbnail(1);
 
-      expect(mockExecFn).toHaveBeenCalled(); // ffmpeg called
-      expect(storageService.saveThumbnail).toHaveBeenCalled();
-      expect(result).toBe('/storage/thumbnails/test_thumb.jpg');
+      expect(result).toEqual({ kind: 'pending' });
+      expect(mockDb.enqueueThumbnailJob).toHaveBeenCalledWith(mockVideoFile.id);
+      // ffmpeg is NOT invoked synchronously anymore — the queue does it.
+      expect(mockExecFn).not.toHaveBeenCalled();
     });
 
-    it('should generate thumbnail on-demand for image', async () => {
+    it('should enqueue a job and return pending when no thumbnail exists (image)', async () => {
       mockDb.getMediaById.mockResolvedValue(mockImageFile);
       (storageService.getThumbnailPath as jest.Mock).mockResolvedValue(null);
 
       const result = await mediaService.getMediaThumbnail(2);
 
-      expect(storageService.saveThumbnail).toHaveBeenCalled();
-      expect(result).toBe('/storage/thumbnails/test_thumb.jpg');
+      expect(result).toEqual({ kind: 'pending' });
+      expect(mockDb.enqueueThumbnailJob).toHaveBeenCalledWith(mockImageFile.id);
     });
 
-    it('should throw error when thumbnail generation fails', async () => {
+    it('should not enqueue duplicate job when one is already in flight', async () => {
       mockDb.getMediaById.mockResolvedValue(mockVideoFile);
       (storageService.getThumbnailPath as jest.Mock).mockResolvedValue(null);
-      (storageService.saveThumbnail as jest.Mock).mockRejectedValue(new Error('Save failed'));
-      mockExecFn.mockRejectedValue(new Error('ffmpeg failed'));
+      mockDb.getLatestThumbnailJobForMedia.mockResolvedValue({
+        id: 7,
+        media_id: 1,
+        state: 'running',
+        attempts: 1,
+        last_error: null,
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-01T00:00:00Z',
+      });
 
-      await expect(mediaService.getMediaThumbnail(1)).rejects.toThrow(AppError);
+      const result = await mediaService.getMediaThumbnail(1);
+
+      expect(result).toEqual({ kind: 'pending' });
+      expect(mockDb.enqueueThumbnailJob).not.toHaveBeenCalled();
+    });
+
+    it('should return failed kind when media.thumbnail_status is failed', async () => {
+      mockDb.getMediaById.mockResolvedValue({ ...mockVideoFile, thumbnail_status: 'failed' });
+      (storageService.getThumbnailPath as jest.Mock).mockResolvedValue(null);
+
+      const result = await mediaService.getMediaThumbnail(1);
+
+      expect(result).toEqual({ kind: 'failed' });
+      expect(mockDb.enqueueThumbnailJob).not.toHaveBeenCalled();
     });
   });
 
