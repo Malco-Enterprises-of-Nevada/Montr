@@ -1,10 +1,25 @@
 services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - server
+
   server:
     build:
       context: .
       dockerfile: docker/server.Dockerfile
-    ports:
-      - "3000:3000"
+    # Port 3000 is only exposed on the internal docker network; caddy proxies
+    # 443 → server:3000. External clients always go through caddy.
+    expose:
+      - "3000"
     # Container memory ceiling for a 4 GB host: server gets ~2 GB, leaving
     # 2 GB for the OS, disk cache, and any ffmpeg-in-worker RSS that lives
     # in the same cgroup. Without a limit, Node grew until the kernel
@@ -83,3 +98,5 @@ volumes:
   server-logs:
   mysql-data:
   mongo-data:
+  caddy-data:
+  caddy-config:

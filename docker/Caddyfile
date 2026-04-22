@@ -1,0 +1,20 @@
+montr.budgetvegas.com {
+	# Self-signed internal cert. Cloudflare is the public-facing TLS
+	# endpoint; with CF SSL set to "Full" (not Full-strict) it accepts
+	# this cert without validation and encrypts the CF↔origin hop.
+	# If/when we want Full-strict, swap for a Cloudflare Origin CA cert.
+	tls internal
+
+	# Upstream timeouts sized for the upload path: a 1-2 GB chunked
+	# upload's complete step can legitimately take a minute or two while
+	# the server streams the S3 download for checksumming + ffprobe.
+	reverse_proxy server:3000 {
+		transport http {
+			read_timeout 10m
+			write_timeout 10m
+			dial_timeout 10s
+		}
+	}
+
+	# WebSocket handshake is already handled transparently by reverse_proxy.
+}
