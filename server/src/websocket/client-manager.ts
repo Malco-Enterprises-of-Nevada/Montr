@@ -41,15 +41,47 @@ export class ClientConnectionManager {
   }
 
   /**
+   * Minimum age (ms) of an existing connection before a new register for the
+   * same clientId is allowed to kick it. A real reconnect comes after the
+   * old TCP connection is genuinely dead (client's point of view), which is
+   * always more than a second in the wild. Back-to-back registers inside
+   * this window are a protocol-level duplicate — Cloudflare/Caddy
+   * sometimes opens a second upstream WS for the same logical request,
+   * and both land here in the same millisecond. Before this guard, the
+   * two connections kicked each other in an infinite loop and the real
+   * client got a flapping WS that never stabilised.
+   */
+  private static readonly DEDUP_WINDOW_MS = 10_000;
+
+  /**
    * Adds a new client connection
    */
   addConnection(clientId: string, ws: ExtendedWebSocket): void {
-    // Close existing connection if present
-    if (this.connections.has(clientId)) {
-      logger.warn(`Client ${clientId} already connected, closing old connection`);
-      const oldWs = this.connections.get(clientId);
-      if (oldWs && oldWs.readyState === oldWs.OPEN) {
-        oldWs.close(1000, 'New connection established');
+    const existing = this.connections.get(clientId);
+    if (existing) {
+      const existingMeta = this.metadata.get(clientId);
+      const existingAgeMs = existingMeta
+        ? Date.now() - existingMeta.connectedAt.getTime()
+        : Infinity;
+      const existingOpen = existing.readyState === existing.OPEN;
+
+      if (existingOpen && existingAgeMs < ClientConnectionManager.DEDUP_WINDOW_MS) {
+        // Duplicate upstream connection (CF/Caddy fan-out or client bug).
+        // Reject the newcomer instead of kicking the established session.
+        logger.warn(
+          `Client ${clientId} register arrived ${existingAgeMs}ms after current ` +
+            `session; rejecting duplicate connection (1008)`
+        );
+        if (ws.readyState === ws.OPEN) {
+          ws.close(1008, 'Duplicate connection');
+        }
+        return;
+      }
+
+      // Old session is either gone or old enough that this is a real reconnect.
+      logger.warn(`Client ${clientId} already connected (age=${existingAgeMs}ms), closing old connection`);
+      if (existingOpen) {
+        existing.close(1000, 'New connection established');
       }
     }
 

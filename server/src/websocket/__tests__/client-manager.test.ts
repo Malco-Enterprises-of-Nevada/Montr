@@ -57,14 +57,39 @@ describe('ClientConnectionManager', () => {
       expect(mockWs.isAlive).toBe(true);
     });
 
-    it('should close old connection when adding duplicate', () => {
+    it('rejects a duplicate register arriving inside the dedup window', () => {
+      // CF/Caddy sometimes fans a single upstream WS into two — back-to-back
+      // registers for the same clientId used to kick each other in a loop.
+      // Now the newcomer is rejected with 1008 and the live session stays.
       const clientId = '550e8400-e29b-41d4-a716-446655440000';
       const oldWs = createMockWebSocket();
 
       manager.addConnection(clientId, oldWs);
       manager.addConnection(clientId, mockWs);
 
+      expect(oldWs.close).not.toHaveBeenCalled();
+      expect(mockWs.close).toHaveBeenCalledWith(1008, 'Duplicate connection');
+      expect(manager.getConnection(clientId)).toBe(oldWs);
+      expect(manager.getActiveConnectionCount()).toBe(1);
+    });
+
+    it('kicks the old connection when a real reconnect arrives after the dedup window', () => {
+      const clientId = '550e8400-e29b-41d4-a716-446655440000';
+      const oldWs = createMockWebSocket();
+
+      manager.addConnection(clientId, oldWs);
+      // Simulate the old session being added ~30s ago — well past the 10 s
+      // dedup window, which is what a genuine reconnect after network loss
+      // would look like.
+      const meta = (manager as unknown as {
+        metadata: Map<string, { connectedAt: Date }>;
+      }).metadata.get(clientId);
+      if (meta) meta.connectedAt = new Date(Date.now() - 30_000);
+
+      manager.addConnection(clientId, mockWs);
+
       expect(oldWs.close).toHaveBeenCalledWith(1000, 'New connection established');
+      expect(manager.getConnection(clientId)).toBe(mockWs);
       expect(manager.getActiveConnectionCount()).toBe(1);
     });
 
