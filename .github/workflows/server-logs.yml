@@ -66,8 +66,11 @@ jobs:
               sleep 8
               echo
             fi
-            echo "=== docker logs --tail ${{ inputs.lines }} ==="
+            echo "=== docker logs --tail ${{ inputs.lines }} (server) ==="
             docker logs --tail ${{ inputs.lines }} montr-server-1 2>&1 || true
+            echo
+            echo "=== docker logs --tail 100 (caddy) ==="
+            docker logs --tail 100 montr-caddy-1 2>&1 | tail -100 || true
             echo
             echo "=== curl health ==="
             curl -s -o /dev/null -w 'HTTP %{http_code}\n' http://localhost:3000/api/health || true
