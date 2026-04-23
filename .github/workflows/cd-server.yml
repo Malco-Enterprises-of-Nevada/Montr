@@ -43,6 +43,12 @@ jobs:
             git reset --hard FETCH_HEAD
             docker compose build server
             docker compose up -d
+            # Whenever the server container is recreated it gets a new IP on
+            # the docker bridge. Caddy's Go DNS resolver has seen
+            # `dial tcp: lookup server on 127.0.0.11:53: server misbehaving`
+            # after rebuilds — flush its state so the next request re-resolves.
+            # Cheap (<5 s) and keeps the CF-facing path from flapping.
+            docker compose restart caddy
             # Poll Docker's own healthcheck (defined in server.Dockerfile:
             # curl http://localhost:3000/api/health from INSIDE the container).
             # This avoids guessing which virtual host caddy is serving and

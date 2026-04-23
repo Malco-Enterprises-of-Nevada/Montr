@@ -12,6 +12,11 @@ on:
         type: boolean
         required: false
         default: false
+      restart_caddy:
+        description: 'Restart just the caddy container (flushes its DNS resolver state)'
+        type: boolean
+        required: false
+        default: false
       cleanup:
         description: 'Clean orphan temp files + docker system prune (safe; 60m age gate)'
         type: boolean
@@ -64,6 +69,12 @@ jobs:
               echo "=== restarting container ==="
               cd /opt/montr && docker compose up -d
               sleep 8
+              echo
+            fi
+            if [ "${{ inputs.restart_caddy }}" = "true" ]; then
+              echo "=== restarting caddy (flush dns state) ==="
+              cd /opt/montr && docker compose restart caddy
+              sleep 5
               echo
             fi
             echo "=== docker logs --tail ${{ inputs.lines }} (server) ==="
