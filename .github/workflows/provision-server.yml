@@ -94,6 +94,11 @@ jobs:
             cd /opt/montr
             docker compose build server
             docker compose up -d
+            # Flush caddy's Go DNS resolver state: a recreated server container
+            # gets a new bridge IP and caddy sometimes cached the old resolution,
+            # producing `dial tcp: lookup server on 127.0.0.11:53: server
+            # misbehaving` for subsequent requests.
+            docker compose restart caddy
 
             echo "=== docker compose ps ==="
             docker compose ps
