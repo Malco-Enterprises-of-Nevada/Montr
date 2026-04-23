@@ -1,3 +1,18 @@
+# Force HTTP/1.1 on the listener. Cloudflare speaks HTTP/2 or HTTP/3 to
+# origins by default, and when the client upgrades a WebSocket, CF has to
+# translate into RFC 8441 "CONNECT :protocol=websocket" for the origin.
+# That path has flaky interop: we observed the Pi's /ws connection being
+# torn down ~300 ms after registration with code 1006 on both sides, and
+# caddy logging `writing: http2: stream closed` mid-proxy. Forcing h1
+# removes the translation and makes WS behave like a plain HTTP/1.1
+# Upgrade all the way through. Regular HTTP requests are a touch slower
+# without h2 multiplexing but still well under CF's 100 s budget.
+{
+	servers {
+		protocols h1
+	}
+}
+
 montr.budgetvegas.com {
 	# Self-signed internal cert. Cloudflare is the public-facing TLS
 	# endpoint; with CF SSL set to "Full" (not Full-strict) it accepts
