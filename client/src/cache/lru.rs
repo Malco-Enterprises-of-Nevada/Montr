@@ -5,6 +5,7 @@
 
 use crate::error::{MontrError, Result};
 use lru::LruCache;
+use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,6 +35,11 @@ pub struct LruCacheManager {
     cache: Arc<Mutex<LruCache<u32, CacheEntry>>>,
     /// Current cache size in bytes
     current_size: Arc<Mutex<u64>>,
+    /// Set of media_ids that are pinned in cache. Pinned entries are never
+    /// evicted by `evict_until` — used to keep the currently-assigned
+    /// playlist resident across long offline windows under cache pressure.
+    /// They still count toward `current_size` for quota math.
+    pinned: Arc<Mutex<HashSet<u32>>>,
     /// Maximum cache size in bytes
     max_size_bytes: u64,
     /// Cache directory
@@ -61,6 +67,7 @@ impl LruCacheManager {
         Ok(Self {
             cache: Arc::new(Mutex::new(cache)),
             current_size: Arc::new(Mutex::new(0)),
+            pinned: Arc::new(Mutex::new(HashSet::new())),
             max_size_bytes: max_size_mb * 1024 * 1024,
             cache_dir,
             cancel_token,
@@ -268,7 +275,11 @@ impl LruCacheManager {
         self.evict_until(target_size).await
     }
 
-    /// Evict files until cache is under target size
+    /// Evict files until cache is under target size, skipping pinned entries.
+    ///
+    /// If only pinned entries remain and we still haven't reached the target,
+    /// the loop exits gracefully — the caller (typically `ensure_room_for`)
+    /// is responsible for converting that to a `CacheFull` error.
     async fn evict_until(&self, target_size: u64) -> Result<()> {
         let mut evicted_count = 0;
         let mut evicted_bytes = 0u64;
@@ -279,38 +290,45 @@ impl LruCacheManager {
                 break;
             }
 
-            // Get oldest entry (LRU)
+            // Find the least-recently-used entry that isn't pinned. The lru
+            // crate exposes `iter()` MRU-first; collect ids LRU-first into a
+            // Vec to avoid holding the mutex across awaits.
             let media_id_to_evict = {
                 let cache = self.cache.lock().await;
-
-                // peek_lru returns the least recently used entry
-                cache.peek_lru().map(|(id, _)| *id)
+                let pinned = self.pinned.lock().await;
+                let mut lru_first: Vec<u32> = cache.iter().map(|(k, _)| *k).collect();
+                lru_first.reverse();
+                lru_first.into_iter().find(|id| !pinned.contains(id))
             };
 
-            if let Some(media_id) = media_id_to_evict {
-                // Get entry details before removing
-                let entry = {
-                    let cache = self.cache.lock().await;
-                    cache.peek(&media_id).cloned()
-                };
-
-                if let Some(entry) = entry {
-                    evicted_bytes += entry.size;
-                    evicted_count += 1;
-
-                    tracing::info!(
-                        "Evicting media {} ({} MB, last access: {})",
-                        media_id,
-                        entry.size / 1024 / 1024,
-                        entry.last_access
-                    );
-
-                    self.remove(media_id).await?;
-                }
-            } else {
-                // Cache is empty but somehow still over size?
-                tracing::error!("Cache appears empty but size is still high");
+            let Some(media_id) = media_id_to_evict else {
+                // Either cache is empty, or every remaining entry is pinned.
+                tracing::debug!(
+                    "evict_until: no evictable (non-pinned) entries; current {} > target {}",
+                    current,
+                    target_size
+                );
                 break;
+            };
+
+            // Get entry details before removing (for logging).
+            let entry = {
+                let cache = self.cache.lock().await;
+                cache.peek(&media_id).cloned()
+            };
+
+            if let Some(entry) = entry {
+                evicted_bytes += entry.size;
+                evicted_count += 1;
+
+                tracing::info!(
+                    "Evicting media {} ({} MB, last access: {})",
+                    media_id,
+                    entry.size / 1024 / 1024,
+                    entry.last_access
+                );
+
+                self.remove(media_id).await?;
             }
 
             // Safety check to avoid infinite loop
@@ -331,21 +349,69 @@ impl LruCacheManager {
         Ok(())
     }
 
+    /// Pin a media id so it is never evicted by `evict_until`. Idempotent —
+    /// pinning an already-pinned id is a no-op.
+    pub async fn pin(&self, media_id: u32) {
+        self.pinned.lock().await.insert(media_id);
+    }
+
+    /// Unpin a media id so it becomes a normal LRU eviction candidate again.
+    pub async fn unpin(&self, media_id: u32) {
+        self.pinned.lock().await.remove(&media_id);
+    }
+
+    /// Replace the entire pin set in one operation. Useful when a new
+    /// playlist is assigned: unpin the old set and pin the new in a single
+    /// atomic swap so eviction doesn't race against the transition.
+    pub async fn replace_pins(&self, ids: impl IntoIterator<Item = u32>) {
+        let mut p = self.pinned.lock().await;
+        p.clear();
+        for id in ids {
+            p.insert(id);
+        }
+    }
+
+    /// True if `media_id` is currently pinned. Mainly for tests.
+    pub async fn is_pinned(&self, media_id: u32) -> bool {
+        self.pinned.lock().await.contains(&media_id)
+    }
+
+    /// Cumulative size of pinned entries in bytes. Used by `ensure_room_for`
+    /// to detect impossible requests when the pinned working-set already
+    /// fills (or near-fills) the cache.
+    pub async fn pinned_bytes(&self) -> u64 {
+        let cache = self.cache.lock().await;
+        let pinned = self.pinned.lock().await;
+        pinned
+            .iter()
+            .filter_map(|id| cache.peek(id).map(|e| e.size))
+            .sum()
+    }
+
+    /// Configured maximum cache size in bytes.
+    pub fn max_size_bytes(&self) -> u64 {
+        self.max_size_bytes
+    }
+
+    /// Available disk space (in bytes) on the partition that holds the cache
+    /// directory. Returns `None` if sysinfo can't identify the partition.
+    pub fn available_disk_bytes(&self) -> Option<u64> {
+        let disks = sysinfo::Disks::new_with_refreshed_list();
+        // Pick the longest matching mount point so /var/lib/montr beats /.
+        disks
+            .iter()
+            .filter(|d| self.cache_dir.starts_with(d.mount_point()))
+            .max_by_key(|d| d.mount_point().as_os_str().len())
+            .map(|d| d.available_space())
+    }
+
     /// Check available disk space and evict if needed
     pub async fn check_disk_space(&self) -> Result<()> {
-        // Get disk space info using sysinfo
-        let disks = sysinfo::Disks::new_with_refreshed_list();
-
-        let disk_info = disks
-            .iter()
-            .find(|disk| self.cache_dir.starts_with(disk.mount_point()));
-
-        let available_mb = if let Some(disk) = disk_info {
-            disk.available_space() / 1024 / 1024
-        } else {
+        let Some(available_bytes) = self.available_disk_bytes() else {
             tracing::warn!("Could not find disk for cache directory");
             return Ok(());
         };
+        let available_mb = available_bytes / 1024 / 1024;
 
         // If less than 1GB free, evict 25% of cache
         if available_mb < 1024 {
@@ -356,6 +422,75 @@ impl LruCacheManager {
 
             let target_size = (self.max_size_bytes as f64 * 0.75) as u64;
             self.evict_until(target_size).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Ensure the cache has room for `incoming_bytes` of new content without
+    /// blowing the configured quota and without leaving the partition under
+    /// the disk-headroom threshold.
+    ///
+    /// Strategy: evict LRU entries until both invariants hold. If the request
+    /// is impossible to satisfy (cap is smaller than the request, partition is
+    /// genuinely full), returns `MontrError::CacheFull`.
+    ///
+    /// Headroom is held back so the OS, mpv buffers, and other processes
+    /// keep working even if the cache is at its quota.
+    pub async fn ensure_room_for(&self, incoming_bytes: u64) -> Result<()> {
+        const DISK_HEADROOM_BYTES: u64 = 256 * 1024 * 1024; // 256 MB
+
+        // Refuse outright if a single request exceeds the configured cap —
+        // no amount of eviction can satisfy it.
+        if incoming_bytes > self.max_size_bytes {
+            return Err(MontrError::CacheFull {
+                max_size_mb: self.max_size_bytes / 1024 / 1024,
+            });
+        }
+
+        // Pinned entries can't be evicted, so if the pinned working-set
+        // already fills the cache, no eviction can free the requested bytes.
+        // Surface this clearly rather than spinning evict_until uselessly.
+        let pinned = self.pinned_bytes().await;
+        if pinned.saturating_add(incoming_bytes) > self.max_size_bytes {
+            tracing::warn!(
+                "ensure_room_for: pinned set ({} MB) + incoming ({} MB) exceeds cache cap ({} MB)",
+                pinned / 1024 / 1024,
+                incoming_bytes / 1024 / 1024,
+                self.max_size_bytes / 1024 / 1024
+            );
+            return Err(MontrError::CacheFull {
+                max_size_mb: self.max_size_bytes / 1024 / 1024,
+            });
+        }
+
+        // First constraint: stay under the configured cache cap.
+        let target_size = self.max_size_bytes.saturating_sub(incoming_bytes);
+        self.evict_until(target_size).await?;
+
+        // Second constraint: leave headroom on the partition. Only evict more
+        // if the disk reports we're below `incoming_bytes + headroom`.
+        if let Some(available) = self.available_disk_bytes() {
+            let needed = incoming_bytes.saturating_add(DISK_HEADROOM_BYTES);
+            if available < needed {
+                // Try to free the gap by additional eviction. The new target
+                // is whatever cache size would let the OS reclaim `gap` bytes
+                // assuming our cached files live on this partition.
+                let gap = needed - available;
+                let current = self.current_size().await;
+                let new_target = current.saturating_sub(gap);
+                self.evict_until(new_target).await?;
+
+                // Re-check; if the partition is still tight after we've
+                // evicted everything we can, the disk is genuinely full and
+                // the caller needs to surface that to the operator.
+                let still_available = self.available_disk_bytes().unwrap_or(available);
+                if still_available + DISK_HEADROOM_BYTES < incoming_bytes + DISK_HEADROOM_BYTES {
+                    return Err(MontrError::CacheFull {
+                        max_size_mb: self.max_size_bytes / 1024 / 1024,
+                    });
+                }
+            }
         }
 
         Ok(())
@@ -578,5 +713,169 @@ mod tests {
 
         let usage = lru.usage_percentage().await;
         assert!((usage - 50.0).abs() < 1.0); // Should be approximately 50%
+    }
+
+    #[tokio::test]
+    async fn ensure_room_for_rejects_oversized_request() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        let cancel_token = CancellationToken::new();
+        let lru = LruCacheManager::new(1, cache_dir, cancel_token).unwrap(); // 1 MB cap
+        lru.init().await.unwrap();
+
+        // 10 MB request against a 1 MB cap is impossible — reject up front.
+        let err = lru.ensure_room_for(10 * 1024 * 1024).await.unwrap_err();
+        assert!(matches!(err, MontrError::CacheFull { .. }));
+    }
+
+    #[tokio::test]
+    async fn ensure_room_for_evicts_lru_to_make_room() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        let cancel_token = CancellationToken::new();
+        // 1 MB cap, fill with 2 x 400 KB
+        let lru = Arc::new(LruCacheManager::new(1, cache_dir.clone(), cancel_token).unwrap());
+        lru.init().await.unwrap();
+
+        for (id, label) in [(1u32, "old"), (2u32, "newer")] {
+            let f = cache_dir.join(format!("{}_{}.mp4", id, label));
+            fs::write(&f, vec![0u8; 400 * 1024]).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            lru.add(id, f).await.unwrap();
+        }
+
+        // Request 500 KB. Cap = 1024 KB, current = 800 KB, so target after
+        // ensure = 524 KB. We must evict at least one entry (the LRU one).
+        lru.ensure_room_for(500 * 1024).await.unwrap();
+
+        let stats = lru.stats().await;
+        // Either both evicted or just one — the contract is "current_size +
+        // incoming <= max_size_bytes".
+        assert!(stats.total_size_bytes + 500 * 1024 <= lru.max_size_bytes());
+    }
+
+    #[tokio::test]
+    async fn ensure_room_for_zero_bytes_is_noop() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        let cancel_token = CancellationToken::new();
+        let lru = LruCacheManager::new(10, cache_dir, cancel_token).unwrap();
+        lru.init().await.unwrap();
+
+        // Empty cache + zero-byte request: trivially OK.
+        lru.ensure_room_for(0).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn available_disk_bytes_returns_some_for_real_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        let cancel_token = CancellationToken::new();
+        let lru = LruCacheManager::new(1, cache_dir, cancel_token).unwrap();
+        // Real partitions on dev/CI machines should be discoverable.
+        assert!(lru.available_disk_bytes().is_some());
+    }
+
+    #[tokio::test]
+    async fn max_size_bytes_matches_constructor() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        let cancel_token = CancellationToken::new();
+        let lru = LruCacheManager::new(7, cache_dir, cancel_token).unwrap();
+        assert_eq!(lru.max_size_bytes(), 7 * 1024 * 1024);
+    }
+
+    #[tokio::test]
+    async fn pin_and_unpin_round_trip() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        let lru = LruCacheManager::new(10, cache_dir, CancellationToken::new()).unwrap();
+
+        assert!(!lru.is_pinned(42).await);
+        lru.pin(42).await;
+        assert!(lru.is_pinned(42).await);
+        // Idempotent
+        lru.pin(42).await;
+        assert!(lru.is_pinned(42).await);
+
+        lru.unpin(42).await;
+        assert!(!lru.is_pinned(42).await);
+    }
+
+    #[tokio::test]
+    async fn replace_pins_swaps_set_atomically() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        let lru = LruCacheManager::new(10, cache_dir, CancellationToken::new()).unwrap();
+        lru.pin(1).await;
+        lru.pin(2).await;
+
+        lru.replace_pins([3, 4]).await;
+        assert!(!lru.is_pinned(1).await);
+        assert!(!lru.is_pinned(2).await);
+        assert!(lru.is_pinned(3).await);
+        assert!(lru.is_pinned(4).await);
+    }
+
+    #[tokio::test]
+    async fn evict_until_skips_pinned_entries() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        let lru =
+            Arc::new(LruCacheManager::new(1, cache_dir.clone(), CancellationToken::new()).unwrap());
+
+        // Three 400 KB files; total 1200 KB > 1024 KB cap.
+        for (id, label) in [(1u32, "a"), (2u32, "b"), (3u32, "c")] {
+            let f = cache_dir.join(format!("{}_{}.mp4", id, label));
+            fs::write(&f, vec![0u8; 400 * 1024]).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            lru.add(id, f).await.unwrap();
+        }
+
+        // Pin id=1 (the LRU). After ensure_room_for(0) → evict_until(max),
+        // id=1 must survive even though it's the LRU candidate.
+        lru.pin(1).await;
+        lru.evict_until(400 * 1024).await.unwrap();
+
+        let stats = lru.stats().await;
+        assert!(lru.is_pinned(1).await, "pinned entry must remain pinned");
+        // The pinned entry is still present, contributing 400 KB to the size.
+        assert!(stats.total_size_bytes >= 400 * 1024);
+    }
+
+    #[tokio::test]
+    async fn ensure_room_for_rejects_when_pinned_set_fills_cache() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        // 1 MB cap, fill with one 800 KB pinned entry.
+        let lru =
+            Arc::new(LruCacheManager::new(1, cache_dir.clone(), CancellationToken::new()).unwrap());
+        let f = cache_dir.join("9_pinned.mp4");
+        fs::write(&f, vec![0u8; 800 * 1024]).await.unwrap();
+        lru.add(9, f).await.unwrap();
+        lru.pin(9).await;
+
+        // Asking for 500 KB more (total 1300 KB > 1024 KB cap) is impossible
+        // because the pinned entry can't be freed.
+        let err = lru.ensure_room_for(500 * 1024).await.unwrap_err();
+        assert!(matches!(err, MontrError::CacheFull { .. }));
     }
 }

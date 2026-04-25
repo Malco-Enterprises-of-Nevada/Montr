@@ -3,17 +3,22 @@
 //! Sends periodic heartbeat (30s) and status (10s) messages to the server
 //! via WebSocket connection.
 
+use crate::config::Config;
 use crate::error::Result;
 use crate::network::protocol::ClientMessage;
 use crate::state::app_state::AppState;
+use arc_swap::ArcSwap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
-use tokio::time::{interval, Duration};
+use tokio::sync::{mpsc, Notify};
+use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
 
 /// Status reporter
 ///
 /// Spawns background tasks to send periodic heartbeat and status updates.
+/// Intervals are read live from a shared config snapshot when one is wired,
+/// so SIGHUP-driven hot reload takes effect on the next iteration of each
+/// loop. Tests pass fixed `_secs` fields and skip the snapshot.
 pub struct StatusReporter {
     /// Application state
     state: Arc<AppState>,
@@ -21,21 +26,21 @@ pub struct StatusReporter {
     ws_tx: mpsc::UnboundedSender<ClientMessage>,
     /// Cancellation token
     cancel_token: CancellationToken,
-    /// Heartbeat interval in seconds
+    /// Heartbeat interval fallback (used when `cfg_snap` is None — tests).
     heartbeat_interval_secs: u64,
-    /// Status update interval in seconds
+    /// Status update interval fallback (used when `cfg_snap` is None — tests).
     status_interval_secs: u64,
+    /// Shared config snapshot read on every tick when present.
+    cfg_snap: Option<Arc<ArcSwap<Config>>>,
+    /// Wake source so SIGHUP reload can interrupt the current sleep.
+    config_changed: Option<Arc<Notify>>,
 }
 
 impl StatusReporter {
-    /// Create a new status reporter
+    /// Create a new status reporter with fixed intervals (legacy / tests).
     ///
-    /// # Arguments
-    /// * `state` - Application state to read from
-    /// * `ws_tx` - WebSocket sender for messages
-    /// * `heartbeat_interval_secs` - Heartbeat interval (default: 30s)
-    /// * `status_interval_secs` - Status update interval (default: 10s)
-    /// * `cancel_token` - Cancellation token for shutdown
+    /// In production wiring, follow with `.with_cfg_snap()` so SIGHUP can
+    /// hot-reload the intervals without restart.
     pub fn new(
         state: Arc<AppState>,
         ws_tx: mpsc::UnboundedSender<ClientMessage>,
@@ -49,6 +54,34 @@ impl StatusReporter {
             cancel_token,
             heartbeat_interval_secs,
             status_interval_secs,
+            cfg_snap: None,
+            config_changed: None,
+        }
+    }
+
+    /// Wire in the shared config snapshot + reload notifier so the heartbeat
+    /// and status loops re-read their intervals on every tick.
+    pub fn with_cfg_snap(
+        mut self,
+        cfg_snap: Arc<ArcSwap<Config>>,
+        config_changed: Arc<Notify>,
+    ) -> Self {
+        self.cfg_snap = Some(cfg_snap);
+        self.config_changed = Some(config_changed);
+        self
+    }
+
+    fn heartbeat_interval(&self) -> u64 {
+        match self.cfg_snap.as_ref() {
+            Some(snap) => snap.load().server.heartbeat_interval,
+            None => self.heartbeat_interval_secs,
+        }
+    }
+
+    fn status_interval(&self) -> u64 {
+        match self.cfg_snap.as_ref() {
+            Some(snap) => snap.load().client.status_interval_secs,
+            None => self.status_interval_secs,
         }
     }
 
@@ -65,24 +98,36 @@ impl StatusReporter {
     /// Start heartbeat task
     ///
     /// Sends heartbeat messages at configured interval to keep connection alive.
+    /// Re-reads the interval each iteration so SIGHUP hot-reload takes effect
+    /// without process restart.
     fn start_heartbeat_task(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         let cancel_token = self.cancel_token.clone();
+        let config_changed = self.config_changed.clone();
 
         tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(self.heartbeat_interval_secs));
-
             tracing::info!(
-                "Heartbeat task started (interval: {}s)",
-                self.heartbeat_interval_secs
+                "Heartbeat task started (initial interval: {}s)",
+                self.heartbeat_interval()
             );
 
             loop {
+                let next = Duration::from_secs(self.heartbeat_interval().max(1));
+                let notify_fut = async {
+                    match config_changed.as_ref() {
+                        Some(n) => n.notified().await,
+                        None => std::future::pending().await,
+                    }
+                };
                 tokio::select! {
                     _ = cancel_token.cancelled() => {
                         tracing::info!("Heartbeat task shutting down");
                         break;
                     }
-                    _ = interval.tick() => {
+                    _ = notify_fut => {
+                        // Config swapped — restart the loop to re-read interval.
+                        continue;
+                    }
+                    _ = sleep(next) => {
                         if let Err(e) = self.send_heartbeat().await {
                             tracing::warn!("Failed to send heartbeat: {}", e);
                         }
@@ -95,24 +140,33 @@ impl StatusReporter {
     /// Start status update task
     ///
     /// Sends status updates at configured interval to report playback state.
+    /// Re-reads the interval each iteration so SIGHUP hot-reload takes effect
+    /// without process restart.
     fn start_status_task(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         let cancel_token = self.cancel_token.clone();
+        let config_changed = self.config_changed.clone();
 
         tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(self.status_interval_secs));
-
             tracing::info!(
-                "Status update task started (interval: {}s)",
-                self.status_interval_secs
+                "Status update task started (initial interval: {}s)",
+                self.status_interval()
             );
 
             loop {
+                let next = Duration::from_secs(self.status_interval().max(1));
+                let notify_fut = async {
+                    match config_changed.as_ref() {
+                        Some(n) => n.notified().await,
+                        None => std::future::pending().await,
+                    }
+                };
                 tokio::select! {
                     _ = cancel_token.cancelled() => {
                         tracing::info!("Status update task shutting down");
                         break;
                     }
-                    _ = interval.tick() => {
+                    _ = notify_fut => continue,
+                    _ = sleep(next) => {
                         if let Err(e) = self.send_status_update().await {
                             tracing::warn!("Failed to send status update: {}", e);
                         }
@@ -262,6 +316,7 @@ mod tests {
             order_index: 0,
             image_duration: 5,
             subtitles: Vec::new(),
+            file_size: None,
         }];
 
         state.update_playlist(1, items, false).await.unwrap();

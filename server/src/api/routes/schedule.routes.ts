@@ -4,7 +4,10 @@
 
 import { Router, Request, Response } from 'express';
 import { scheduleService } from '../../services/schedule.service';
+import { sendSchedulesToClient } from '../../websocket/handlers';
 import { asyncHandler, successResponse } from '../middleware/error-handler';
+import { getLogger } from '../../utils/logger';
+import { Schedule } from '../../database/types';
 import {
   validateParams,
   validateBody,
@@ -17,6 +20,22 @@ import {
 import { requireRole } from '../middleware/jwt-auth';
 
 const router = Router();
+const logger = getLogger();
+
+/**
+ * After a schedule is created/updated/deleted, fan out fresh schedule
+ * definitions to every affected client (best-effort — failures are logged
+ * but never block the HTTP response). For deletes, callers pass the
+ * pre-delete schedule so we still know its scope.
+ */
+async function pushSchedulesToAffectedClients(schedule: Schedule): Promise<void> {
+  try {
+    const clientIds = await scheduleService.getClientsForSchedule(schedule);
+    await Promise.all(clientIds.map((id) => sendSchedulesToClient(id)));
+  } catch (e) {
+    logger.error(`Failed to push schedule definitions for schedule ${schedule.id}:`, e);
+  }
+}
 
 /**
  * POST /api/schedules
@@ -28,6 +47,7 @@ router.post(
   validateBody(createScheduleSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const schedule = await scheduleService.createSchedule(req.body);
+    await pushSchedulesToAffectedClients(schedule);
     res.status(201).json(successResponse(schedule));
   })
 );
@@ -71,7 +91,12 @@ router.put(
   asyncHandler(async (req: Request, res: Response) => {
     const params = req.params as unknown as { id: number };
     const { id } = params;
+    // Capture the pre-update target set so a moved schedule (e.g. client_id
+    // change) refreshes both the old and new client's view.
+    const previous = await scheduleService.getScheduleById(id);
     const schedule = await scheduleService.updateSchedule(id, req.body);
+    await pushSchedulesToAffectedClients(previous);
+    await pushSchedulesToAffectedClients(schedule);
     res.json(successResponse(schedule));
   })
 );
@@ -87,7 +112,11 @@ router.delete(
   asyncHandler(async (req: Request, res: Response) => {
     const params = req.params as unknown as { id: number };
     const { id } = params;
+    // Capture targets before delete so we can push refreshed (now-shorter)
+    // schedule lists to the clients that previously had this one.
+    const previous = await scheduleService.getScheduleById(id);
     await scheduleService.deleteSchedule(id);
+    await pushSchedulesToAffectedClients(previous);
     res.json(successResponse({ message: 'Schedule deleted successfully', id }));
   })
 );

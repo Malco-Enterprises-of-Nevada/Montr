@@ -336,13 +336,3 @@ Phases 1-4 are complete. This file tracks what remains.
 - [x] **Web UI**: Mode toggle (simple/advanced/event), conditions accordion, template picker modal, preview modal, save-from-template flow
 - [x] **Tests**: 32 new unit tests across `cron-matcher`, `condition-evaluator`, `conflict-resolver`; extended `schedule.service.test.ts` for cron, conflict resolution, conditions, simulation, event triggers
 
-### A/B Testing for Content
-- [ ] **Schema**: Add `experiments` table (id, name, playlist_a_id, playlist_b_id, split_ratio, start_date, end_date, status)
-- [ ] **Schema**: Add `experiment_results` table (id, experiment_id, client_id, variant, engagement_metric)
-- [ ] **Server service**: `ExperimentService` — assign clients to variants, track results
-- [ ] **Server API**: CRUD for `/api/experiments`
-- [ ] **Server API**: `GET /api/experiments/:id/results` — statistical analysis of variants
-- [ ] **Assignment**: Consistent hashing of client ID to variant (stable assignment)
-- [ ] **Metrics**: Track completion rate, dwell time, error rate per variant
-- [ ] **Web UI**: Experiment creation wizard, results dashboard with statistical significance indicator
-- [ ] **Tests**: Variant assignment tests, metrics aggregation tests

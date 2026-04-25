@@ -55,7 +55,7 @@ describe('MigrationRunner', () => {
       "SELECT value FROM system_state WHERE key = 'schema_version'",
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0].value).toBe('2.4.0');
+    expect(rows[0].value).toBe('2.5.0');
   });
 
   it('should not re-run already applied migrations', async () => {
@@ -68,7 +68,7 @@ describe('MigrationRunner', () => {
       'SELECT version FROM schema_migrations',
     );
     // Should still have all applied migrations (001 through the latest)
-    expect(rows).toHaveLength(17);
+    expect(rows).toHaveLength(18);
   });
 
   it('should report migration status', async () => {
@@ -98,7 +98,7 @@ describe('MigrationRunner', () => {
     const rows = await executor.querySql!<{ version: string }>(
       'SELECT version FROM schema_migrations ORDER BY rowid',
     );
-    expect(rows).toHaveLength(17);
+    expect(rows).toHaveLength(18);
     expect(rows[0].version).toBe('1.0.0');
     expect(rows[1].version).toBe('1.1.0');
     expect(rows[2].version).toBe('1.2.0');
@@ -116,6 +116,7 @@ describe('MigrationRunner', () => {
     expect(rows[14].version).toBe('2.2.0');
     expect(rows[15].version).toBe('2.3.0');
     expect(rows[16].version).toBe('2.4.0');
+    expect(rows[17].version).toBe('2.5.0');
 
     await baselineAdapter.disconnect();
     fs.rmSync(baselineDir, { recursive: true, force: true });

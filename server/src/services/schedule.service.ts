@@ -138,6 +138,43 @@ export class ScheduleService {
     logger.info(`Schedule deleted: ${id}`);
   }
 
+  // ── Client targeting (for push) ──────────────────────────────────────────
+
+  /**
+   * Resolve which client UUIDs are in scope for a schedule:
+   *   - `client_id` set → just that one
+   *   - `group_id` set → all members of that group
+   *   - both null → all known clients (global schedule)
+   */
+  async getClientsForSchedule(schedule: Schedule): Promise<string[]> {
+    const db = await getDatabase();
+    if (schedule.client_id) return [schedule.client_id];
+    if (schedule.group_id) {
+      const members = await db.getGroupMembers(schedule.group_id);
+      return members.map((m) => m.id);
+    }
+    const clients = await db.getAllClients();
+    return clients.map((c) => c.id);
+  }
+
+  /**
+   * All schedules that apply to a single client: directly client-scoped,
+   * scoped to one of the client's groups, or global. Used by the WS push
+   * helper at registration and after CRUD/group changes.
+   */
+  async getSchedulesForClient(clientId: string): Promise<Schedule[]> {
+    const db = await getDatabase();
+    const all = await db.getAllSchedules();
+    const groups = await db.getClientGroups(clientId);
+    const groupIds = new Set(groups.map((g) => g.id));
+    return all.filter((s) => {
+      if (s.client_id === clientId) return true;
+      if (s.group_id != null && groupIds.has(s.group_id)) return true;
+      // Global schedule — applies to every client.
+      return s.client_id == null && s.group_id == null;
+    });
+  }
+
   // ── Activation logic ─────────────────────────────────────────────────────
 
   /**

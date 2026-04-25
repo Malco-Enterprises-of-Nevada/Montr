@@ -60,6 +60,16 @@ pub struct ClientConfig {
     /// Set to 0 to disable preview capture entirely.
     #[serde(default = "default_preview_interval_secs")]
     pub preview_interval_secs: u64,
+
+    /// Interval in seconds between status_update messages to the server.
+    /// Reload-safe via SIGHUP.
+    #[serde(default = "default_status_interval_secs")]
+    pub status_interval_secs: u64,
+
+    /// Interval in seconds between telemetry messages to the server.
+    /// Reload-safe via SIGHUP.
+    #[serde(default = "default_telemetry_interval_secs")]
+    pub telemetry_interval_secs: u64,
 }
 
 /// Media playback configuration
@@ -80,9 +90,18 @@ pub struct PlaybackConfig {
     #[serde(default = "default_max_cache_size")]
     pub max_cache_size_mb: u64,
 
-    /// Number of upcoming items to pre-fetch
+    /// Number of upcoming items to pre-fetch (count cap; always enforced).
     #[serde(default = "default_preload_next_items")]
     pub preload_next_items: usize,
+
+    /// Optional cap on cumulative bytes pre-fetched per `preload_upcoming`
+    /// pass. When `Some`, preload stops at the first upcoming item that
+    /// would push the running byte total over the budget — even if the
+    /// item-count cap (`preload_next_items`) hasn't been reached. When
+    /// `None` (default), preload uses the count cap only. Items whose
+    /// server didn't emit `file_size` contribute 0 to the byte total.
+    #[serde(default)]
+    pub preload_bytes_budget: Option<u64>,
 
     /// Seconds to wait at startup for the server to assign a playlist before
     /// falling back to the last-known playlist cached on disk. Set to 0 to
@@ -184,6 +203,14 @@ fn default_offline_fallback_grace_secs() -> u64 {
 
 fn default_preview_interval_secs() -> u64 {
     10
+}
+
+fn default_status_interval_secs() -> u64 {
+    10
+}
+
+fn default_telemetry_interval_secs() -> u64 {
+    60
 }
 
 fn default_auto_update() -> bool {
@@ -321,6 +348,8 @@ mod tests {
                 id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
                 name: "Test Client".to_string(),
                 preview_interval_secs: 10,
+                status_interval_secs: 10,
+                telemetry_interval_secs: 60,
             },
             playback: PlaybackConfig {
                 default_image_duration: 5,
@@ -328,6 +357,7 @@ mod tests {
                 media_cache_dir: PathBuf::from("./cache"),
                 max_cache_size_mb: 5000,
                 preload_next_items: 2,
+                preload_bytes_budget: None,
                 offline_fallback_grace_secs: 5,
             },
             system: SystemConfig {

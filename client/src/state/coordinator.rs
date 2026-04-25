@@ -8,14 +8,18 @@
 //! - Emits status updates for reporter
 
 use crate::cache::CacheManager;
+use crate::config::Config;
 use crate::error::{MontrError, Result};
-use crate::network::{HttpClient, PlaylistItem, ServerMessage};
+use crate::network::protocol::ClientMessage;
+use crate::network::{ErrorSeverity, HttpClient, PlaylistItem, Schedule, ServerMessage};
 use crate::playback::engine::{PlaybackCommand, PlaybackEngineOps};
 use crate::state::app_state::AppState;
 use crate::state::persistence;
+use arc_swap::ArcSwap;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{mpsc, Notify, RwLock};
 use tokio_util::sync::CancellationToken;
 
 /// Message types for internal communication
@@ -30,6 +34,10 @@ pub enum CoordinatorMessage {
     /// Grace period elapsed without a playlist from the server — try to
     /// restore the last-known playlist from disk and start playback.
     TryOfflineRestore,
+    /// Offline schedule evaluator picked a different playlist than the one
+    /// we're currently playing. Coordinator looks up the cached snapshot
+    /// for `playlist_id` and starts it; logs a warning if uncached.
+    OfflineScheduleSwitch { playlist_id: u32 },
 }
 
 /// Playback events from the engine
@@ -63,8 +71,17 @@ pub struct StateCoordinator {
     cancel_token: CancellationToken,
     /// Notify signal for download completion events
     download_notify: Arc<Notify>,
-    /// Number of upcoming items to pre-fetch
+    /// Optional shared config snapshot — when present, `preload_upcoming`
+    /// reads `preload_next_items` and `preload_bytes_budget` from this on
+    /// every pass so SIGHUP-driven hot reload takes effect immediately.
+    /// Tests use the legacy fixed-value fields below instead.
+    cfg_snap: Option<Arc<ArcSwap<Config>>>,
+    /// Fallback when `cfg_snap` is None (test fixtures). Number of upcoming
+    /// items to pre-fetch.
     preload_next_items: usize,
+    /// Fallback when `cfg_snap` is None (test fixtures). Optional cumulative-
+    /// bytes cap on each preload pass.
+    preload_bytes_budget: Option<u64>,
     /// HTTP client for analytics reporting
     http_client: Arc<HttpClient>,
     /// API key for authenticated requests
@@ -86,6 +103,22 @@ pub struct StateCoordinator {
     preferred_subtitle_language: Option<String>,
     /// Optional `sub-font-size` override passed to mpv on each play.
     subtitle_font_size: Option<u32>,
+    /// Optional WebSocket sender — when configured, `report_error()` enqueues
+    /// `ClientMessage::Error` here so the server learns about client-side
+    /// faults instead of them being logged and dropped.
+    ws_tx: Option<mpsc::UnboundedSender<ClientMessage>>,
+    /// Optional channel for on-demand screenshot requests carrying a
+    /// `request_id`. Drained by the screenshot task in `main.rs` which holds
+    /// the playback engine and HTTP client needed for capture+upload.
+    screenshot_tx: Option<mpsc::UnboundedSender<String>>,
+    /// Optional playback engine handle — when present, end_analytics_session
+    /// queries `take_quality_snapshot()` and forwards per-media metrics to
+    /// the analytics API. Tests using mock engines leave this as `None`.
+    playback_engine: Option<Arc<crate::playback::engine::PlaybackEngine>>,
+    /// Latest schedule definitions pushed by the server. Shared so the
+    /// offline-eval task in main.rs can read without touching coordinator
+    /// internals; written here in response to `ScheduleDefinitions`.
+    schedules: Arc<RwLock<Vec<Schedule>>>,
 }
 
 impl StateCoordinator {
@@ -110,7 +143,9 @@ impl StateCoordinator {
             message_tx,
             cancel_token,
             download_notify: Arc::new(Notify::new()),
+            cfg_snap: None,
             preload_next_items,
+            preload_bytes_budget: None,
             http_client,
             api_key,
             current_playback_log_id: None,
@@ -120,7 +155,67 @@ impl StateCoordinator {
             subtitles_enabled: false,
             preferred_subtitle_language: None,
             subtitle_font_size: None,
+            ws_tx: None,
+            screenshot_tx: None,
+            playback_engine: None,
+            schedules: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    /// Shared read handle on the latest known schedule set. The offline
+    /// schedule-eval task clones this and reads on every tick. Updated
+    /// in-place when a `ServerMessage::ScheduleDefinitions` arrives.
+    pub fn schedules_handle(&self) -> Arc<RwLock<Vec<Schedule>>> {
+        self.schedules.clone()
+    }
+
+    /// Return the message-sender clone so other subsystems can also push
+    /// `OfflineScheduleSwitch` events. Equivalent to `message_sender()`
+    /// but named explicitly for the offline-eval task in main.rs.
+    pub fn message_tx(&self) -> mpsc::UnboundedSender<CoordinatorMessage> {
+        self.message_tx.clone()
+    }
+
+    /// Wire in the concrete playback engine so the coordinator can read
+    /// per-media quality metrics on `end_analytics_session`. Optional —
+    /// tests that pass a mock engine for command_sender can omit this.
+    pub fn with_playback_engine(
+        mut self,
+        engine: Arc<crate::playback::engine::PlaybackEngine>,
+    ) -> Self {
+        self.playback_engine = Some(engine);
+        self
+    }
+
+    /// Cap cumulative preload bytes per pass. `None` (default) uses the
+    /// item-count cap only. Used only when `cfg_snap` is unset (tests).
+    pub fn with_preload_bytes_budget(mut self, budget: Option<u64>) -> Self {
+        self.preload_bytes_budget = budget;
+        self
+    }
+
+    /// Wire in the shared config snapshot. When set, `preload_upcoming` reads
+    /// `preload_next_items` and `preload_bytes_budget` from the live snapshot
+    /// each pass instead of using the values captured at construction. SIGHUP
+    /// reload then takes effect on the next preload tick.
+    pub fn with_cfg_snap(mut self, cfg_snap: Arc<ArcSwap<Config>>) -> Self {
+        self.cfg_snap = Some(cfg_snap);
+        self
+    }
+
+    /// Wire in the WebSocket sender so the coordinator can push
+    /// `ClientMessage::Error` reports for client-side faults.
+    pub fn with_ws_sender(mut self, ws_tx: mpsc::UnboundedSender<ClientMessage>) -> Self {
+        self.ws_tx = Some(ws_tx);
+        self
+    }
+
+    /// Wire in the on-demand screenshot trigger channel. The receiving task
+    /// (in `main.rs`) holds the engine + HTTP client needed to actually take
+    /// the snapshot and upload it.
+    pub fn with_screenshot_sender(mut self, tx: mpsc::UnboundedSender<String>) -> Self {
+        self.screenshot_tx = Some(tx);
+        self
     }
 
     /// Opt into subtitle rendering and set the preferred language + font size.
@@ -195,6 +290,9 @@ impl StateCoordinator {
                 self.handle_download_complete(media_id, success).await
             }
             CoordinatorMessage::TryOfflineRestore => self.handle_try_offline_restore().await,
+            CoordinatorMessage::OfflineScheduleSwitch { playlist_id } => {
+                self.handle_offline_schedule_switch(playlist_id).await
+            }
         }
     }
 
@@ -234,6 +332,10 @@ impl StateCoordinator {
                 self.persist_playlist(msg.playlist_id, &msg.items, msg.loop_playlist)
                     .await;
 
+                // Pin the assigned items in the cache so they survive eviction
+                // during long offline windows. Replaces the prior pin set.
+                self.cache_manager.pin_playlist_items(&msg.items).await;
+
                 // Download media and start playback as soon as first item is ready
                 self.download_and_start(msg.items).await?;
 
@@ -262,6 +364,8 @@ impl StateCoordinator {
                 self.persist_playlist(msg.playlist_id, &msg.items, msg.loop_playlist)
                     .await;
 
+                self.cache_manager.pin_playlist_items(&msg.items).await;
+
                 let ready = self.download_playlist_media(msg.items).await?;
 
                 if !new_items_have_current && ready > 0 {
@@ -288,6 +392,10 @@ impl StateCoordinator {
                     .update_playlist(msg.playlist_id, msg.items.clone(), msg.loop_playlist)
                     .await?;
 
+                // Pin the interrupt playlist for the duration it's active.
+                // PlaylistResume re-pins the restored playlist below.
+                self.cache_manager.pin_playlist_items(&msg.items).await;
+
                 self.download_and_start(msg.items).await?;
                 Ok(())
             }
@@ -306,6 +414,7 @@ impl StateCoordinator {
                         .await?;
                     self.persist_playlist(playlist_id, &msg.items, msg.loop_playlist)
                         .await;
+                    self.cache_manager.pin_playlist_items(&msg.items).await;
                     self.download_and_start(msg.items).await?;
                 } else {
                     self.state.clear_playlist().await;
@@ -402,6 +511,27 @@ impl StateCoordinator {
                             tracing::error!("fetch_logs handler failed: {}", e);
                         }
                     }
+                    "screenshot" => {
+                        let request_id = cmd
+                            .args
+                            .as_ref()
+                            .and_then(|a| a.get("request_id"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let Some(request_id) = request_id else {
+                            tracing::warn!("screenshot command missing request_id");
+                            return Ok(());
+                        };
+                        let Some(tx) = self.screenshot_tx.as_ref() else {
+                            tracing::warn!(
+                                "screenshot command received but no screenshot task wired"
+                            );
+                            return Ok(());
+                        };
+                        if let Err(e) = tx.send(request_id) {
+                            tracing::warn!("Failed to enqueue screenshot request: {}", e);
+                        }
+                    }
                     _ => {
                         tracing::warn!("Unknown command: {}", cmd.command);
                     }
@@ -415,9 +545,86 @@ impl StateCoordinator {
             }
             ServerMessage::ErrorResponse(msg) => {
                 tracing::error!("Server error: {}", msg.error);
+                self.report_error("server", ErrorSeverity::Warn, msg.error.clone(), None)
+                    .await;
+                Ok(())
+            }
+            ServerMessage::ScheduleDefinitions(msg) => {
+                tracing::info!(
+                    "Received {} schedule definition(s) from server",
+                    msg.schedules.len()
+                );
+                {
+                    let mut s = self.schedules.write().await;
+                    *s = msg.schedules.clone();
+                }
+                // Persist so offline boot still has the latest schedule set.
+                if let Some(ref dir) = self.cache_dir {
+                    if let Err(e) = persistence::save_schedules(dir, &msg.schedules).await {
+                        tracing::warn!("Failed to persist schedules: {}", e);
+                    }
+                }
                 Ok(())
             }
         }
+    }
+
+    /// Apply a switch chosen by the offline schedule evaluator. The target
+    /// playlist must already be cached (we can't download offline) — if
+    /// not, log and return without changing playback.
+    async fn handle_offline_schedule_switch(&mut self, playlist_id: u32) -> Result<()> {
+        let Some(ref cache_dir) = self.cache_dir else {
+            tracing::debug!("Offline schedule switch ignored: no cache_dir wired (test fixture)");
+            return Ok(());
+        };
+
+        // Skip when the chosen playlist is already the one playing.
+        if let Some(current) = self.state.playlist_id().await {
+            if current == playlist_id {
+                tracing::debug!(
+                    "Offline schedule switch: playlist {} already active, no-op",
+                    playlist_id
+                );
+                return Ok(());
+            }
+        }
+
+        let snapshot = match persistence::load_playlist_versioned(cache_dir, playlist_id).await? {
+            Some(s) => s,
+            None => {
+                tracing::warn!(
+                    "Offline schedule wants to switch to playlist {} but it's not cached; ignoring",
+                    playlist_id
+                );
+                return Ok(());
+            }
+        };
+
+        tracing::info!(
+            "Offline schedule switch: -> playlist {} ({} items)",
+            snapshot.playlist_id,
+            snapshot.items.len()
+        );
+
+        // End any in-flight analytics session before swapping playlists.
+        self.end_analytics_session(false).await;
+
+        self.state
+            .update_playlist(
+                snapshot.playlist_id,
+                snapshot.items.clone(),
+                snapshot.loop_enabled,
+            )
+            .await?;
+
+        // Pin the items in the cache so cache pressure doesn't evict them
+        // while this offline-selected playlist plays.
+        self.cache_manager.pin_playlist_items(&snapshot.items).await;
+
+        // download_and_start no-ops the actual transfers when items are
+        // already cached, but still kicks off playback for the first item.
+        self.download_and_start(snapshot.items).await?;
+        Ok(())
     }
 
     /// Handle playback events
@@ -450,6 +657,11 @@ impl StateCoordinator {
             }
             PlaybackEventMessage::Error { media_id, error } => {
                 tracing::error!("Playback error for media {}: {}", media_id, error);
+
+                let mut ctx = HashMap::new();
+                ctx.insert("media_id".to_string(), serde_json::Value::from(media_id));
+                self.report_error("playback", ErrorSeverity::Error, error.clone(), Some(ctx))
+                    .await;
 
                 self.state.set_error(Some(error)).await;
                 self.state.set_playing(false).await;
@@ -510,34 +722,99 @@ impl StateCoordinator {
             failure_count
         );
 
+        if failure_count > 0 {
+            let mut ctx = HashMap::new();
+            ctx.insert("total".to_string(), serde_json::Value::from(total as u64));
+            ctx.insert(
+                "succeeded".to_string(),
+                serde_json::Value::from(success_count as u64),
+            );
+            ctx.insert(
+                "failed".to_string(),
+                serde_json::Value::from(failure_count as u64),
+            );
+            // Severity warn: the playlist still plays whatever did succeed.
+            // Operator visibility matters; client status flap does not.
+            self.report_error(
+                "cache",
+                ErrorSeverity::Warn,
+                format!("{} of {} downloads failed", failure_count, total),
+                Some(ctx),
+            )
+            .await;
+        }
+
         self.download_notify.notify_waiters();
         let _ = relay_handle.await;
 
         Ok(success_count)
     }
 
-    /// Pre-download upcoming items in the background
+    // (helper `select_preload_items` lives at the module level below.)
+
+    /// Pre-download upcoming items in the background.
+    ///
+    /// Two caps apply on every pass:
+    ///   * `preload_next_items` — hard cap on the number of items considered.
+    ///   * `preload_bytes_budget` (optional) — cumulative-bytes cap, computed
+    ///     from each item's `file_size`. Stops the pass at the first item
+    ///     that would push the running total over the budget. Items whose
+    ///     server didn't emit `file_size` contribute 0 — they're preloaded
+    ///     without affecting the budget.
     fn preload_upcoming(&self) {
-        if self.preload_next_items == 0 {
+        // Read live values from the snapshot when wired (production path);
+        // fall back to construction-time captures for tests.
+        let (count, bytes_budget) = match self.cfg_snap.as_ref() {
+            Some(snap) => {
+                let cfg = snap.load();
+                (
+                    cfg.playback.preload_next_items,
+                    cfg.playback.preload_bytes_budget,
+                )
+            }
+            None => (self.preload_next_items, self.preload_bytes_budget),
+        };
+        if count == 0 {
             return;
         }
         let state = self.state.clone();
         let cache_manager = self.cache_manager.clone();
-        let count = self.preload_next_items;
+        let ws_tx = self.ws_tx.clone();
 
         tokio::spawn(async move {
             let upcoming = state.get_upcoming_items(count).await;
-            for item in upcoming {
+            let to_preload = select_preload_items(&upcoming, count, bytes_budget);
+            for item in to_preload {
                 if !cache_manager.is_cached(item.media_id, &item.filename).await {
                     tracing::debug!("Preloading media {}: {}", item.media_id, item.filename);
                     let checksum = item.checksum.clone().unwrap_or_default();
                     let cm = cache_manager.clone();
+                    let ws_tx_inner = ws_tx.clone();
+                    let state_inner = state.clone();
                     tokio::spawn(async move {
                         if let Err(e) = cm
                             .download_media(item.media_id, &item.filename, &checksum)
                             .await
                         {
                             tracing::warn!("Preload failed for media {}: {}", item.media_id, e);
+                            // Best-effort uplink — preload failure is transient,
+                            // so severity is `warn` and we don't flap status.
+                            if let Some(tx) = ws_tx_inner {
+                                let mut ctx = HashMap::new();
+                                ctx.insert(
+                                    "media_id".to_string(),
+                                    serde_json::Value::from(item.media_id),
+                                );
+                                let client_id = state_inner.client_id().await;
+                                let msg = ClientMessage::error_detailed(
+                                    client_id,
+                                    Some("preload".to_string()),
+                                    Some(ErrorSeverity::Warn),
+                                    format!("preload failed for media {}: {}", item.media_id, e),
+                                    Some(ctx),
+                                );
+                                let _ = tx.send(msg);
+                            }
                         }
                     });
                 }
@@ -617,9 +894,14 @@ impl StateCoordinator {
         Ok(())
     }
 
-    /// Persist the current playlist to `<cache_dir>/playlist.json` for
-    /// offline fallback. Best-effort — errors are logged and swallowed so a
-    /// disk failure never breaks live playback.
+    /// Persist the current playlist for offline fallback. Best-effort —
+    /// errors are logged and swallowed so a disk failure never breaks live
+    /// playback.
+    ///
+    /// Two slots are written: the legacy `playlist.json` (single-snapshot,
+    /// used by the boot-time grace-period restore) and the versioned
+    /// `playlists/<id>.json` (used by offline schedule re-eval to switch
+    /// between known playlists).
     async fn persist_playlist(&self, playlist_id: u32, items: &[PlaylistItem], loop_enabled: bool) {
         let Some(ref cache_dir) = self.cache_dir else {
             return;
@@ -635,6 +917,18 @@ impl StateCoordinator {
                 "Persisted playlist {} ({} items) for offline fallback",
                 playlist_id,
                 items.len()
+            );
+        }
+
+        // Also write the per-id versioned slot so offline schedule eval can
+        // reach this playlist later, alongside any others previously seen.
+        if let Err(e) =
+            persistence::save_playlist_versioned(cache_dir, playlist_id, items, loop_enabled).await
+        {
+            tracing::warn!(
+                "Failed to persist versioned playlist {}: {}",
+                playlist_id,
+                e
             );
         }
     }
@@ -677,9 +971,42 @@ impl StateCoordinator {
             )
             .await?;
 
+        // Pin restored items so they survive eviction while we're offline —
+        // this is the whole point of an offline mode.
+        self.cache_manager.pin_playlist_items(&snapshot.items).await;
+
         self.download_and_start(snapshot.items).await?;
 
         Ok(())
+    }
+
+    /// Best-effort: enqueue a client-error report on the WebSocket sender.
+    ///
+    /// Non-blocking — if the channel is closed (server disconnected) or the
+    /// coordinator was constructed without `with_ws_sender`, the error is only
+    /// logged locally. Never returns an error to avoid recursion: callers
+    /// already log via `tracing` first, this is purely an uplink.
+    async fn report_error(
+        &self,
+        source: &str,
+        severity: ErrorSeverity,
+        message: impl Into<String>,
+        context: Option<HashMap<String, serde_json::Value>>,
+    ) {
+        let Some(ws_tx) = self.ws_tx.as_ref() else {
+            return;
+        };
+        let client_id = self.state.client_id().await;
+        let msg = ClientMessage::error_detailed(
+            client_id,
+            Some(source.to_string()),
+            Some(severity),
+            message.into(),
+            context,
+        );
+        if let Err(e) = ws_tx.send(msg) {
+            tracing::debug!("Could not enqueue client error to server: {}", e);
+        }
     }
 
     /// Read the tail of the local log file and upload it to the server in
@@ -786,9 +1113,14 @@ impl StateCoordinator {
         {
             let duration = start_time.elapsed().as_secs_f64();
             let api_key = self.api_key.as_deref();
+            let quality = if let Some(ref engine) = self.playback_engine {
+                Some(engine.take_quality_snapshot().await)
+            } else {
+                None
+            };
             let _ = self
                 .http_client
-                .report_playback_end(log_id, duration, completed, api_key)
+                .report_playback_end(log_id, duration, completed, quality, api_key)
                 .await;
             tracing::debug!(
                 "Analytics: ended session {} ({}s, completed={})",
@@ -909,6 +1241,44 @@ impl StateCoordinator {
     }
 }
 
+/// Pick the prefix of `upcoming` to actually preload, honoring both the
+/// item-count cap and the optional cumulative-byte budget.
+///
+/// Behavior:
+///   * Always returns at most `count` items.
+///   * If `bytes_budget` is `None`, returns the first `min(count, len)` items.
+///   * If `bytes_budget` is `Some(budget)`, walks the list and stops at the
+///     first item whose `file_size` would push the running total over
+///     `budget`. Items with `file_size = None` contribute 0 (they preload
+///     without consuming budget — server didn't tell us their size).
+///   * Always preloads at least the first item that fits, even if it equals
+///     the budget exactly. Important so we never starve playback when an
+///     operator picks a tight budget by mistake.
+fn select_preload_items(
+    upcoming: &[PlaylistItem],
+    count: usize,
+    bytes_budget: Option<u64>,
+) -> Vec<PlaylistItem> {
+    let cap = upcoming.len().min(count);
+    let Some(budget) = bytes_budget else {
+        return upcoming[..cap].to_vec();
+    };
+
+    let mut picked = Vec::with_capacity(cap);
+    let mut running: u64 = 0;
+    for item in upcoming.iter().take(cap) {
+        let size = item.file_size.unwrap_or(0);
+        // Saturate to avoid wraparound on absurd inputs.
+        let next = running.saturating_add(size);
+        if next > budget {
+            break;
+        }
+        running = next;
+        picked.push(item.clone());
+    }
+    picked
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -929,6 +1299,7 @@ mod tests {
             order_index: id - 1,
             image_duration: 5,
             subtitles: Vec::new(),
+            file_size: None,
         }
     }
 
@@ -1835,5 +2206,81 @@ mod tests {
 
         coordinator.handle_try_offline_restore().await.unwrap();
         assert!(state.is_queue_empty().await);
+    }
+
+    fn item_with_size(id: u32, size: Option<u64>) -> PlaylistItem {
+        PlaylistItem {
+            id,
+            media_id: id,
+            filename: format!("m{}.mp4", id),
+            download_url: format!("http://test/api/media/{}/download", id),
+            media_type: "video".to_string(),
+            duration: Some(10.0),
+            checksum: None,
+            order_index: id - 1,
+            image_duration: 5,
+            subtitles: Vec::new(),
+            file_size: size,
+        }
+    }
+
+    #[test]
+    fn select_preload_items_no_budget_uses_count_only() {
+        let items = vec![
+            item_with_size(1, Some(500)),
+            item_with_size(2, Some(500)),
+            item_with_size(3, Some(500)),
+        ];
+        // Count cap of 2, no byte budget — should pick the first two regardless of size.
+        let picked = select_preload_items(&items, 2, None);
+        assert_eq!(picked.iter().map(|i| i.id).collect::<Vec<_>>(), vec![1, 2]);
+    }
+
+    #[test]
+    fn select_preload_items_byte_budget_stops_early() {
+        let items = vec![
+            item_with_size(1, Some(400)),
+            item_with_size(2, Some(400)),
+            item_with_size(3, Some(400)),
+        ];
+        // Count cap 5, budget 1000: 400 + 400 = 800 fits; +400 would be 1200 > 1000 so stop.
+        let picked = select_preload_items(&items, 5, Some(1000));
+        assert_eq!(picked.iter().map(|i| i.id).collect::<Vec<_>>(), vec![1, 2]);
+    }
+
+    #[test]
+    fn select_preload_items_unknown_size_does_not_consume_budget() {
+        let items = vec![
+            item_with_size(1, None),
+            item_with_size(2, None),
+            item_with_size(3, Some(500)),
+        ];
+        // Two unknown items contribute 0; the third (500) fits in budget 1000.
+        let picked = select_preload_items(&items, 5, Some(1000));
+        assert_eq!(
+            picked.iter().map(|i| i.id).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn select_preload_items_empty_input() {
+        assert!(select_preload_items(&[], 5, Some(1000)).is_empty());
+        assert!(select_preload_items(&[], 0, None).is_empty());
+    }
+
+    #[test]
+    fn select_preload_items_count_zero_returns_empty() {
+        let items = vec![item_with_size(1, Some(100))];
+        assert!(select_preload_items(&items, 0, None).is_empty());
+    }
+
+    #[test]
+    fn select_preload_items_first_item_too_large_returns_empty() {
+        // First item alone (1000 bytes) exceeds the 500-byte budget — preload skips it.
+        // Trade-off: we'd rather preload nothing than block the playback queue waiting
+        // on a single oversized item; the synchronous download path handles it later.
+        let items = vec![item_with_size(1, Some(1000))];
+        assert!(select_preload_items(&items, 5, Some(500)).is_empty());
     }
 }

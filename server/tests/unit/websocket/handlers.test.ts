@@ -540,6 +540,7 @@ describe('WebSocket Handlers', () => {
             orderIndex: 0,
             imageDuration: 5,
             subtitles: [],
+            fileSize: 1024,
           },
         ],
       });

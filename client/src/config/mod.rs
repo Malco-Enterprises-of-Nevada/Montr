@@ -263,6 +263,10 @@ heartbeat_interval = 30
 id = ""
 # Human-readable display name (leave empty to use hostname)
 name = ""
+# Interval (seconds) between status_update messages to the server. Reload-safe.
+status_interval_secs = 10
+# Interval (seconds) between telemetry messages to the server. Reload-safe.
+telemetry_interval_secs = 60
 
 [playback]
 # Default duration for images in seconds

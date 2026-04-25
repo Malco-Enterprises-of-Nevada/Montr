@@ -456,6 +456,13 @@ export interface PlaybackLog {
   ended_at: string | null;
   duration_watched: number;
   completed: boolean;
+  // Per-media playback quality, populated by the client on session end.
+  // Old clients omit these and the columns stay NULL; nullable because
+  // documents from MongoDB and pre-migration SQL rows lack the fields.
+  rebuffer_count?: number | null;
+  dropped_frames?: number | null;
+  time_to_first_frame_ms?: number | null;
+  decoder_errors?: number | null;
 }
 
 export interface CreatePlaybackLogInput {

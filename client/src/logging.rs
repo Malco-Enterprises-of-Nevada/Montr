@@ -7,8 +7,14 @@ use tokio::sync::mpsc;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::layer::Context;
-use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::registry::{LookupSpan, Registry};
+use tracing_subscriber::reload;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+
+/// Reload handle for the EnvFilter installed at startup. Set once during
+/// `init_logging` and read by SIGHUP-driven hot-reload to swap in a new log
+/// level without restarting the process.
+static LOG_FILTER_RELOAD: OnceLock<reload::Handle<EnvFilter, Registry>> = OnceLock::new();
 
 /// One-time channel created during logging init. The sender is held by
 /// `LogCapturingLayer`; the receiver is taken once by main.rs at startup so
@@ -107,10 +113,15 @@ pub fn init_logging(config: &Config) -> Result<()> {
     // Check and perform log rotation if needed (before opening file)
     check_log_rotation(config)?;
 
-    // Create env filter (RUST_LOG env var can override config)
+    // Create env filter (RUST_LOG env var can override config) wrapped in a
+    // reload::Layer so SIGHUP can swap the level without restart.
     let env_filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new(&config.system.log_level))
         .map_err(|e| MontrError::LoggingInit(format!("Invalid log level: {}", e)))?;
+    let (filter_layer, filter_handle) = reload::Layer::new(env_filter);
+    // First-set wins: only one logging init per process. If a second call
+    // somehow lands here, we just keep the first handle.
+    let _ = LOG_FILTER_RELOAD.set(filter_handle);
 
     // Console layer
     let console_layer = fmt::layer()
@@ -141,7 +152,7 @@ pub fn init_logging(config: &Config) -> Result<()> {
     let capture_layer = LogCapturingLayer { tx: capture_tx };
 
     tracing_subscriber::registry()
-        .with(env_filter)
+        .with(filter_layer)
         .with(console_layer)
         .with(file_layer)
         .with(capture_layer)
@@ -153,6 +164,26 @@ pub fn init_logging(config: &Config) -> Result<()> {
         config.system.log_file.display()
     );
 
+    Ok(())
+}
+
+/// Hot-swap the active log level without restarting the process. Called
+/// from the SIGHUP handler after the operator edits the config file.
+///
+/// Returns Err if the new level string is invalid or if logging was never
+/// initialised. Logs the transition at INFO regardless of the resulting
+/// level so the change is always visible in the journal.
+pub fn reload_log_level(new_level: &str) -> Result<()> {
+    let new_filter = EnvFilter::try_new(new_level).map_err(|e| {
+        MontrError::LoggingInit(format!("Invalid log level '{}': {}", new_level, e))
+    })?;
+    let handle = LOG_FILTER_RELOAD
+        .get()
+        .ok_or_else(|| MontrError::LoggingInit("Logging not initialised".into()))?;
+    handle
+        .reload(new_filter)
+        .map_err(|e| MontrError::LoggingInit(format!("Failed to swap log filter: {}", e)))?;
+    tracing::info!("Log level reloaded to '{}'", new_level);
     Ok(())
 }
 
@@ -280,6 +311,8 @@ mod tests {
                 id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
                 name: "Test Client".to_string(),
                 preview_interval_secs: 10,
+                status_interval_secs: 10,
+                telemetry_interval_secs: 60,
             },
             playback: crate::config::PlaybackConfig {
                 default_image_duration: 5,
@@ -287,6 +320,7 @@ mod tests {
                 media_cache_dir: temp_dir.path().join("cache"),
                 max_cache_size_mb: 5000,
                 preload_next_items: 2,
+                preload_bytes_budget: None,
                 offline_fallback_grace_secs: 5,
             },
             system: crate::config::SystemConfig {
@@ -337,6 +371,15 @@ mod tests {
             }
             _ => panic!("Expected ConfigValidation error"),
         }
+    }
+
+    #[test]
+    fn test_reload_log_level_rejects_invalid_filter() {
+        // Validation runs before consulting the (init-set) global handle, so
+        // this Err comes back regardless of whether init_logging has been
+        // called in the current test process.
+        let result = reload_log_level("not-a-valid,filter,,,");
+        assert!(result.is_err());
     }
 
     #[test]

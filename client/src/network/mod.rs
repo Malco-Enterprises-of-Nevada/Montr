@@ -13,9 +13,10 @@ pub mod websocket;
 pub use connection::{ConnectionState, ErrorReason, State};
 pub use http::{DownloadOptions, HttpClient};
 pub use protocol::{
-    ClientCapabilities, ClientMessage, CommandMessage, ErrorMessage, HeartbeatMessage, MediaInfo,
-    PlaylistAssignedMessage, PlaylistInterruptMessage, PlaylistItem, PlaylistResumeMessage,
-    PlaylistUpdatedMessage, RegisterMessage, ServerMessage, StatusUpdateMessage,
+    ClientCapabilities, ClientMessage, CommandMessage, ErrorMessage, ErrorSeverity,
+    HeartbeatMessage, MediaInfo, PlaylistAssignedMessage, PlaylistInterruptMessage, PlaylistItem,
+    PlaylistResumeMessage, PlaylistUpdatedMessage, RegisterMessage, Schedule,
+    ScheduleDefinitionsMessage, ServerMessage, StatusUpdateMessage,
 };
 pub use reconnect::ReconnectStrategy;
 pub use websocket::WebSocketClient;

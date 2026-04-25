@@ -1553,7 +1553,15 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
 
   async updatePlaybackLog(
     id: number,
-    updates: { ended_at?: string; duration_watched?: number; completed?: boolean }
+    updates: {
+      ended_at?: string;
+      duration_watched?: number;
+      completed?: boolean;
+      rebuffer_count?: number;
+      dropped_frames?: number;
+      time_to_first_frame_ms?: number;
+      decoder_errors?: number;
+    }
   ): Promise<PlaybackLog> {
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -1570,6 +1578,22 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     if (updates.completed !== undefined) {
       fields.push(`completed = ${this.placeholder(paramIndex++)}`);
       values.push(updates.completed ? 1 : 0);
+    }
+    if (updates.rebuffer_count !== undefined) {
+      fields.push(`rebuffer_count = ${this.placeholder(paramIndex++)}`);
+      values.push(updates.rebuffer_count);
+    }
+    if (updates.dropped_frames !== undefined) {
+      fields.push(`dropped_frames = ${this.placeholder(paramIndex++)}`);
+      values.push(updates.dropped_frames);
+    }
+    if (updates.time_to_first_frame_ms !== undefined) {
+      fields.push(`time_to_first_frame_ms = ${this.placeholder(paramIndex++)}`);
+      values.push(updates.time_to_first_frame_ms);
+    }
+    if (updates.decoder_errors !== undefined) {
+      fields.push(`decoder_errors = ${this.placeholder(paramIndex++)}`);
+      values.push(updates.decoder_errors);
     }
 
     if (fields.length > 0) {

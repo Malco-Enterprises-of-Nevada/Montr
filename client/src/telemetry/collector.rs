@@ -73,9 +73,10 @@ pub fn collect_sample(
 
     let process = TelemetryProcessSample {
         client_uptime_s: state.client_uptime_s,
-        // mpv uptime isn't tracked yet — same value as client uptime is a
-        // reasonable upper bound until we add a launch timestamp on respawn.
-        mpv_uptime_s: state.client_uptime_s,
+        // Real mpv uptime when the engine was wired in; falls back to client
+        // uptime as a conservative upper bound when the snapshot didn't carry
+        // one (e.g. early in startup or in tests).
+        mpv_uptime_s: state.mpv_uptime_s.unwrap_or(state.client_uptime_s),
         restart_count: state.mpv_restart_count,
     };
 
@@ -104,6 +105,10 @@ pub struct TelemetryStateSnapshot {
     pub last_rtt_ms: Option<u32>,
     pub bytes_dl_total: u64,
     pub client_uptime_s: u64,
+    /// Real mpv uptime in seconds, sampled from the engine. `None` means
+    /// the caller didn't have an engine handle (test fixtures, very early
+    /// startup); collector falls back to `client_uptime_s` in that case.
+    pub mpv_uptime_s: Option<u64>,
     pub mpv_restart_count: u32,
 }
 
@@ -115,6 +120,25 @@ impl TelemetryStateSnapshot {
             last_rtt_ms: state.last_ws_rtt_ms().await,
             bytes_dl_total: state.bytes_downloaded_total().await,
             client_uptime_s: state.client_uptime_s().await,
+            mpv_uptime_s: None,
+            mpv_restart_count: state.mpv_restart_count().await,
+        }
+    }
+
+    /// Same as `from_app_state` but additionally records `mpv_uptime_s` from
+    /// the engine. Use this in production wiring; the no-engine variant
+    /// stays for tests that don't construct a real engine.
+    pub async fn from_app_state_with_engine(
+        state: &AppState,
+        ws_reconnects: u32,
+        engine: &crate::playback::engine::PlaybackEngine,
+    ) -> Self {
+        Self {
+            ws_reconnects,
+            last_rtt_ms: state.last_ws_rtt_ms().await,
+            bytes_dl_total: state.bytes_downloaded_total().await,
+            client_uptime_s: state.client_uptime_s().await,
+            mpv_uptime_s: Some(engine.mpv_uptime().as_secs()),
             mpv_restart_count: state.mpv_restart_count().await,
         }
     }

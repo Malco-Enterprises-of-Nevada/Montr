@@ -17,7 +17,11 @@ import {
   sendCommandSchema,
 } from '../middleware/validation';
 import { requireRole } from '../middleware/jwt-auth';
-import { sendPlaylistToClient, sendCommandToGroup } from '../../websocket/handlers';
+import {
+  sendPlaylistToClient,
+  sendCommandToGroup,
+  sendSchedulesToClient,
+} from '../../websocket/handlers';
 import { clientConnectionManager } from '../../websocket/client-manager';
 import { CommandType } from '../../websocket/types';
 
@@ -126,6 +130,10 @@ router.post(
     const { id } = params;
     const { clientId } = req.body as { clientId: string };
     const member = await groupService.addMember(id, clientId);
+    // Group membership change alters which schedules apply to this client.
+    // Best-effort push so the client picks up new group-scoped schedules
+    // without waiting for the next reconnect.
+    await sendSchedulesToClient(clientId);
     res.status(201).json(successResponse(member));
   })
 );
@@ -142,6 +150,7 @@ router.delete(
     const params = req.params as unknown as { id: number; clientId: string };
     const { id, clientId } = params;
     await groupService.removeMember(id, clientId);
+    await sendSchedulesToClient(clientId);
     res.json(successResponse({ message: 'Member removed from group', groupId: id, clientId }));
   })
 );

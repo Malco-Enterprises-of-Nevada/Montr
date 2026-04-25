@@ -123,8 +123,31 @@ pub struct ErrorMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<HashMap<String, serde_json::Value>>,
 
+    /// Subsystem that originated the error (e.g., "playback", "cache", "network").
+    /// Server uses this to route admin alerts and group repeated faults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+
+    /// Severity tier — controls server-side handling: `warn` is logged and
+    /// broadcast only, `error` also persists to client status, `fatal` fires a
+    /// notification rule. Defaults to `error` if absent (legacy behavior).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity: Option<ErrorSeverity>,
+
     /// Timestamp (Unix epoch milliseconds)
     pub timestamp: u64,
+}
+
+/// Severity classification for client-reported errors.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ErrorSeverity {
+    /// Transient or informational — playback continues, no status flap.
+    Warn,
+    /// Recoverable error — the client may have retried, but operator should see it.
+    Error,
+    /// Unrecoverable — the client is in a degraded state; fire notifications.
+    Fatal,
 }
 
 /// Per-disk sample within a TelemetryMessage
@@ -224,6 +247,76 @@ pub enum ServerMessage {
 
     /// Error response from server
     ErrorResponse(ErrorResponseMessage),
+
+    /// Schedules that apply to this client. Sent on register and after
+    /// CRUD/group changes. Persisted by the client and used for offline
+    /// re-evaluation when the WebSocket is disconnected.
+    ScheduleDefinitions(ScheduleDefinitionsMessage),
+}
+
+/// One schedule pushed by the server. Fields mirror server `ScheduleDef` —
+/// `serde(default)` on optional ones so old servers (which don't emit this
+/// message at all) and forward-compatible new fields don't break parsing.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Schedule {
+    pub id: u32,
+    pub name: String,
+    #[serde(rename = "playlistId")]
+    pub playlist_id: u32,
+    /// Single-client target UUID, or None for group/global scope.
+    #[serde(default, rename = "clientId")]
+    pub client_id: Option<String>,
+    /// Group target id, or None for client/global scope.
+    #[serde(default, rename = "groupId")]
+    pub group_id: Option<u32>,
+    /// "HH:MM" or None when cron-only.
+    #[serde(default, rename = "startTime")]
+    pub start_time: Option<String>,
+    /// "HH:MM" or None.
+    #[serde(default, rename = "endTime")]
+    pub end_time: Option<String>,
+    /// Comma-separated day numbers, e.g. "0,1,2,3,4,5,6". Sunday = 0.
+    #[serde(default = "default_days_of_week", rename = "daysOfWeek")]
+    pub days_of_week: String,
+    #[serde(default)]
+    pub priority: i32,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 5-field cron expression, or None.
+    #[serde(default, rename = "cronExpression")]
+    pub cron_expression: Option<String>,
+    /// IANA timezone (e.g. "America/Los_Angeles"); None = client local.
+    #[serde(default)]
+    pub timezone: Option<String>,
+    /// Pass-through for `holidays`/`special_dates`/`event_trigger`. Treated
+    /// as opaque by the offline evaluator (the server is authoritative for
+    /// holiday + event evaluation; client sticks to cron + window only).
+    #[serde(default)]
+    pub conditions: Option<serde_json::Value>,
+    #[serde(default = "default_interrupt_mode", rename = "interruptMode")]
+    pub interrupt_mode: String,
+    #[serde(default, rename = "durationSeconds")]
+    pub duration_seconds: Option<u32>,
+}
+
+fn default_days_of_week() -> String {
+    "0,1,2,3,4,5,6".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_interrupt_mode() -> String {
+    "assign".to_string()
+}
+
+/// Server→client message carrying the full set of schedules that apply to
+/// this client. Replaces (does not merge with) any previously-known set.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScheduleDefinitionsMessage {
+    #[serde(default)]
+    pub schedules: Vec<Schedule>,
 }
 
 /// Success acknowledgement from server
@@ -361,6 +454,14 @@ pub struct PlaylistItem {
     /// on protocol 1.0.0 that don't emit this field.
     #[serde(default)]
     pub subtitles: Vec<SubtitleTrack>,
+
+    /// File size in bytes from the server's `media_files.file_size`. Added in
+    /// protocol 1.2.0 so clients can budget preload bandwidth/disk by total
+    /// bytes rather than just item count. `None` means the server didn't
+    /// emit it (older protocol or row mid-upload) — preload still runs but
+    /// can't enforce a byte budget for that item.
+    #[serde(default, rename = "fileSize", skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
 }
 
 /// Source of a subtitle track — either a sidecar file we fetch over HTTP,
@@ -518,9 +619,20 @@ impl ClientMessage {
         })
     }
 
-    /// Create an error report message
+    /// Create an error report message (legacy — defaults severity to `error`).
     pub fn error(
         client_id: String,
+        error: String,
+        context: Option<HashMap<String, serde_json::Value>>,
+    ) -> Self {
+        Self::error_detailed(client_id, None, None, error, context)
+    }
+
+    /// Create an error report message with explicit source and severity.
+    pub fn error_detailed(
+        client_id: String,
+        source: Option<String>,
+        severity: Option<ErrorSeverity>,
         error: String,
         context: Option<HashMap<String, serde_json::Value>>,
     ) -> Self {
@@ -528,6 +640,8 @@ impl ClientMessage {
             client_id,
             error,
             context,
+            source,
+            severity,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -805,6 +919,7 @@ mod tests {
             order_index: 0,
             image_duration: 5,
             subtitles: Vec::new(),
+            file_size: None,
         };
 
         let item2 = PlaylistItem {
@@ -818,6 +933,7 @@ mod tests {
             order_index: 0,
             image_duration: 5,
             subtitles: Vec::new(),
+            file_size: None,
         };
 
         assert_eq!(item1, item2);
