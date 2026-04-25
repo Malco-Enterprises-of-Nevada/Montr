@@ -45,9 +45,11 @@ async function getDiskStats(
   try {
     // fs.promises.statfs is typed loosely in older @types/node; cast through
     // unknown so we don't depend on a specific @types version.
-    const statfs = (fs.promises as unknown as {
-      statfs?: (p: string) => Promise<{ bsize: number; blocks: number; bavail: number }>;
-    }).statfs;
+    const statfs = (
+      fs.promises as unknown as {
+        statfs?: (p: string) => Promise<{ bsize: number; blocks: number; bavail: number }>;
+      }
+    ).statfs;
     if (!statfs) return null;
     const s = await statfs(targetPath);
     const freeBytes = s.bavail * s.bsize;
@@ -336,11 +338,14 @@ class MontrServer {
       // the file behind — those accumulated into a disk-full event on
       // 2026-04-22 that 500'd every upload. Age-gated at 1h so we never
       // clobber an in-flight download.
-      const tempCleanupInterval = setInterval(() => {
-        void storageService.cleanupTempFiles(60 * 60 * 1000).catch((err) => {
-          this.logger.warn(`Periodic temp cleanup failed: ${String(err)}`);
-        });
-      }, 60 * 60 * 1000);
+      const tempCleanupInterval = setInterval(
+        () => {
+          void storageService.cleanupTempFiles(60 * 60 * 1000).catch((err) => {
+            this.logger.warn(`Periodic temp cleanup failed: ${String(err)}`);
+          });
+        },
+        60 * 60 * 1000
+      );
       tempCleanupInterval.unref();
 
       // Start listening

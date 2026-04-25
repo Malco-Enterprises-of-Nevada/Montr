@@ -383,9 +383,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
 
   // ── Upload completion job queue ──────────────────────────────────────
 
-  async enqueueUploadCompletionJob(
-    input: UploadCompletionJobInput
-  ): Promise<UploadCompletionJob> {
+  async enqueueUploadCompletionJob(input: UploadCompletionJobInput): Promise<UploadCompletionJob> {
     // Idempotent on upload_id: if a row exists (from a retried /complete),
     // return that one. Uses INSERT with a uniqueness collision tolerated
     // via the dialect-specific upsert hint; fall back to SELECT either way.
@@ -449,10 +447,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     );
   }
 
-  async markUploadCompletionJobDuplicate(
-    jobId: number,
-    existingMediaId: number
-  ): Promise<void> {
+  async markUploadCompletionJobDuplicate(jobId: number, existingMediaId: number): Promise<void> {
     await this.rawExecute(
       `UPDATE upload_completion_jobs SET state = 'duplicate', existing_media_id = ${this.placeholder(1)}, last_error = NULL, updated_at = ${this.currentTimestampFn()} WHERE id = ${this.placeholder(2)}`,
       [existingMediaId, jobId]
@@ -473,9 +468,7 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     return result.affectedRows;
   }
 
-  async getUploadCompletionJobByUploadId(
-    uploadId: string
-  ): Promise<UploadCompletionJob | null> {
+  async getUploadCompletionJobByUploadId(uploadId: string): Promise<UploadCompletionJob | null> {
     return this.rawQueryOne<UploadCompletionJob>(
       `SELECT * FROM upload_completion_jobs WHERE upload_id = ${this.placeholder(1)}`,
       [uploadId]

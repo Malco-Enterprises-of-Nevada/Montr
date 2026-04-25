@@ -42,9 +42,7 @@ class UploadCompletionQueueService {
       const db = await getDatabase();
       const requeued = await db.requeueRunningUploadCompletionJobs();
       if (requeued > 0) {
-        logger.warn(
-          `Requeued ${requeued} stranded upload-completion job(s) from previous run`
-        );
+        logger.warn(`Requeued ${requeued} stranded upload-completion job(s) from previous run`);
       }
     } catch (err) {
       logger.error('Failed to requeue stranded upload-completion jobs on startup:', err);
@@ -89,9 +87,7 @@ class UploadCompletionQueueService {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.error(
-        `Upload completion job ${job.id} (upload_id=${job.upload_id}) failed: ${msg}`
-      );
+      logger.error(`Upload completion job ${job.id} (upload_id=${job.upload_id}) failed: ${msg}`);
       await db.markUploadCompletionJobFailed(job.id, msg);
     }
     return true;

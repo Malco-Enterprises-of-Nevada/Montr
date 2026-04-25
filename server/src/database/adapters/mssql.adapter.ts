@@ -111,9 +111,7 @@ export class MSSQLAdapter extends SqlBaseAdapter {
     //                  (SELECT 1 FROM tbl WHERE uniqueColumn = {first value})
     // Caller already arranges for the first placeholder/value to be the
     // unique-column value (true for enqueueUploadCompletionJob).
-    const m = insertSql.match(
-      /^INSERT\s+INTO\s+(\w+)\s*\((.+?)\)\s*VALUES\s*\((.+?)\)\s*$/is
-    );
+    const m = insertSql.match(/^INSERT\s+INTO\s+(\w+)\s*\((.+?)\)\s*VALUES\s*\((.+?)\)\s*$/is);
     if (!m) return insertSql;
     const [, table, cols, vals] = m;
     return (

@@ -79,7 +79,9 @@ export class ClientConnectionManager {
       }
 
       // Old session is either gone or old enough that this is a real reconnect.
-      logger.warn(`Client ${clientId} already connected (age=${existingAgeMs}ms), closing old connection`);
+      logger.warn(
+        `Client ${clientId} already connected (age=${existingAgeMs}ms), closing old connection`
+      );
       if (existingOpen) {
         existing.close(1000, 'New connection established');
       }

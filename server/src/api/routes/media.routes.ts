@@ -303,9 +303,9 @@ router.get(
       case 'queued':
       case 'running':
         res.setHeader('Retry-After', '5');
-        res.status(202).json(
-          successResponse({ state: 'processing' as const, attempts: job.attempts })
-        );
+        res
+          .status(202)
+          .json(successResponse({ state: 'processing' as const, attempts: job.attempts }));
         return;
       case 'done': {
         const media = job.media_id != null ? await db.getMediaById(job.media_id) : null;
