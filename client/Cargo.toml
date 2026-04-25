@@ -63,6 +63,16 @@ sysinfo = "0.30"
 rand = "0.8"
 exec = "0.3.1"
 
+# Atomic config snapshot for hot reload (SIGHUP-driven swap of intervals + tunables)
+arc-swap = "1"
+
+# Cron expression parser for offline schedule re-evaluation
+cron = "0.12"
+
+# Date/time + IANA timezones for schedule windows
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+chrono-tz = "0.8"
+
 [target.'cfg(unix)'.dependencies]
 # Unix-specific dependencies (if needed)
 

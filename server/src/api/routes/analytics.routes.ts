@@ -24,17 +24,35 @@ router.post(
 
 /**
  * POST /api/analytics/playback/:id/end
- * Record a playback end event
+ * Record a playback end event. Optional quality fields (rebufferCount,
+ * droppedFrames, timeToFirstFrameMs, decoderErrors) are additive — older
+ * clients can omit them and rows stay backward compatible.
  */
 router.post(
   '/playback/:id/end',
   asyncHandler(async (req: Request, res: Response) => {
     const id = parseInt(req.params.id as string, 10);
-    const { durationWatched, completed } = req.body as {
+    const {
+      durationWatched,
+      completed,
+      rebufferCount,
+      droppedFrames,
+      timeToFirstFrameMs,
+      decoderErrors,
+    } = req.body as {
       durationWatched: number;
       completed: boolean;
+      rebufferCount?: number;
+      droppedFrames?: number;
+      timeToFirstFrameMs?: number;
+      decoderErrors?: number;
     };
-    const log = await analyticsService.recordPlaybackEnd(id, durationWatched, completed);
+    const log = await analyticsService.recordPlaybackEnd(id, durationWatched, completed, {
+      rebufferCount,
+      droppedFrames,
+      timeToFirstFrameMs,
+      decoderErrors,
+    });
     res.json(successResponse(log));
   })
 );

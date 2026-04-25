@@ -6,6 +6,7 @@
 import { getLogger } from '../utils/logger';
 import { clientService } from '../services/client.service';
 import { playlistService } from '../services/playlist.service';
+import { scheduleService } from '../services/schedule.service';
 import { telemetryService } from '../services/telemetry.service';
 import { clientConnectionManager } from './client-manager';
 import {
@@ -100,6 +101,9 @@ function buildPlaylistItem(
     orderIndex: item.order_index,
     imageDuration: item.image_duration,
     subtitles: subtitlesByMedia.get(item.media_id) ?? [],
+    // Optional — clients on protocol < 1.2.0 ignore it. Only emit when the
+    // server actually has a size; legacy rows or rows mid-upload may be null.
+    ...(item.media.file_size != null ? { fileSize: item.media.file_size } : {}),
   };
 }
 
@@ -172,6 +176,11 @@ export async function handleRegister(
     if (client.assigned_playlist_id !== null) {
       await sendPlaylistToClient(clientId, client.assigned_playlist_id);
     }
+
+    // Push the schedules that apply to this client so it can locally
+    // re-evaluate while offline. Best-effort — failures here don't block
+    // registration.
+    await sendSchedulesToClient(clientId);
   } catch (error) {
     logger.error(`Error handling client registration for ${clientId}:`, error);
 
@@ -262,35 +271,89 @@ export async function handleHeartbeat(
 }
 
 /**
- * Handles client error report
+ * Handles client error report.
+ *
+ * Severity controls server-side handling:
+ * - `warn`: log + broadcast to admins. No status flap, no DB row.
+ * - `error` (default if missing — legacy clients): the above plus persist the
+ *   error to client status and mark the client as `error`.
+ * - `fatal`: above plus fire `client_error` notification rules.
  */
 export async function handleError(_ws: ExtendedWebSocket, message: ErrorMessage): Promise<void> {
-  const { clientId, error: errorMsg, context } = message;
+  const { clientId, error: errorMsg, context, source } = message;
+  const severity = message.severity ?? 'error';
 
   try {
-    // Verify client is connected
     if (!clientConnectionManager.isConnected(clientId)) {
       logger.warn(`Received error from unregistered client: ${clientId}`);
       return;
     }
 
-    // Log the error
-    logger.error(`Client ${clientId} reported error: ${errorMsg}`, context);
+    const logCtx = { source, severity, ...(context ?? {}) };
+    if (severity === 'warn') {
+      logger.warn(`Client ${clientId} reported warning: ${errorMsg}`, logCtx);
+    } else {
+      logger.error(`Client ${clientId} reported ${severity}: ${errorMsg}`, logCtx);
+    }
 
-    // Record error status
-    await clientService.recordClientStatus({
-      client_id: clientId,
-      is_playing: false,
-      error_message: errorMsg,
+    // Always broadcast so the admin UI sees the event in real time.
+    clientConnectionManager.broadcastToAdmins({
+      type: 'client_error',
+      clientId,
+      error: errorMsg,
+      source,
+      severity,
+      context,
+      timestamp: Date.now(),
     });
 
-    // Update client status to error
-    await clientService.updateClient(clientId, {
-      status: 'error',
-      last_seen: new Date().toISOString(),
-    });
+    // Only treat error/fatal as a status-flapping event. `warn` is purely
+    // informational so transient hiccups don't mark the client as faulted.
+    if (severity !== 'warn') {
+      await clientService.recordClientStatus({
+        client_id: clientId,
+        is_playing: false,
+        error_message: errorMsg,
+      });
 
-    // Update heartbeat to keep connection alive
+      await clientService.updateClient(clientId, {
+        status: 'error',
+        last_seen: new Date().toISOString(),
+      });
+    }
+
+    if (severity === 'fatal') {
+      // Best-effort fan-out to notification rules; never block the WS handler.
+      try {
+        const { notificationService } = await import('../services/notification.service');
+        await notificationService.fireEvent('client_error', {
+          clientId,
+          error: errorMsg,
+          source,
+          context,
+        });
+      } catch (notifyErr) {
+        logger.error(`Failed to fire client_error notification for ${clientId}:`, notifyErr);
+      }
+    }
+
+    // Cache subsystem reporting `storage_low` is the client-side counterpart
+    // to the existing `storage_full` notification event. Route any severity
+    // here (the throttling lives on the client) so an admin's notification
+    // rule fires when a fleet member is running out of disk.
+    if (source === 'cache' && errorMsg === 'storage_low') {
+      try {
+        const { notificationService } = await import('../services/notification.service');
+        await notificationService.fireEvent('storage_full', {
+          clientId,
+          source,
+          context,
+        });
+      } catch (notifyErr) {
+        logger.error(`Failed to fire storage_full notification for ${clientId}:`, notifyErr);
+      }
+    }
+
     clientConnectionManager.updateHeartbeat(clientId);
   } catch (error) {
     logger.error(`Error handling error report from ${clientId}:`, error);
@@ -408,6 +471,53 @@ export async function sendPlaylistToClient(clientId: string, playlistId: number)
     logger.error(`Error sending playlist to client ${clientId}:`, error);
     const errorMessage = error instanceof Error ? error.message : 'Failed to load playlist';
     clientConnectionManager.sendError(clientId, errorMessage);
+  }
+}
+
+/**
+ * Pushes the set of schedules that apply to a single client. Sent on
+ * registration and after any CRUD that changes which schedules apply
+ * (schedule create/update/delete or group membership change). The client
+ * persists the latest set so it can re-evaluate locally and trigger
+ * playlist switches even when the WebSocket is disconnected.
+ */
+export async function sendSchedulesToClient(clientId: string): Promise<void> {
+  try {
+    if (!clientConnectionManager.isConnected(clientId)) {
+      // No active connection — push will fire on next register.
+      return;
+    }
+    const schedules = await scheduleService.getSchedulesForClient(clientId);
+    const payload = schedules.map((s) => ({
+      id: s.id,
+      name: s.name,
+      playlistId: s.playlist_id,
+      clientId: s.client_id,
+      groupId: s.group_id,
+      startTime: s.start_time,
+      endTime: s.end_time,
+      daysOfWeek: s.days_of_week,
+      priority: s.priority,
+      enabled: s.enabled,
+      cronExpression: s.cron_expression,
+      timezone: s.timezone,
+      conditions: s.conditions,
+      interruptMode: s.interrupt_mode,
+      durationSeconds: s.duration_seconds,
+    }));
+
+    const sent = clientConnectionManager.sendToClient(clientId, {
+      type: 'schedule_definitions',
+      schedules: payload,
+    });
+
+    if (sent) {
+      logger.info(`Sent ${payload.length} schedule definition(s) to client ${clientId}`);
+    } else {
+      logger.warn(`Failed to send schedule definitions to client ${clientId}`);
+    }
+  } catch (error) {
+    logger.error(`Error sending schedule definitions to ${clientId}:`, error);
   }
 }
 

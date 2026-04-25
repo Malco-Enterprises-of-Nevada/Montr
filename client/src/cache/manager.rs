@@ -4,6 +4,7 @@
 //! verification. Downloads are atomic (write to .tmp, rename on success).
 
 use crate::cache::checksum;
+use crate::cache::lru::LruCacheManager;
 use crate::error::{MontrError, Result};
 use crate::network::http::{DownloadOptions, HttpClient};
 use crate::network::PlaylistItem;
@@ -16,6 +17,49 @@ use tokio_util::sync::CancellationToken;
 
 /// Maximum concurrent downloads
 const MAX_CONCURRENT_DOWNLOADS: usize = 2;
+
+/// Maximum length of the sanitized filename component, in bytes.
+/// Keeps cache paths well under common filesystem limits (typically 255 bytes).
+const MAX_SANITIZED_FILENAME_BYTES: usize = 200;
+
+/// Strip directory components, control characters, and other unsafe sequences
+/// from a server-supplied filename so it's safe to append to a cache path.
+///
+/// The cache path is `{cache_dir}/{id}_{sanitized}`, so `id` already provides
+/// uniqueness — the filename is decorative and may safely be replaced with a
+/// placeholder if the input is hostile (path traversal, NUL byte, absolute
+/// path, etc.). This guarantees the resulting `PathBuf::file_name()` is a
+/// single component contained inside `cache_dir`.
+fn sanitize_filename(raw: &str) -> String {
+    // Treat both `/` and `\` as separators regardless of host OS — the
+    // filename comes from the server, which may run on a different platform
+    // than the client. Take only the trailing segment so leading directory
+    // components (and traversal segments) are dropped.
+    let last = raw.rsplit(['/', '\\']).next().unwrap_or("").trim();
+
+    // Drop NUL bytes and ASCII control chars (newlines, tabs, etc.).
+    let cleaned: String = last
+        .chars()
+        .filter(|c| !c.is_control() && *c != '\0')
+        .collect();
+
+    let candidate = if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
+        "file".to_string()
+    } else {
+        cleaned
+    };
+
+    if candidate.len() <= MAX_SANITIZED_FILENAME_BYTES {
+        candidate
+    } else {
+        // Truncate on a UTF-8 boundary so we never produce an invalid string.
+        let mut end = MAX_SANITIZED_FILENAME_BYTES;
+        while end > 0 && !candidate.is_char_boundary(end) {
+            end -= 1;
+        }
+        candidate[..end].to_string()
+    }
+}
 
 /// Download progress information
 #[derive(Debug, Clone)]
@@ -45,6 +89,10 @@ pub struct CacheManager {
     /// Optional shared application state — when set, the manager bumps
     /// `bytes_downloaded_total` after every successful download for telemetry.
     app_state: Option<AppState>,
+    /// Optional LRU manager — when set, `download_media` calls
+    /// `ensure_room_for(expected_bytes)` before writing, so the cache stays
+    /// under its quota and the partition keeps headroom.
+    lru_manager: Option<Arc<LruCacheManager>>,
 }
 
 impl CacheManager {
@@ -61,6 +109,7 @@ impl CacheManager {
             cancel_token,
             api_key: None,
             app_state: None,
+            lru_manager: None,
         })
     }
 
@@ -75,6 +124,25 @@ impl CacheManager {
     pub fn with_app_state(mut self, state: AppState) -> Self {
         self.app_state = Some(state);
         self
+    }
+
+    /// Wire in the LRU manager so `download_media` can pre-flight cache space
+    /// and partition headroom before writing.
+    pub fn with_lru_manager(mut self, lru: Arc<LruCacheManager>) -> Self {
+        self.lru_manager = Some(lru);
+        self
+    }
+
+    /// Pin the given playlist items in the LRU so they survive eviction
+    /// during long offline windows. Replaces any previously-pinned set in
+    /// one atomic swap. No-op if no LRU manager is wired (test fixtures).
+    pub async fn pin_playlist_items(&self, items: &[PlaylistItem]) {
+        let Some(ref lru) = self.lru_manager else {
+            return;
+        };
+        let ids: Vec<u32> = items.iter().map(|i| i.media_id).collect();
+        tracing::debug!("Pinning {} playlist items in cache", ids.len());
+        lru.replace_pins(ids).await;
     }
 
     /// Initialize cache directory
@@ -94,7 +162,8 @@ impl CacheManager {
 
     /// Get path for a media file in cache
     pub fn get_cache_path(&self, media_id: u32, filename: &str) -> PathBuf {
-        self.cache_dir.join(format!("{}_{}", media_id, filename))
+        self.cache_dir
+            .join(format!("{}_{}", media_id, sanitize_filename(filename)))
     }
 
     /// Directory for cached subtitle sidecars, kept separate so file-listing
@@ -109,7 +178,7 @@ impl CacheManager {
     /// collision-free if two subtitles happen to share an original filename.
     pub fn get_subtitle_cache_path(&self, subtitle_id: u32, filename: &str) -> PathBuf {
         self.subtitle_dir()
-            .join(format!("{}_{}", subtitle_id, filename))
+            .join(format!("{}_{}", subtitle_id, sanitize_filename(filename)))
     }
 
     /// Check if media file exists in cache
@@ -142,6 +211,8 @@ impl CacheManager {
     /// Download a single media file
     ///
     /// Uses atomic file operations: downloads to .tmp file, then renames on success.
+    /// Best-effort pre-flight via the LRU manager evicts older entries before
+    /// the write so we don't blow the cache quota or the partition headroom.
     pub async fn download_media(
         &self,
         media_id: u32,
@@ -167,6 +238,20 @@ impl CacheManager {
         let final_path = self.get_cache_path(media_id, filename);
         let temp_path = final_path.with_extension("tmp");
 
+        // Best-effort pre-flight: probe Content-Length via HEAD and tell the
+        // LRU manager to make room. If HEAD fails (chunked transfer, server
+        // doesn't support it), we proceed without the pre-flight — the LRU
+        // post-write eviction in `add()` is a safety net.
+        if let Some(ref lru) = self.lru_manager {
+            if let Some(expected) = self
+                .http_client
+                .head_media_size(media_id, self.api_key.as_deref())
+                .await
+            {
+                lru.ensure_room_for(expected).await?;
+            }
+        }
+
         tracing::info!("Downloading media {} to {:?}", media_id, final_path);
 
         // Download to temporary file
@@ -178,21 +263,35 @@ impl CacheManager {
             api_key: self.api_key.clone(),
         };
 
-        self.http_client
-            .download_media(media_id, &temp_path, options)
-            .await?;
+        // Wrap the download+verify+rename in an inner closure so any failure
+        // path can clean up the temp file before returning. Without this, a
+        // partial `.tmp` would linger on disk after every failed attempt and
+        // accumulate over time.
+        let result: Result<()> = async {
+            self.http_client
+                .download_media(media_id, &temp_path, options)
+                .await?;
 
-        // Verify checksum
-        tracing::debug!("Verifying checksum for media {}", media_id);
-        checksum::verify_checksum(&temp_path, checksum).await?;
+            tracing::debug!("Verifying checksum for media {}", media_id);
+            checksum::verify_checksum(&temp_path, checksum).await?;
 
-        // Rename to final location (atomic operation)
-        fs::rename(&temp_path, &final_path)
-            .await
-            .map_err(|e| MontrError::CacheWrite {
-                path: final_path.clone(),
-                source: e,
-            })?;
+            fs::rename(&temp_path, &final_path)
+                .await
+                .map_err(|e| MontrError::CacheWrite {
+                    path: final_path.clone(),
+                    source: e,
+                })?;
+
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = result {
+            // Best-effort cleanup — ignore failures (file may already be gone,
+            // or the partition may be full, in which case we already errored).
+            let _ = fs::remove_file(&temp_path).await;
+            return Err(e);
+        }
 
         // Best-effort telemetry: bump the cumulative downloaded-bytes counter
         // by the size of the file we just wrote. We tolerate stat failures
@@ -549,6 +648,7 @@ impl Clone for CacheManager {
             cancel_token: self.cancel_token.clone(),
             api_key: self.api_key.clone(),
             app_state: self.app_state.clone(),
+            lru_manager: self.lru_manager.clone(),
         }
     }
 }
@@ -560,6 +660,83 @@ mod tests {
 
     fn create_test_http_client() -> Arc<HttpClient> {
         Arc::new(HttpClient::new("http://localhost:3000".to_string(), None, false).unwrap())
+    }
+
+    #[test]
+    fn test_sanitize_filename_normal() {
+        assert_eq!(sanitize_filename("video.mp4"), "video.mp4");
+        assert_eq!(sanitize_filename("Some File 2.mkv"), "Some File 2.mkv");
+    }
+
+    #[test]
+    fn test_sanitize_filename_strips_directories() {
+        assert_eq!(sanitize_filename("../../../etc/passwd"), "passwd");
+        assert_eq!(sanitize_filename("/abs/path/movie.mp4"), "movie.mp4");
+        assert_eq!(sanitize_filename("subdir/clip.mov"), "clip.mov");
+        assert_eq!(sanitize_filename("a\\b\\c.txt"), "c.txt");
+    }
+
+    #[test]
+    fn test_sanitize_filename_rejects_dangerous_input() {
+        // Pure traversal — no usable component, falls back to placeholder.
+        assert_eq!(sanitize_filename("../.."), "file");
+        assert_eq!(sanitize_filename(""), "file");
+        assert_eq!(sanitize_filename("."), "file");
+        // NUL and control chars are dropped.
+        assert_eq!(sanitize_filename("foo\0bar.mp4"), "foobar.mp4");
+        assert_eq!(sanitize_filename("foo\nbar.mp4"), "foobar.mp4");
+        assert_eq!(sanitize_filename("\t\r\n"), "file");
+    }
+
+    #[test]
+    fn test_sanitize_filename_truncates_long_input() {
+        let long = "a".repeat(500);
+        let out = sanitize_filename(&long);
+        assert!(out.len() <= MAX_SANITIZED_FILENAME_BYTES);
+        assert!(out.chars().all(|c| c == 'a'));
+    }
+
+    #[test]
+    fn test_sanitize_filename_truncate_preserves_utf8() {
+        // Build an input where the byte at MAX boundary lands mid-codepoint.
+        let mut s = "a".repeat(MAX_SANITIZED_FILENAME_BYTES - 1);
+        s.push('é'); // 2 bytes
+        let out = sanitize_filename(&s);
+        // Must still be valid UTF-8 (String guarantees this) and within budget.
+        assert!(out.len() <= MAX_SANITIZED_FILENAME_BYTES);
+        assert!(out.is_char_boundary(out.len()));
+    }
+
+    #[test]
+    fn test_get_cache_path_stays_under_cache_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let http_client = create_test_http_client();
+        let cancel_token = CancellationToken::new();
+        let manager =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
+
+        // A hostile filename must not escape the cache directory.
+        let p = manager.get_cache_path(7, "../../../etc/passwd");
+        assert_eq!(p.parent().unwrap(), temp_dir.path());
+        assert!(p.file_name().is_some());
+        let name = p.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with("7_"));
+        assert!(!name.contains(".."));
+        assert!(!name.contains('/'));
+    }
+
+    #[test]
+    fn test_get_subtitle_cache_path_stays_under_subs_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let http_client = create_test_http_client();
+        let cancel_token = CancellationToken::new();
+        let manager =
+            CacheManager::new(http_client, temp_dir.path().to_path_buf(), cancel_token).unwrap();
+
+        let p = manager.get_subtitle_cache_path(3, "/etc/shadow");
+        assert_eq!(p.parent().unwrap(), temp_dir.path().join("subs"));
+        let name = p.file_name().unwrap().to_string_lossy();
+        assert_eq!(name, "3_shadow");
     }
 
     #[tokio::test]

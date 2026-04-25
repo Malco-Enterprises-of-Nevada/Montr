@@ -51,6 +51,13 @@ export interface PlaylistMediaItem {
   imageDuration: number;
   /** Subtitle tracks for this media (always an array; empty if none). Added in protocol 1.1.0. */
   subtitles: SubtitleTrackPayload[];
+  /**
+   * File size in bytes from `media_files.file_size`. Added in protocol 1.2.0
+   * so clients can budget preload bandwidth/disk by total bytes rather than
+   * just item count. Optional for backward compatibility — pre-1.2.0 clients
+   * just ignore it.
+   */
+  fileSize?: number;
 }
 
 /**
@@ -98,6 +105,12 @@ export interface HeartbeatMessage {
 }
 
 /**
+ * Severity tier for client-reported errors. Defaults to `error` if absent
+ * on the wire (legacy clients).
+ */
+export type ClientErrorSeverity = 'warn' | 'error' | 'fatal';
+
+/**
  * Client error message
  */
 export interface ErrorMessage {
@@ -105,6 +118,10 @@ export interface ErrorMessage {
   clientId: string;
   error: string;
   context?: Record<string, unknown>;
+  /** Subsystem that originated the error, e.g. `playback`, `cache`, `network`. */
+  source?: string;
+  /** Severity tier; missing means legacy client — treat as `error`. */
+  severity?: ClientErrorSeverity;
   timestamp?: number;
 }
 
@@ -225,6 +242,49 @@ export interface PlaylistUpdatedMessage {
 }
 
 /**
+ * Schedule definition pushed to a client. Subset of the server `Schedule`
+ * row — server-internal fields like `template_id`, `lastTriggered`, and
+ * timestamps are omitted. The client uses these to re-evaluate locally
+ * while offline so playlist transitions still fire when the WS link drops.
+ */
+export interface ScheduleDef {
+  id: number;
+  name: string;
+  playlistId: number;
+  /** Single-client target (UUID), or null for group/global scope. */
+  clientId: string | null;
+  /** Group target id, or null for client/global scope. */
+  groupId: number | null;
+  /** "HH:MM" or null when cron-only. */
+  startTime: string | null;
+  /** "HH:MM" or null. */
+  endTime: string | null;
+  /** Comma-separated day numbers, e.g. "0,1,2,3,4,5,6". */
+  daysOfWeek: string;
+  priority: number;
+  enabled: boolean;
+  /** 5-field cron expression, or null when start/end-time only. */
+  cronExpression: string | null;
+  /** IANA timezone (e.g. "America/Los_Angeles"); null = client local. */
+  timezone: string | null;
+  /** Extra rules: holidays, special_dates, event_trigger. Pass-through JSON. */
+  conditions: unknown;
+  interruptMode: 'assign' | 'interrupt';
+  durationSeconds: number | null;
+}
+
+/**
+ * Schedule definitions pushed to a single client. Server emits this on
+ * registration and after any CRUD that changes which schedules apply to the
+ * client (schedule create/update/delete, group membership change). Client
+ * persists the latest set and re-evaluates from cache when offline.
+ */
+export interface ScheduleDefinitionsMessage {
+  type: 'schedule_definitions';
+  schedules: ScheduleDef[];
+}
+
+/**
  * Command types supported by the system
  */
 export type CommandType =
@@ -235,7 +295,8 @@ export type CommandType =
   | 'previous'
   | 'volume'
   | 'seek'
-  | 'fetch_logs';
+  | 'fetch_logs'
+  | 'screenshot';
 
 /**
  * Command message with optional arguments
@@ -296,7 +357,8 @@ export type ServerMessage =
   | PlaylistResumeMessage
   | CommandMessage
   | ErrorResponseMessage
-  | SuccessResponseMessage;
+  | SuccessResponseMessage
+  | ScheduleDefinitionsMessage;
 
 // ===========================
 // Server → Admin/Browser Messages
@@ -324,9 +386,26 @@ export interface ClientStateChangeBroadcast {
 }
 
 /**
+ * Client-reported error broadcast to admin browsers. Carries severity so
+ * the UI can render warnings differently from hard errors.
+ */
+export interface ClientErrorBroadcast {
+  type: 'client_error';
+  clientId: string;
+  error: string;
+  source?: string;
+  severity: ClientErrorSeverity;
+  context?: Record<string, unknown>;
+  timestamp: number;
+}
+
+/**
  * Union type of admin broadcast messages
  */
-export type AdminBroadcast = ClientStatusBroadcast | ClientStateChangeBroadcast;
+export type AdminBroadcast =
+  | ClientStatusBroadcast
+  | ClientStateChangeBroadcast
+  | ClientErrorBroadcast;
 
 // ===========================
 // Zod Validation Schemas
@@ -388,6 +467,8 @@ export const errorMessageSchema = z.object({
   clientId: z.string().uuid('Client ID must be a valid UUID'),
   error: z.string().min(1, 'Error message is required'),
   context: z.record(z.string(), z.unknown()).optional(),
+  source: z.string().min(1).max(64).optional(),
+  severity: z.enum(['warn', 'error', 'fatal']).optional(),
   timestamp: z.number().optional(),
 });
 

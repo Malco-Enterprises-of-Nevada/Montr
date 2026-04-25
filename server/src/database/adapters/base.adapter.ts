@@ -220,7 +220,15 @@ export interface DatabaseAdapter {
   createPlaybackLog(input: CreatePlaybackLogInput): Promise<PlaybackLog>;
   updatePlaybackLog(
     id: number,
-    updates: { ended_at?: string; duration_watched?: number; completed?: boolean }
+    updates: {
+      ended_at?: string;
+      duration_watched?: number;
+      completed?: boolean;
+      rebuffer_count?: number;
+      dropped_frames?: number;
+      time_to_first_frame_ms?: number;
+      decoder_errors?: number;
+    }
   ): Promise<PlaybackLog>;
   getPlaybackLogs(filter?: {
     client_id?: string;

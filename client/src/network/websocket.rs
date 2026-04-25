@@ -60,6 +60,16 @@ impl WebSocketClient {
     /// and heartbeat. The client will automatically attempt to connect and
     /// maintain the connection.
     pub async fn new(config: &Config) -> Result<Self> {
+        Self::new_with_cfg_snap(config, None).await
+    }
+
+    /// Like `new`, but also wires the shared config snapshot into the
+    /// reconnect strategy so SIGHUP-driven changes to
+    /// `server.reconnect_interval` take effect on the next retry.
+    pub async fn new_with_cfg_snap(
+        config: &Config,
+        cfg_snap: Option<Arc<arc_swap::ArcSwap<Config>>>,
+    ) -> Result<Self> {
         // Build WebSocket URL
         let ws_url = Self::build_ws_url(&config.server.url)?;
 
@@ -68,11 +78,15 @@ impl WebSocketClient {
 
         // Create state and reconnect strategy
         let state = Arc::new(RwLock::new(ConnectionState::new()));
-        let reconnect = Arc::new(RwLock::new(ReconnectStrategy::new(
+        let mut strategy = ReconnectStrategy::new(
             Duration::from_secs(config.server.reconnect_interval),
             1.5,
             Duration::from_secs(300),
-        )));
+        );
+        if let Some(snap) = cfg_snap {
+            strategy = strategy.with_cfg_snap(snap);
+        }
+        let reconnect = Arc::new(RwLock::new(strategy));
 
         // Create channels
         let (msg_tx, msg_rx) = mpsc::channel::<ClientMessage>(1000);

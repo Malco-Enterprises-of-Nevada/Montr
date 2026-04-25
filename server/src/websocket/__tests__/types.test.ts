@@ -247,6 +247,35 @@ describe('WebSocket Message Types', () => {
       }
     });
 
+    it('should validate error message with source and severity', () => {
+      const message = {
+        type: 'error',
+        clientId: '550e8400-e29b-41d4-a716-446655440000',
+        error: 'Preload timed out',
+        source: 'preload',
+        severity: 'warn' as const,
+      };
+
+      const result = errorMessageSchema.safeParse(message);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.source).toBe('preload');
+        expect(result.data.severity).toBe('warn');
+      }
+    });
+
+    it('should reject an unknown severity value', () => {
+      const message = {
+        type: 'error',
+        clientId: '550e8400-e29b-41d4-a716-446655440000',
+        error: 'Bad severity',
+        severity: 'critical',
+      };
+
+      const result = errorMessageSchema.safeParse(message);
+      expect(result.success).toBe(false);
+    });
+
     it('should reject empty error message', () => {
       const message = {
         type: 'error',

@@ -1332,13 +1332,26 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
   async updatePlaybackLog(
     id: number,
-    updates: { ended_at?: string; duration_watched?: number; completed?: boolean }
+    updates: {
+      ended_at?: string;
+      duration_watched?: number;
+      completed?: boolean;
+      rebuffer_count?: number;
+      dropped_frames?: number;
+      time_to_first_frame_ms?: number;
+      decoder_errors?: number;
+    }
   ): Promise<PlaybackLog> {
     const setFields: Record<string, unknown> = {};
     if (updates.ended_at !== undefined) setFields.ended_at = updates.ended_at;
     if (updates.duration_watched !== undefined)
       setFields.duration_watched = updates.duration_watched;
     if (updates.completed !== undefined) setFields.completed = updates.completed;
+    if (updates.rebuffer_count !== undefined) setFields.rebuffer_count = updates.rebuffer_count;
+    if (updates.dropped_frames !== undefined) setFields.dropped_frames = updates.dropped_frames;
+    if (updates.time_to_first_frame_ms !== undefined)
+      setFields.time_to_first_frame_ms = updates.time_to_first_frame_ms;
+    if (updates.decoder_errors !== undefined) setFields.decoder_errors = updates.decoder_errors;
 
     if (Object.keys(setFields).length > 0) {
       await this.col('playback_logs').updateOne({ id }, { $set: setFields });

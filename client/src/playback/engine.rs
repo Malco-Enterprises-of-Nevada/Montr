@@ -6,7 +6,7 @@
 use crate::error::{MontrError, Result};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, RwLock};
@@ -94,8 +94,23 @@ pub struct PlaybackEngine {
     /// Cancellation token
     cancel_token: CancellationToken,
 
-    /// Default image duration (seconds)
+    /// Default image duration (seconds). Used as fallback when the playlist
+    /// item didn't carry an explicit duration. When `cfg_snap` is wired,
+    /// the value is read live from the snapshot in the command handler so
+    /// SIGHUP changes apply to the very next image.
     default_image_duration: u64,
+
+    /// Optional shared config snapshot. When set, the command handler reads
+    /// `playback.default_image_duration` from this on every Play instead of
+    /// using the captured fallback above.
+    cfg_snap: Option<Arc<arc_swap::ArcSwap<crate::config::Config>>>,
+
+    /// Wall-clock instant when this engine spawned mpv. Used by telemetry to
+    /// report a real `mpv_uptime_s` rather than mirroring client uptime.
+    mpv_started_at: Instant,
+
+    /// Per-media playback quality accumulator. Reset on each `loadfile`.
+    quality: Arc<RwLock<PlaybackQuality>>,
 }
 
 /// Current playback state
@@ -126,6 +141,40 @@ pub struct MpvHealthStats {
     pub dropped_frames: u64,
     /// Best-effort string for the most recent decoder error (None if not exposed).
     pub last_decoder_error: Option<String>,
+}
+
+/// Per-media playback quality counters maintained by the engine across the
+/// lifetime of a single `play()` invocation. Reset on every `loadfile`.
+#[derive(Debug, Clone, Default)]
+pub struct PlaybackQuality {
+    /// Wall-clock instant when the most recent `loadfile` was issued.
+    /// Used as the stopwatch base for `time_to_first_frame_ms`.
+    pub loadfile_at: Option<Instant>,
+    /// Snapshot of `decoder-frame-drop-count` taken at `loadfile`. The end-
+    /// of-session diff (current - this) yields per-media dropped frames.
+    pub dropped_at_start: u64,
+    /// Number of times `paused-for-cache` transitioned false→true since
+    /// `loadfile` — a proxy for rebuffering events.
+    pub rebuffer_count: u32,
+    /// Time-to-first-frame in milliseconds: time between `loadfile` and the
+    /// first non-zero `playback-time` reading. `None` if playback never
+    /// produced a frame (image, error, etc.).
+    pub time_to_first_frame_ms: Option<u32>,
+    /// Internal edge-detection state for `paused-for-cache` polling.
+    pub was_paused_for_cache: bool,
+}
+
+/// End-of-session quality snapshot, returned by
+/// `PlaybackEngine::take_quality_snapshot()` and forwarded to the analytics
+/// API in the `/playback/:id/end` body.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PlaybackQualitySnapshot {
+    pub rebuffer_count: u32,
+    pub dropped_frames: u32,
+    pub time_to_first_frame_ms: Option<u32>,
+    /// Decoder error count is currently always 0 — wiring up mpv log-message
+    /// subscription is deferred. Field is reported for forward-compat.
+    pub decoder_errors: u32,
 }
 
 /// Playback events emitted by the engine
@@ -220,7 +269,62 @@ impl PlaybackEngine {
             command_rx: Arc::new(RwLock::new(Some(command_rx))),
             cancel_token,
             default_image_duration: 5,
+            cfg_snap: None,
+            mpv_started_at: Instant::now(),
+            quality: Arc::new(RwLock::new(PlaybackQuality::default())),
         })
+    }
+
+    /// Wire in the shared config snapshot so the command handler reads
+    /// `playback.default_image_duration` live on every Play. When unset,
+    /// the construction-time fallback (5s) is used instead.
+    pub fn with_cfg_snap(
+        mut self,
+        cfg_snap: Arc<arc_swap::ArcSwap<crate::config::Config>>,
+    ) -> Self {
+        self.cfg_snap = Some(cfg_snap);
+        self
+    }
+
+    /// Resolve the active default image duration from the snapshot when
+    /// wired, else fall back to the value captured at construction.
+    fn current_default_image_duration(&self) -> u64 {
+        match self.cfg_snap.as_ref() {
+            Some(snap) => snap.load().playback.default_image_duration,
+            None => self.default_image_duration,
+        }
+    }
+
+    /// How long the underlying mpv subprocess has been running, as observed
+    /// by this engine. Re-spawn would currently produce a new engine; once
+    /// in-place mpv restart is implemented, this value should reset there.
+    pub fn mpv_uptime(&self) -> Duration {
+        self.mpv_started_at.elapsed()
+    }
+
+    /// Take an end-of-session snapshot of per-media playback quality. Queries
+    /// the current `decoder-frame-drop-count` and diffs against the value
+    /// captured at `loadfile`. Best-effort: any IPC error returns zeroed
+    /// counters so a missing snapshot never blocks analytics.
+    pub async fn take_quality_snapshot(&self) -> PlaybackQualitySnapshot {
+        let q = self.quality.read().await.clone();
+        let dropped_now = self
+            .send_command(&[
+                serde_json::json!("get_property"),
+                serde_json::json!("decoder-frame-drop-count"),
+            ])
+            .await
+            .ok()
+            .and_then(|r| r.get("data").and_then(|d| d.as_u64()))
+            .unwrap_or(q.dropped_at_start);
+        let dropped_frames = dropped_now.saturating_sub(q.dropped_at_start) as u32;
+
+        PlaybackQualitySnapshot {
+            rebuffer_count: q.rebuffer_count,
+            dropped_frames,
+            time_to_first_frame_ms: q.time_to_first_frame_ms,
+            decoder_errors: 0,
+        }
     }
 
     /// Send a JSON command to mpv via IPC
@@ -408,6 +512,38 @@ impl PlaybackEngine {
                             .event_tx
                             .send(PlaybackEvent::PositionChanged { position: pos })
                             .await;
+
+                        // Time-to-first-frame: first non-zero playback-time
+                        // after a loadfile is the moment mpv started actually
+                        // rendering. Record once per session.
+                        if pos > 0.0 {
+                            let mut q = self.quality.write().await;
+                            if q.time_to_first_frame_ms.is_none() {
+                                if let Some(start) = q.loadfile_at {
+                                    let ms =
+                                        start.elapsed().as_millis().min(u32::MAX as u128) as u32;
+                                    q.time_to_first_frame_ms = Some(ms);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Rebuffer count: rising edges of `paused-for-cache`. mpv
+                // sets this when it had to stop playback waiting for I/O.
+                if let Ok(response) = self
+                    .send_command(&[
+                        serde_json::json!("get_property"),
+                        serde_json::json!("paused-for-cache"),
+                    ])
+                    .await
+                {
+                    if let Some(now_paused) = response.get("data").and_then(|d| d.as_bool()) {
+                        let mut q = self.quality.write().await;
+                        if now_paused && !q.was_paused_for_cache {
+                            q.rebuffer_count = q.rebuffer_count.saturating_add(1);
+                        }
+                        q.was_paused_for_cache = now_paused;
                     }
                 }
 
@@ -446,7 +582,7 @@ impl PlaybackEngine {
             } => {
                 let duration = image_duration
                     .map(|d| d as u64)
-                    .unwrap_or(self.default_image_duration);
+                    .unwrap_or_else(|| self.current_default_image_duration());
                 self.play(&path, !is_video, duration, subtitles.as_ref())
                     .await
             }
@@ -480,6 +616,29 @@ impl PlaybackEngine {
             .ok_or_else(|| MontrError::Playback("Invalid file path".to_string()))?;
 
         tracing::info!("Playing: {} (image: {})", path_str, is_image);
+
+        // Reset per-media quality counters to anchor the new session. Capture
+        // the current dropped-frame count BEFORE the loadfile so the diff at
+        // end-of-session attributes only this media's drops.
+        {
+            let dropped_at_start = self
+                .send_command(&[
+                    serde_json::json!("get_property"),
+                    serde_json::json!("decoder-frame-drop-count"),
+                ])
+                .await
+                .ok()
+                .and_then(|r| r.get("data").and_then(|d| d.as_u64()))
+                .unwrap_or(0);
+            let mut q = self.quality.write().await;
+            *q = PlaybackQuality {
+                loadfile_at: Some(Instant::now()),
+                dropped_at_start,
+                rebuffer_count: 0,
+                time_to_first_frame_ms: None,
+                was_paused_for_cache: false,
+            };
+        }
 
         // Load file via IPC and ensure playback starts
         self.send_command(&[

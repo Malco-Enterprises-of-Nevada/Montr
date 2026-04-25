@@ -37,18 +37,33 @@ export class AnalyticsService {
   }
 
   /**
-   * Records a playback end event
+   * Records a playback end event.
+   *
+   * Optional `quality` fields carry per-media playback metrics from the
+   * client (rebuffer count, dropped frames, time-to-first-frame, decoder
+   * errors). They're additive — pre-quality clients omit them and the row
+   * stays NULL.
    */
   async recordPlaybackEnd(
     logId: number,
     durationWatched: number,
-    completed: boolean
+    completed: boolean,
+    quality?: {
+      rebufferCount?: number;
+      droppedFrames?: number;
+      timeToFirstFrameMs?: number;
+      decoderErrors?: number;
+    }
   ): Promise<PlaybackLog> {
     const db = await getDatabase();
     const log = await db.updatePlaybackLog(logId, {
       ended_at: new Date().toISOString(),
       duration_watched: durationWatched,
       completed,
+      rebuffer_count: quality?.rebufferCount,
+      dropped_frames: quality?.droppedFrames,
+      time_to_first_frame_ms: quality?.timeToFirstFrameMs,
+      decoder_errors: quality?.decoderErrors,
     });
 
     logger.info(

@@ -234,6 +234,7 @@ mod tests {
             order_index,
             image_duration: 5,
             subtitles: Vec::new(),
+            file_size: None,
         }
     }
 

@@ -6,7 +6,8 @@
 use crate::error::{MontrError, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_LENGTH, RANGE};
-use reqwest::Client;
+use reqwest::redirect::Policy;
+use reqwest::{Client, Url};
 use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
@@ -57,7 +58,32 @@ impl HttpClient {
         ca_cert_path: Option<&Path>,
         tls_skip_verify: bool,
     ) -> Result<Self> {
-        let mut builder = Client::builder().timeout(Duration::from_secs(300));
+        // Restrict redirects to the configured server host. The client only
+        // ever fetches resources owned by `server_url`, so a cross-host
+        // redirect would either be a server misconfiguration or an attempt to
+        // exfiltrate the client's API key to a third party.
+        let server_host = Url::parse(&server_url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string));
+
+        let policy = match server_host.clone() {
+            Some(host) => Policy::custom(move |attempt| {
+                if attempt.previous().len() >= 5 {
+                    return attempt.error("too many redirects");
+                }
+                match attempt.url().host_str() {
+                    Some(h) if h.eq_ignore_ascii_case(&host) => attempt.follow(),
+                    _ => attempt.stop(),
+                }
+            }),
+            // If we can't parse the configured URL, fall back to no redirects
+            // — the request will fail explicitly rather than silently follow.
+            None => Policy::none(),
+        };
+
+        let mut builder = Client::builder()
+            .timeout(Duration::from_secs(300))
+            .redirect(policy);
 
         if tls_skip_verify {
             tracing::warn!("TLS certificate verification is DISABLED — do not use in production");
@@ -75,6 +101,27 @@ impl HttpClient {
         let client = builder.build()?;
 
         Ok(Self { client, server_url })
+    }
+
+    /// Best-effort probe for the Content-Length of a media download. Returns
+    /// `None` if the server doesn't expose it (chunked transfer, error, etc.)
+    /// or the request fails. Used by the cache layer to pre-flight space
+    /// without actually starting the download.
+    pub async fn head_media_size(&self, media_id: u32, api_key: Option<&str>) -> Option<u64> {
+        let url = format!("{}/api/media/{}/download", self.server_url, media_id);
+        let mut req = self.client.head(&url);
+        if let Some(key) = api_key {
+            req = req.header("X-API-Key", key);
+        }
+
+        match req.timeout(Duration::from_secs(10)).send().await {
+            Ok(resp) if resp.status().is_success() => resp
+                .headers()
+                .get(CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok()),
+            Ok(_) | Err(_) => None,
+        }
     }
 
     /// Download a media file by ID
@@ -438,19 +485,74 @@ impl HttpClient {
         }
     }
 
-    /// Report playback end to analytics API
+    /// Upload a screenshot to the server's preview endpoint, optionally
+    /// correlated with the originating admin request via `X-Request-Id`.
+    ///
+    /// Mirrors the periodic preview upload (multipart, `preview` field,
+    /// `image/jpeg`) so the server-side endpoint needs no changes for the
+    /// on-demand path.
+    pub async fn upload_preview(
+        &self,
+        client_id: &str,
+        request_id: Option<&str>,
+        image_bytes: Vec<u8>,
+        api_key: Option<&str>,
+    ) -> Result<()> {
+        let url = format!("{}/api/clients/{}/preview", self.server_url, client_id);
+
+        let part = reqwest::multipart::Part::bytes(image_bytes)
+            .file_name("preview.jpg")
+            .mime_str("image/jpeg")
+            .map_err(|e| MontrError::HttpRequest(format!("Invalid mime part: {}", e)))?;
+        let form = reqwest::multipart::Form::new().part("preview", part);
+
+        let mut req = self.client.post(&url).multipart(form);
+        if let Some(rid) = request_id {
+            req = req.header("X-Request-Id", rid);
+        }
+        if let Some(key) = api_key {
+            req = req.header("X-API-Key", key);
+        }
+
+        match req.timeout(Duration::from_secs(15)).send().await {
+            Ok(resp) if resp.status().is_success() => Ok(()),
+            Ok(resp) => Err(MontrError::HttpRequest(format!(
+                "Preview upload returned {}",
+                resp.status()
+            ))),
+            Err(e) => Err(MontrError::HttpRequest(format!(
+                "Preview upload failed: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Report playback end to analytics API.
+    ///
+    /// `quality` is optional — when present, the per-media metrics ride
+    /// alongside duration/completed in the same end-of-session payload. The
+    /// server stores them in the new `playback_logs` quality columns.
     pub async fn report_playback_end(
         &self,
         log_id: u64,
         duration_watched: f64,
         completed: bool,
+        quality: Option<crate::playback::engine::PlaybackQualitySnapshot>,
         api_key: Option<&str>,
     ) -> Result<()> {
         let url = format!("{}/api/analytics/playback/{}/end", self.server_url, log_id);
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "durationWatched": duration_watched,
             "completed": completed,
         });
+        if let (Some(q), Some(map)) = (quality, body.as_object_mut()) {
+            map.insert("rebufferCount".into(), q.rebuffer_count.into());
+            map.insert("droppedFrames".into(), q.dropped_frames.into());
+            if let Some(ttff) = q.time_to_first_frame_ms {
+                map.insert("timeToFirstFrameMs".into(), ttff.into());
+            }
+            map.insert("decoderErrors".into(), q.decoder_errors.into());
+        }
 
         let mut req = self.client.post(&url).json(&body);
         if let Some(key) = api_key {
@@ -600,7 +702,7 @@ mod tests {
 
         let client = HttpClient::new(server.url(), None, false).unwrap();
         client
-            .report_playback_end(7, 12.5, true, None)
+            .report_playback_end(7, 12.5, true, None, None)
             .await
             .unwrap();
 

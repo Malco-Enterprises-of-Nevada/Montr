@@ -6,6 +6,7 @@ import express, { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import { randomUUID } from 'crypto';
 import { clientService } from '../../services/client.service';
 import { config } from '../../config/config';
 import { asyncHandler, successResponse, AppError, ErrorCode } from '../middleware/error-handler';
@@ -380,6 +381,44 @@ router.post(
   })
 );
 
+/**
+ * POST /api/clients/:id/screenshot
+ *
+ * Admin endpoint: pushes a `screenshot` command to the connected client over
+ * WS with a fresh request_id. Returns 202 + the request_id immediately; the
+ * client uploads the captured image via POST /api/clients/:id/preview, which
+ * overwrites the standard preview file. Admin UI then refreshes
+ * GET /api/clients/:id/preview to display the new shot.
+ */
+router.post(
+  '/:id/screenshot',
+  requireRole('admin', 'editor'),
+  validateParams(uuidParamSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params as { id: string };
+    await clientService.getClientById(id);
+
+    if (!clientConnectionManager.isConnected(id)) {
+      throw new AppError(ErrorCode.CLIENT_OFFLINE, 'Client is not connected', 503);
+    }
+
+    const requestId = randomUUID();
+    const sent = sendCommandToClient(id, 'screenshot', { request_id: requestId });
+
+    if (!sent) {
+      throw new AppError(ErrorCode.CLIENT_OFFLINE, 'Failed to dispatch screenshot command', 503);
+    }
+
+    res.status(202).json(
+      successResponse({
+        message: 'Screenshot requested',
+        clientId: id,
+        request_id: requestId,
+      })
+    );
+  })
+);
+
 // Configure multer for preview uploads
 const previewUpload = multer({
   dest: path.join(config.storage.path, 'temp'),
@@ -423,7 +462,10 @@ router.post(
 
     fs.renameSync(file.path, previewPath);
 
-    res.json(successResponse({ message: 'Preview uploaded', clientId: id }));
+    // Optional X-Request-Id pairs an upload back to the originating
+    // /screenshot admin request — purely informational for now.
+    const requestId = req.header('X-Request-Id');
+    res.json(successResponse({ message: 'Preview uploaded', clientId: id, request_id: requestId }));
   })
 );
 
