@@ -47,8 +47,7 @@ export type ThumbnailResponse =
   // payload through JSON, which turns a Uint8Array into a plain object
   // with numeric keys (\`{"0":255,"1":216,...}\`) and Buffer.from() rejects
   // that. Base64 round-trips cleanly.
-  | { ok: true; bufferBase64: string }
-  | { ok: false; error: string };
+  { ok: true; bufferBase64: string } | { ok: false; error: string };
 
 /**
  * Detect an "attached picture" stream (MP4 `covr` atom, MKV cover attachment,
@@ -126,11 +125,7 @@ async function extractAttachedPic(
     .toBuffer();
 }
 
-async function generateVideoFrame(
-  source: string,
-  width: number,
-  quality: number
-): Promise<Buffer> {
+async function generateVideoFrame(source: string, width: number, quality: number): Promise<Buffer> {
   // Blu-ray rips and pre-tagged libraries commonly ship a cover frame in
   // the container itself. Skipping straight to that avoids spawning a
   // decoder on the movie at all — a kilobytes-level transfer instead of

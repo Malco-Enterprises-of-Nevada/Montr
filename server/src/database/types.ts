@@ -16,12 +16,7 @@ export interface ThumbnailJob {
   updated_at: string;
 }
 
-export type UploadCompletionJobState =
-  | 'queued'
-  | 'running'
-  | 'done'
-  | 'duplicate'
-  | 'failed';
+export type UploadCompletionJobState = 'queued' | 'running' | 'done' | 'duplicate' | 'failed';
 
 export interface UploadCompletionJob {
   id: number;

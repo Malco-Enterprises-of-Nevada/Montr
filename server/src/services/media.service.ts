@@ -295,8 +295,7 @@ export class MediaService {
   async processUploadCompletionJob(
     job: UploadCompletionJob
   ): Promise<
-    | { kind: 'created'; mediaId: number }
-    | { kind: 'duplicate'; existingMediaId: number }
+    { kind: 'created'; mediaId: number } | { kind: 'duplicate'; existingMediaId: number }
   > {
     return postProcessSemaphore.run(async () => {
       const db = await getDatabase();
@@ -333,16 +332,12 @@ export class MediaService {
         // Checksum first so we can short-circuit duplicates before running
         // ffprobe (which can itself take a minute on a long video).
         const checksum = await calculateFileChecksumStream(localPath);
-        logger.info(
-          `Upload job ${job.id} (${job.original_filename}): checksum=${checksum}`
-        );
+        logger.info(`Upload job ${job.id} (${job.original_filename}): checksum=${checksum}`);
 
         const existing = await db.getMediaByChecksum(checksum);
         if (existing) {
           await storageService.deleteFile(job.storage_key).catch(() => {});
-          logger.info(
-            `Upload job ${job.id}: duplicate of media ${existing.id}, discarded`
-          );
+          logger.info(`Upload job ${job.id}: duplicate of media ${existing.id}, discarded`);
           return { kind: 'duplicate' as const, existingMediaId: existing.id };
         }
 
@@ -359,10 +354,7 @@ export class MediaService {
           }
         } catch (error) {
           // Non-fatal: still create the row with null width/height/duration.
-          logger.warn(
-            `Failed to extract metadata for ${job.original_filename}:`,
-            error
-          );
+          logger.warn(`Failed to extract metadata for ${job.original_filename}:`, error);
         }
 
         const input: CreateMediaInput = {

@@ -116,7 +116,10 @@ export const migration: Migration = {
   async down(ctx: MigrationContext): Promise<void> {
     if (ctx.adapterType === 'mongodb') {
       const db = ctx.getMongoDb!();
-      await db.collection('upload_completion_jobs').drop().catch(() => {});
+      await db
+        .collection('upload_completion_jobs')
+        .drop()
+        .catch(() => {});
       return;
     }
     await ctx.executeSql!('DROP TABLE IF EXISTS upload_completion_jobs');

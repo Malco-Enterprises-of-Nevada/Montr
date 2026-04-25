@@ -81,9 +81,11 @@ describe('ClientConnectionManager', () => {
       // Simulate the old session being added ~30s ago — well past the 10 s
       // dedup window, which is what a genuine reconnect after network loss
       // would look like.
-      const meta = (manager as unknown as {
-        metadata: Map<string, { connectedAt: Date }>;
-      }).metadata.get(clientId);
+      const meta = (
+        manager as unknown as {
+          metadata: Map<string, { connectedAt: Date }>;
+        }
+      ).metadata.get(clientId);
       if (meta) meta.connectedAt = new Date(Date.now() - 30_000);
 
       manager.addConnection(clientId, mockWs);

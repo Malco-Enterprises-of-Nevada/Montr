@@ -420,10 +420,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
     );
   }
 
-  async markUploadCompletionJobDuplicate(
-    jobId: number,
-    existingMediaId: number
-  ): Promise<void> {
+  async markUploadCompletionJobDuplicate(jobId: number, existingMediaId: number): Promise<void> {
     await this.col('upload_completion_jobs').updateOne(
       { id: jobId },
       {
