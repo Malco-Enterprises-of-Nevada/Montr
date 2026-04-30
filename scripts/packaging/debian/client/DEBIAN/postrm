@@ -12,6 +12,11 @@ case "$1" in
         rm -rf /etc/montr-client
         rm -rf /var/cache/montr-client /var/log/montr-client
         rm -rf /usr/lib/montr-client
+        # Drop-ins written by postinst (00-kiosk-user.conf or
+        # 00-system-user.conf). Leave any operator-written override.conf alone.
+        rm -f /etc/systemd/system/montr-client.service.d/00-kiosk-user.conf
+        rm -f /etc/systemd/system/montr-client.service.d/00-system-user.conf
+        rmdir --ignore-fail-on-non-empty /etc/systemd/system/montr-client.service.d 2>/dev/null || true
         if id -u montr >/dev/null 2>&1; then
             userdel montr 2>/dev/null || true
         fi
