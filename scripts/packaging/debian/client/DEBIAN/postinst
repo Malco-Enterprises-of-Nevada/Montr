@@ -11,6 +11,17 @@ case "$1" in
         chown -R montr:montr /var/cache/montr-client /var/log/montr-client
         chown -R montr:montr /etc/montr-client
 
+        # On fresh install only ($2 is empty), replace the example UUID with a
+        # freshly generated one so that multiple Pis installed from the same
+        # .deb don't collide on the server (they key clients on id, not name).
+        # Operator-customised configs (different UUID) are not touched, and on
+        # upgrades we leave the existing id alone so server-side history stays
+        # bound to it.
+        if [ -z "${2:-}" ] && grep -q '^id = "de863e20-55ed-4b89-85ed-ac6efa1b9b67"' /etc/montr-client/config.toml; then
+            new_uuid=$(cat /proc/sys/kernel/random/uuid)
+            sed -i "s|^id = \"de863e20-55ed-4b89-85ed-ac6efa1b9b67\"|id = \"$new_uuid\"|" /etc/montr-client/config.toml
+        fi
+
         systemctl daemon-reload
         systemctl enable montr-client.service
         systemctl enable --now montr-client-updater.path
