@@ -15,7 +15,7 @@ name = "Client-01"
 [playback]
 default_image_duration = 5
 loop_playlist = true
-media_cache_dir = "/home/stripcheese/.cache/montr-client"
+media_cache_dir = "/var/cache/montr-client/media"
 max_cache_size_mb = 5000
 preload_next_items = 2
 # Seconds to wait at startup for the server to assign a playlist before falling
@@ -25,7 +25,7 @@ offline_fallback_grace_secs = 5
 [system]
 auto_start = true
 log_level = "info"
-log_file = "/home/stripcheese/.local/share/montr-client/logs/client.log"
+log_file = "/var/log/montr-client/client.log"
 log_max_size_mb = 100
 log_max_files = 5
 
