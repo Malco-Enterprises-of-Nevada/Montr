@@ -241,6 +241,16 @@ impl PlaybackEngine {
             format!("--fs-screen={}", screen_index),
         ];
 
+        // On Linux, pull in the system mpv config shipped with the .deb. It
+        // pins vo=gpu and gpu-api=opengl to dodge the broken auto-default
+        // (dmabuf-wayland silently rendering nothing) and the broken Vulkan
+        // path on Pi 5 + labwc. mpv silently ignores --include if the file
+        // doesn't exist (e.g. dev runs from `cargo run`), so this is safe to
+        // leave on unconditionally on Linux. Other platforms keep their own
+        // defaults.
+        #[cfg(target_os = "linux")]
+        args.push("--include=/etc/montr-client/mpv.conf".to_string());
+
         if !fullscreen {
             args.retain(|a| a != "--fullscreen=yes");
         }

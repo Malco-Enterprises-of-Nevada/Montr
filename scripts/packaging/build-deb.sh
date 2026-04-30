@@ -76,6 +76,7 @@ case "$COMPONENT" in
         # Config
         mkdir -p "$BUILD_DIR/etc/montr-client"
         cp "$PROJECT_ROOT/client/config.example.toml" "$BUILD_DIR/etc/montr-client/config.toml"
+        cp "$PROJECT_ROOT/client/mpv.conf" "$BUILD_DIR/etc/montr-client/mpv.conf"
 
         # Systemd
         mkdir -p "$BUILD_DIR/lib/systemd/system"
