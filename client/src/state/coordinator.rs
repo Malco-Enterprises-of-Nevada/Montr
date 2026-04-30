@@ -463,10 +463,14 @@ impl StateCoordinator {
                         }
                     }
                     "volume" => {
+                        // Wire format: server sends {"args":{"volume":N}}
+                        // (web UI app.js, validation.ts sendCommandSchema). Accept
+                        // "level" too as a backwards-compatibility alias in case
+                        // any older operator tooling sends it.
                         if let Some(level) = cmd
                             .args
                             .as_ref()
-                            .and_then(|a| a.get("level"))
+                            .and_then(|a| a.get("volume").or_else(|| a.get("level")))
                             .and_then(|v| v.as_f64())
                         {
                             self.playback_tx
@@ -1951,8 +1955,10 @@ mod tests {
             None,
         );
 
+        // Canonical wire key used by the server is `volume` (validation.ts
+        // sendCommandSchema, web UI app.js). Verify it dispatches correctly.
         let mut args = std::collections::HashMap::new();
-        args.insert("level".to_string(), serde_json::json!(42.0));
+        args.insert("volume".to_string(), serde_json::json!(42.0));
         let cmd = ServerMessage::Command(crate::network::CommandMessage {
             command: "volume".to_string(),
             args: Some(args),
@@ -1962,6 +1968,20 @@ mod tests {
         match playback_rx.try_recv() {
             Ok(PlaybackCommand::Volume { level }) => assert_eq!(level, 42.0),
             other => panic!("expected Volume command, got {:?}", other),
+        }
+
+        // Backwards-compat alias: `level` still works so older tooling
+        // doesn't break.
+        let mut args = std::collections::HashMap::new();
+        args.insert("level".to_string(), serde_json::json!(17.0));
+        let cmd = ServerMessage::Command(crate::network::CommandMessage {
+            command: "volume".to_string(),
+            args: Some(args),
+        });
+        coordinator.handle_server_message(cmd).await.unwrap();
+        match playback_rx.try_recv() {
+            Ok(PlaybackCommand::Volume { level }) => assert_eq!(level, 17.0),
+            other => panic!("expected Volume command (level alias), got {:?}", other),
         }
     }
 
