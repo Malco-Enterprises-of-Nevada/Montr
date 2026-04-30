@@ -3,13 +3,61 @@ set -e
 
 case "$1" in
     configure)
-        if ! id -u montr >/dev/null 2>&1; then
-            useradd --system --create-home --shell /usr/sbin/nologin montr
-        fi
+        # Detect a kiosk auto-login user (uid >=1000, real shell, real home).
+        # On Pi OS the desktop session is owned by this user, and the Wayland
+        # socket lives under /run/user/<uid> with that user's ownership — the
+        # service must run as them or it can't draw on the display. If no such
+        # user exists (server / headless install), fall through to the system
+        # 'montr' user the package historically created.
+        kiosk_user=""
+        kiosk_uid=""
+        kiosk_home=""
+        for uid in $(getent passwd | awk -F: '$3>=1000 && $3<60000 {print $3}' | sort -n); do
+            entry=$(getent passwd "$uid")
+            shell=$(echo "$entry" | cut -d: -f7)
+            home=$(echo "$entry" | cut -d: -f6)
+            if [ -d "$home" ] && [ "$shell" != "/usr/sbin/nologin" ] && [ "$shell" != "/bin/false" ]; then
+                kiosk_user=$(echo "$entry" | cut -d: -f1)
+                kiosk_uid=$uid
+                kiosk_home=$home
+                break
+            fi
+        done
 
         mkdir -p /var/cache/montr-client /var/log/montr-client
-        chown -R montr:montr /var/cache/montr-client /var/log/montr-client
-        chown -R montr:montr /etc/montr-client
+        mkdir -p /etc/systemd/system/montr-client.service.d
+
+        if [ -n "$kiosk_user" ]; then
+            # Kiosk-mode install. The 00- prefix sorts before any operator
+            # override.conf so an operator-supplied drop-in still wins.
+            cat > /etc/systemd/system/montr-client.service.d/00-kiosk-user.conf <<EOF
+[Service]
+User=$kiosk_user
+Group=$kiosk_user
+SupplementaryGroups=video render audio
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/$kiosk_uid
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=$kiosk_home/.Xauthority
+EOF
+            chown -R "$kiosk_user:$kiosk_user" /var/cache/montr-client /var/log/montr-client /etc/montr-client
+            echo "montr-client: configured for kiosk user '$kiosk_user' (uid $kiosk_uid)"
+        else
+            # Headless / server install. Original behaviour: create the system
+            # 'montr' user and run as it. Drop-in supplies User=/Group= since
+            # the parent unit no longer hardcodes them.
+            if ! id -u montr >/dev/null 2>&1; then
+                useradd --system --create-home --shell /usr/sbin/nologin montr
+            fi
+            cat > /etc/systemd/system/montr-client.service.d/00-system-user.conf <<EOF
+[Service]
+User=montr
+Group=montr
+ProtectHome=true
+EOF
+            chown -R montr:montr /var/cache/montr-client /var/log/montr-client /etc/montr-client
+            echo "montr-client: configured for system user 'montr' (no kiosk user detected)"
+        fi
 
         # On fresh install only ($2 is empty), replace the example UUID with a
         # freshly generated one so that multiple Pis installed from the same
@@ -23,7 +71,10 @@ case "$1" in
         fi
 
         systemctl daemon-reload
-        systemctl enable montr-client.service
+        # 'reenable' refreshes WantedBy symlinks if the unit's [Install]
+        # section changed across upgrades (e.g. graphical-session.target ->
+        # multi-user.target). Falls back to plain enable on first install.
+        systemctl reenable montr-client.service 2>/dev/null || systemctl enable montr-client.service
         systemctl enable --now montr-client-updater.path
         ;;
 esac

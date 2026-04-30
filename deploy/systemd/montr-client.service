@@ -6,11 +6,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=montr
-Group=montr
-Environment=DISPLAY=:0
-# For Wayland, uncomment the following and comment out DISPLAY above:
-# Environment=WAYLAND_DISPLAY=wayland-0
+# User, Group, and display environment (DISPLAY / WAYLAND_DISPLAY /
+# XDG_RUNTIME_DIR / XAUTHORITY) are written by the postinst into
+# /etc/systemd/system/montr-client.service.d/00-kiosk-user.conf based on
+# the auto-login user detected at install time. Operators who want a
+# different user can drop in /etc/systemd/system/montr-client.service.d/
+# override.conf — its later sort order overrides the postinst defaults.
 ExecStart=/usr/bin/montr-client --config /etc/montr-client/config.toml
 Restart=on-failure
 RestartSec=10
@@ -18,9 +19,7 @@ TimeoutStopSec=10
 
 # Security hardening
 ProtectSystem=strict
-ProtectHome=true
 NoNewPrivileges=true
-PrivateTmp=true
 ReadWritePaths=/var/cache/montr-client /var/log/montr-client
 
 # Logging
@@ -29,4 +28,4 @@ StandardError=journal
 SyslogIdentifier=montr-client
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=multi-user.target
