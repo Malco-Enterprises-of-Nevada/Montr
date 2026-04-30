@@ -131,17 +131,46 @@ Each GitHub release attaches a `montr-client_<version>_arm64.deb` built for 64-b
 URL=$(curl -s https://api.github.com/repos/Malco-Enterprises-of-Nevada/Montr/releases/latest \
   | grep browser_download_url | grep '_arm64\.deb' | cut -d'"' -f4)
 curl -fsSL -o /tmp/montr-client.deb "$URL"
-sudo apt install -y libmpv-dev file
-sudo dpkg -i /tmp/montr-client.deb
-sudo vim /etc/montr-client/config.toml   # set server.url and client.name
+sudo apt update
+sudo dpkg -i /tmp/montr-client.deb || sudo apt-get install -f -y
+sudo vim /etc/montr-client/config.toml   # set server.url, server.api_key, client.name
 sudo systemctl restart montr-client
 ```
 
+The package's `Depends:` pulls in `mpv` (and transitively `libmpv2`); if `dpkg -i`
+warns about unmet deps, `apt-get install -f -y` resolves them. Postinst auto-detects
+the auto-login user (uid ≥1000), runs the service as them, and writes a drop-in at
+`/etc/systemd/system/montr-client.service.d/00-kiosk-user.conf` with the right
+Wayland/X11 environment, so kiosk-mode displays Just Work on first boot. On
+headless installs without an interactive user, postinst falls back to creating
+the system `montr` user (the historical behaviour).
+
+Postinst also generates a unique `client.id` UUID per install. The Montr server
+keys clients on `id`, not `name`, so this prevents two Pis installed from the same
+.deb from colliding on the dashboard.
+
+> **`api_key` is required for media playback.** WebSocket registration succeeds
+> without it, but `GET /api/media/{id}/download` returns `401 Unauthorized` if the
+> server has `API_KEY_REQUIRED=true`. Set `[server] api_key` in `config.toml` to
+> the value of `MONTR_API_KEY` from `/opt/montr/.env` on the server host. If you
+> see `Download failed: ... 401 Unauthorized` repeated in journalctl, this is
+> almost certainly the cause.
+
 To reinstall or upgrade after a new release, repeat the same commands — `dpkg -i`
-on an already-installed package upgrades it in place. Subsequent binary-only
-updates are delivered by the built-in auto-updater (see below).
+on an already-installed package upgrades it in place. Operator edits to
+`config.toml` and `mpv.conf` are preserved across upgrades (both are `conffiles`).
+Subsequent binary-only updates are delivered by the built-in auto-updater (see below).
 
 An amd64 `.deb` is also attached for x86_64 Debian/Ubuntu machines.
+
+#### cloud-init quirk: re-triggering first-boot logic
+
+If you provisioned the SD card via `rpi-imager` and want to re-run cloud-init's
+`runcmd` on a card that's already booted (e.g. to pick up an updated `user-data`),
+**bumping `meta-data`'s `instance-id` is not enough**. rpi-imager seeds the
+instance-id into `cmdline.txt` as `ds=nocloud;i=<id>`, and the kernel cmdline
+takes precedence. Change the `i=...` token in `cmdline.txt` (or remove it) so
+cloud-init sees a fresh instance and re-runs first-boot logic.
 
 ### Client Auto-Update
 
