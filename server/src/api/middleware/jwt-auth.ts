@@ -11,7 +11,16 @@ import { config } from '../../config/config';
 import { UserRole } from '../../database/types';
 import { errorResponse, ErrorCode } from './error-handler';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'montr-default-secret-change-in-production';
+// Fail fast in production: never fall back to a shared, publicly-known default
+// secret (it would let anyone forge tokens). A dev-only placeholder is allowed
+// outside production so local runs/tests don't require configuration.
+const JWT_SECRET: string = (() => {
+  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET is required in production');
+  }
+  return 'montr-dev-only-insecure-secret';
+})();
 const JWT_EXPIRY = process.env.JWT_EXPIRY || '24h';
 
 export interface JwtPayload {

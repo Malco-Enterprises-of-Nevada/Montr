@@ -93,6 +93,17 @@ router.post(
   '/setup',
   validateBody(createUserSchema),
   asyncHandler(async (req: Request, res: Response) => {
+    // The 0-user bootstrap path also makes requireAuth pass through, so the
+    // setup endpoint is the riskiest surface in that state. Keep it disabled
+    // unless explicitly enabled for the initial first-admin bootstrap.
+    if (process.env.AUTH_SETUP_ENABLED !== 'true') {
+      throw new AppError(
+        ErrorCode.FORBIDDEN,
+        'Setup is disabled. Set AUTH_SETUP_ENABLED=true to create the first admin.',
+        403
+      );
+    }
+
     const db = await getDatabase();
     const userCount = await db.getUserCount();
 
