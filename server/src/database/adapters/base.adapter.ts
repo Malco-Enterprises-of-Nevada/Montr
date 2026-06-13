@@ -287,9 +287,13 @@ export interface DatabaseAdapter {
   getUserById(id: number): Promise<User | null>;
   getUserByUsername(username: string): Promise<User | null>;
   getUserByEmail(email: string): Promise<User | null>;
+  /** Look up a user by their bound Entra `oid` (SSO primary identity key). */
+  getUserByEntraOid(entraOid: string): Promise<User | null>;
   getAllUsers(): Promise<User[]>;
   deleteUser(id: number): Promise<void>;
   updateUser(id: number, input: UpdateUserInput): Promise<User>;
   updateUserPassword(id: number, passwordHash: string): Promise<void>;
+  /** Bind an Entra `oid` to an existing user (first-login email match). */
+  setUserEntraOid(id: number, entraOid: string): Promise<void>;
   getUserCount(): Promise<number>;
 }

@@ -49,6 +49,15 @@ jest.mock('../../../src/config/config', () => ({
       staleTimeout: 300000,
       heartbeatTimeout: 60000,
     },
+    auth: {
+      entra: {
+        enabled: false,
+        allowedDomains: ['budgetlasvegas.com'],
+        stateSecret: 'test-secret',
+        jwtExpiry: '1h',
+      },
+      localLoginEnabled: true,
+    },
   },
 }));
 
@@ -100,7 +109,9 @@ describe('MontrServer', () => {
         const cb = args.find((a: any) => typeof a === 'function');
         if (cb) cb();
       }),
-      close: jest.fn((cb: any) => { if (cb) cb(); }),
+      close: jest.fn((cb: any) => {
+        if (cb) cb();
+      }),
       on: jest.fn(),
       address: jest.fn().mockReturnValue({ port: 3000, address: '0.0.0.0' }),
     } as any);
@@ -199,12 +210,8 @@ describe('MontrServer', () => {
       );
       expect(mockLogger.info).toHaveBeenCalledWith('Environment: test');
       expect(mockLogger.info).toHaveBeenCalledWith('Database type: sqlite');
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining('Health check:')
-      );
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining('WebSocket endpoint:')
-      );
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('Health check:'));
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('WebSocket endpoint:'));
     }, 10000);
 
     it('should handle database connection errors', async () => {
@@ -213,10 +220,7 @@ describe('MontrServer', () => {
       (getDatabase as jest.Mock).mockRejectedValue(new Error('Database connection failed'));
 
       await expect(server.start()).rejects.toThrow('Database connection failed');
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        'Failed to start server:',
-        expect.any(Error)
-      );
+      expect(mockLogger.error).toHaveBeenCalledWith('Failed to start server:', expect.any(Error));
     }, 10000);
 
     it('should handle port already in use error', async () => {

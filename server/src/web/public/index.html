@@ -17,6 +17,12 @@
                 <h1>Montr</h1>
                 <p>Media Playlist System</p>
             </div>
+            <!-- Sign in with Microsoft (Entra SSO) — shown only when SSO is configured -->
+            <button id="ssoLoginBtn" type="button" class="btn btn-primary btn-block" style="display: none;">
+                Sign in with Microsoft
+            </button>
+            <div id="ssoDivider" class="auth-divider" style="display: none;"><span>or</span></div>
+            <div id="ssoError" class="auth-error" style="display: none;"></div>
             <form id="loginForm">
                 <div class="form-group">
                     <label for="loginUsername">Username</label>

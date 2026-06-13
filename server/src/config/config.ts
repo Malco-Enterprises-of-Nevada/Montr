@@ -92,6 +92,30 @@ export interface Config {
   content: {
     requireMediaApproval: boolean;
   };
+
+  // Authentication configuration (Microsoft Entra ID SSO + local break-glass)
+  auth: {
+    entra: {
+      /** Routes mount only when an Entra client id is set (inert-by-default). */
+      enabled: boolean;
+      tenantId?: string;
+      clientId?: string;
+      clientSecret?: string;
+      redirectUri?: string;
+      postLogoutRedirectUri?: string;
+      allowedDomains: string[];
+      /** Signing secret for the stateless PKCE-state cookie (distinct from the JWT bearer secret). */
+      stateSecret: string;
+      /** Lifetime of an SSO-minted JWT (short, for offboarding — SSO_MASTER_PLAN.md §G). */
+      jwtExpiry: string;
+    };
+    /**
+     * Local password login. Fails OPEN (stays enabled) until an operator both
+     * sets ENTRA_CLIENT_ID and explicitly sets AUTH_LOCAL_ENABLED=false — this
+     * prevents a prod lockout when SSO env isn't fully wired yet (§D).
+     */
+    localLoginEnabled: boolean;
+  };
 }
 
 /**
@@ -196,6 +220,32 @@ function loadConfig(): Config {
 
     content: {
       requireMediaApproval: process.env.REQUIRE_MEDIA_APPROVAL === 'true',
+    },
+
+    auth: {
+      entra: {
+        // Inert-by-default: mount Entra routes only when a client id is present
+        // (and SSO not explicitly switched off). Matches the fleet gate.
+        enabled: process.env.ENTRA_SSO_ENABLED !== 'false' && Boolean(process.env.ENTRA_CLIENT_ID),
+        tenantId: process.env.ENTRA_TENANT_ID,
+        clientId: process.env.ENTRA_CLIENT_ID,
+        clientSecret: process.env.ENTRA_CLIENT_SECRET,
+        redirectUri: process.env.ENTRA_REDIRECT_URI,
+        postLogoutRedirectUri: process.env.ENTRA_POST_LOGOUT_REDIRECT_URI || process.env.BASE_URL,
+        allowedDomains: (process.env.ENTRA_ALLOWED_DOMAINS || 'budgetlasvegas.com')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+        // The stateless PKCE-state cookie is signed with its own secret; fall
+        // back to JWT_SECRET so a single secret works in simple deployments.
+        stateSecret:
+          process.env.ENTRA_STATE_SECRET ||
+          process.env.JWT_SECRET ||
+          'montr-dev-only-insecure-secret',
+        jwtExpiry: process.env.SSO_JWT_EXPIRY || '1h',
+      },
+      // Fail OPEN: on unless explicitly turned off AND SSO is actually configured.
+      localLoginEnabled: process.env.AUTH_LOCAL_ENABLED !== 'false' || !process.env.ENTRA_CLIENT_ID,
     },
   };
 

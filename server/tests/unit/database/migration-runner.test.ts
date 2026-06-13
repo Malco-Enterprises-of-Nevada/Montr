@@ -13,7 +13,10 @@ describe('MigrationRunner', () => {
   let testDir: string;
 
   beforeEach(async () => {
-    testDir = path.join('/tmp', `montr-migration-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
+    testDir = path.join(
+      '/tmp',
+      `montr-migration-test-${Date.now()}-${Math.random().toString(36).substring(7)}`
+    );
     fs.mkdirSync(testDir, { recursive: true });
     adapter = new SQLiteAdapter(path.join(testDir, 'test.db'));
     await adapter.connect(); // This runs migrations automatically
@@ -35,7 +38,7 @@ describe('MigrationRunner', () => {
   it('should record applied migration', async () => {
     const executor = adapter.getMigrationExecutor();
     const rows = await executor.querySql!<{ version: string }>(
-      'SELECT version FROM schema_migrations',
+      'SELECT version FROM schema_migrations'
     );
     expect(rows.length).toBeGreaterThanOrEqual(1);
     expect(rows[0].version).toBe('1.0.0');
@@ -43,7 +46,25 @@ describe('MigrationRunner', () => {
 
   it('should create all expected tables', async () => {
     const executor = adapter.getMigrationExecutor();
-    for (const table of ['media_files', 'playlists', 'playlist_items', 'clients', 'client_status', 'system_state', 'client_groups', 'client_group_members', 'schedules', 'client_playlists', 'playback_logs', 'notification_rules', 'notification_history', 'approval_logs', 'users', 'client_telemetry', 'client_log_events']) {
+    for (const table of [
+      'media_files',
+      'playlists',
+      'playlist_items',
+      'clients',
+      'client_status',
+      'system_state',
+      'client_groups',
+      'client_group_members',
+      'schedules',
+      'client_playlists',
+      'playback_logs',
+      'notification_rules',
+      'notification_history',
+      'approval_logs',
+      'users',
+      'client_telemetry',
+      'client_log_events',
+    ]) {
       const exists = await executor.tableExists(table);
       expect(exists).toBe(true);
     }
@@ -52,10 +73,10 @@ describe('MigrationRunner', () => {
   it('should update schema_version in system_state', async () => {
     const executor = adapter.getMigrationExecutor();
     const rows = await executor.querySql!<{ value: string }>(
-      "SELECT value FROM system_state WHERE key = 'schema_version'",
+      "SELECT value FROM system_state WHERE key = 'schema_version'"
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0].value).toBe('2.5.0');
+    expect(rows[0].value).toBe('2.6.0');
   });
 
   it('should not re-run already applied migrations', async () => {
@@ -65,10 +86,10 @@ describe('MigrationRunner', () => {
     await runner.run(); // Should not throw
 
     const rows = await executor.querySql!<{ version: string }>(
-      'SELECT version FROM schema_migrations',
+      'SELECT version FROM schema_migrations'
     );
     // Should still have all applied migrations (001 through the latest)
-    expect(rows).toHaveLength(18);
+    expect(rows).toHaveLength(19);
   });
 
   it('should report migration status', async () => {
@@ -96,9 +117,9 @@ describe('MigrationRunner', () => {
     // Order by rowid so we read insertion order, not the lexicographic order
     // SQLite would otherwise use from the unique index on `version`.
     const rows = await executor.querySql!<{ version: string }>(
-      'SELECT version FROM schema_migrations ORDER BY rowid',
+      'SELECT version FROM schema_migrations ORDER BY rowid'
     );
-    expect(rows).toHaveLength(18);
+    expect(rows).toHaveLength(19);
     expect(rows[0].version).toBe('1.0.0');
     expect(rows[1].version).toBe('1.1.0');
     expect(rows[2].version).toBe('1.2.0');
