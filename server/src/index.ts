@@ -1,5 +1,6 @@
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import path from 'path';
 import fs from 'fs';
@@ -22,6 +23,7 @@ import telemetryRoutes from './api/routes/telemetry.routes';
 import notificationRoutes from './api/routes/notification.routes';
 import adminLogsRoutes from './api/routes/admin-logs.routes';
 import authRoutes from './api/routes/auth.routes';
+import { createMontrEntraRouter } from './api/routes/entra.routes';
 import { requireAuth } from './api/middleware/jwt-auth';
 import { webSocketServer } from './websocket/server';
 import { scheduleService } from './services/schedule.service';
@@ -93,6 +95,10 @@ class MontrServer {
    * Configures Express middleware
    */
   private configureMiddleware(): void {
+    // Behind Caddy + Cloudflare: trust the first proxy hop so req.protocol /
+    // secure-cookie / req.ip reflect the real client, not the proxy.
+    this.app.set('trust proxy', 1);
+
     // Security middleware - configure helmet to allow inline scripts for web UI
     this.app.use(
       helmet({
@@ -120,6 +126,9 @@ class MontrServer {
     this.app.use(
       express.urlencoded({ extended: true, limit: `${config.storage.maxUploadSizeMB}mb` })
     );
+
+    // Cookie parsing — required by the Entra signed-state cookie (stateless PKCE).
+    this.app.use(cookieParser());
 
     // Serve static files from web/public directory
     const publicPath = path.join(__dirname, 'web', 'public');
@@ -173,6 +182,10 @@ class MontrServer {
             1,
             Math.min(10, parseInt(process.env.UI_MEDIA_UPLOAD_CONCURRENCY || '2', 10))
           ),
+          // Drives the login screen: show the "Sign in with Microsoft" button
+          // and/or the local password form.
+          ssoEnabled: config.auth.entra.enabled,
+          localLoginEnabled: config.auth.localLoginEnabled,
         })
       );
     });
@@ -195,6 +208,14 @@ class MontrServer {
     this.app.use('/api/telemetry', requireAuth(), telemetryRoutes);
     this.app.use('/api/notifications', requireAuth(), notificationRoutes);
     this.app.use('/api/admin/logs', requireAuth(), adminLogsRoutes);
+
+    // Microsoft Entra SSO routes — mounted only when SSO is configured
+    // (inert-by-default). Mounted before authRoutes so /api/auth/microsoft/*
+    // resolves to the Entra router, not the user-management routes.
+    if (config.auth.entra.enabled) {
+      this.app.use('/api/auth/microsoft', createMontrEntraRouter());
+      this.logger.info('Microsoft Entra SSO enabled at /api/auth/microsoft');
+    }
 
     // Auth routes (no API key required)
     this.app.use('/api/auth', authRoutes);

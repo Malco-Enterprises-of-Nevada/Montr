@@ -504,6 +504,12 @@ export interface User {
   password_hash: string;
   role: UserRole;
   created_at: string;
+  /**
+   * Microsoft Entra ID object id (`oid`), bound on first successful SSO login.
+   * NULL for local-only accounts. `oid` is the stable primary identity key for
+   * SSO (UPNs/emails are mutable/recyclable) — see SSO_MASTER_PLAN.md §B(3).
+   */
+  entra_oid?: string | null;
 }
 
 export interface CreateUserInput {

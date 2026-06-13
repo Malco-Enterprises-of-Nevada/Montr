@@ -17,6 +17,10 @@ const auth = {
     user: null, // { id, username, email, role }
 };
 
+// Error code carried back from a failed SSO round-trip (via the URL fragment),
+// surfaced on the login screen once it renders.
+let pendingSsoError = null;
+
 // Auto-refresh state
 let autoRefreshIntervalId = null;
 
@@ -4042,6 +4046,58 @@ function initClientControlModal() {
 
 // ===== Authentication =====
 
+// Consume an Entra SSO handoff from the URL fragment. The server mints Montr's
+// JWT and redirects to `/#sso_token=<jwt>` — the token rides in the fragment so
+// it never reaches the server access log / Cloudflare. We persist it and strip
+// the fragment from the address bar + history immediately.
+function consumeSsoFragment() {
+    if (!window.location.hash) return;
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const ssoToken = params.get('sso_token');
+    const ssoError = params.get('sso_error');
+
+    if (ssoToken) {
+        auth.token = ssoToken;
+        localStorage.setItem('montr_token', ssoToken);
+    }
+    if (ssoError) {
+        pendingSsoError = ssoError;
+    }
+    if (ssoToken || ssoError) {
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+}
+
+// Wire the "Sign in with Microsoft" button and toggle login-screen elements to
+// match the server's SSO/local-login configuration (from /api/ui-config).
+function initSsoLogin() {
+    const btn = document.getElementById('ssoLoginBtn');
+    const divider = document.getElementById('ssoDivider');
+    const loginForm = document.getElementById('loginForm');
+    const ssoErrorEl = document.getElementById('ssoError');
+
+    if (btn) {
+        btn.addEventListener('click', () => {
+            window.location.href = API_BASE + '/auth/microsoft/login';
+        });
+    }
+
+    const ssoOn = !!UI_CONFIG.ssoEnabled;
+    const localOn = UI_CONFIG.localLoginEnabled !== false; // default on
+
+    if (btn) btn.style.display = ssoOn ? '' : 'none';
+    if (divider) divider.style.display = ssoOn && localOn ? '' : 'none';
+    if (loginForm) loginForm.style.display = localOn ? '' : 'none';
+
+    if (pendingSsoError && ssoErrorEl) {
+        ssoErrorEl.textContent =
+            pendingSsoError === 'denied'
+                ? 'Your Microsoft account is not permitted to sign in.'
+                : 'Microsoft sign-in failed. Please try again or use a local account.';
+        ssoErrorEl.style.display = 'block';
+    }
+}
+
 function showAuthScreen(type) {
     document.body.classList.add('auth-active');
     document.getElementById('login-view').style.display = type === 'login' ? '' : 'none';
@@ -4768,6 +4824,10 @@ function initAdminResetPasswordModal() {
 async function init() {
     console.log('Initializing Montr Web UI...');
 
+    // Pick up an SSO token from the URL fragment before anything else, so a
+    // post-login redirect lands authenticated on this same load.
+    consumeSsoFragment();
+
     // Load UI config from server
     try {
         const configResp = await fetch(API_BASE + '/ui-config');
@@ -4783,6 +4843,7 @@ async function init() {
 
     // Initialize auth forms (always needed)
     initAuthForms();
+    initSsoLogin();
     initUserMenu();
     initChangePasswordModal();
 

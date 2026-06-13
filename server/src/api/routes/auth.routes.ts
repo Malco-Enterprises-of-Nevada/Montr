@@ -11,6 +11,7 @@ import { generateToken, requireAuth, requireRole, JwtPayload } from '../middlewa
 import { UserPublic, UserRole } from '../../database/types';
 import { z } from 'zod';
 import { getLogger } from '../../utils/logger';
+import { config } from '../../config/config';
 
 const logger = getLogger();
 const router = Router();
@@ -69,6 +70,16 @@ router.post(
   '/login',
   validateBody(loginSchema),
   asyncHandler(async (req: Request, res: Response) => {
+    // Break-glass gate: once SSO is verified in prod, AUTH_LOCAL_ENABLED=false
+    // disables password login. Fails OPEN until SSO is configured (§D).
+    if (!config.auth.localLoginEnabled) {
+      throw new AppError(
+        ErrorCode.FORBIDDEN,
+        'Local password login is disabled. Sign in with Microsoft.',
+        403
+      );
+    }
+
     const { username, password } = req.body as { username: string; password: string };
 
     const db = await getDatabase();
@@ -79,7 +90,16 @@ router.post(
     }
 
     const token = generateToken({ userId: user.id, username: user.username, role: user.role });
-    logger.info(`User logged in: ${user.username}`);
+    // A local login while SSO is enabled is a break-glass event — emit a fixed
+    // event name so the Loki rule / auth dashboard can alert on it (§D).
+    if (config.auth.entra.enabled) {
+      logger.warn('Break-glass local login used', {
+        event: 'BREAK_GLASS_LOGIN',
+        username: user.username,
+      });
+    } else {
+      logger.info(`User logged in: ${user.username}`);
+    }
 
     res.json(successResponse({ token, user: toPublicUser(user) }));
   })

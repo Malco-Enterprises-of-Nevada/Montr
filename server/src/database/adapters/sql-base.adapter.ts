@@ -1853,6 +1853,19 @@ export abstract class SqlBaseAdapter implements DatabaseAdapter {
     ]);
   }
 
+  async getUserByEntraOid(entraOid: string): Promise<User | null> {
+    return this.rawQueryOne<User>(`SELECT * FROM users WHERE entra_oid = ${this.placeholder(1)}`, [
+      entraOid,
+    ]);
+  }
+
+  async setUserEntraOid(id: number, entraOid: string): Promise<void> {
+    await this.rawExecute(
+      `UPDATE users SET entra_oid = ${this.placeholder(1)} WHERE id = ${this.placeholder(2)}`,
+      [entraOid, id]
+    );
+  }
+
   async getAllUsers(): Promise<User[]> {
     return this.rawQuery<User>('SELECT * FROM users ORDER BY created_at DESC');
   }

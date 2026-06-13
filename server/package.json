@@ -27,9 +27,11 @@
   "license": "MIT",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1021.0",
+    "@azure/msal-node": "^3.5.0",
     "@types/mssql": "^9.1.11",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.4.1",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "cron-parser": "^5.5.0",
     "date-holidays": "^3.27.0",
@@ -51,6 +53,7 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/cookie-parser": "^1.4.9",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/form-data": "^2.2.1",

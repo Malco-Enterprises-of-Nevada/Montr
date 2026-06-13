@@ -22,6 +22,7 @@ import { migration as m015 } from './015_subtitle_tracks';
 import { migration as m016 } from './016_thumbnail_jobs';
 import { migration as m017 } from './017_upload_completion_jobs';
 import { migration as m018 } from './018_playback_quality';
+import { migration as m019 } from './019_add_entra_oid';
 
 export const migrations: Migration[] = [
   m001,
@@ -42,4 +43,5 @@ export const migrations: Migration[] = [
   m016,
   m017,
   m018,
+  m019,
 ];

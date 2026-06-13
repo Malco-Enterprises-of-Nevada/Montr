@@ -30,11 +30,13 @@ export interface JwtPayload {
 }
 
 /**
- * Generates a JWT token for a user
+ * Generates a JWT token for a user.
+ * @param expiresIn optional override (e.g. '1h' for short-lived SSO tokens —
+ *   SSO_MASTER_PLAN.md §G); defaults to JWT_EXPIRY (24h) for local logins.
  */
-export function generateToken(payload: JwtPayload): string {
+export function generateToken(payload: JwtPayload, expiresIn?: string): string {
   return jwt.sign(payload, JWT_SECRET, {
-    expiresIn: JWT_EXPIRY as string & { __brand: 'StringValue' },
+    expiresIn: (expiresIn || JWT_EXPIRY) as string & { __brand: 'StringValue' },
   } as jwt.SignOptions);
 }
 

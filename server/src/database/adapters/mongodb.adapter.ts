@@ -1610,6 +1610,15 @@ export class MongoDBAdapter implements DatabaseAdapter {
     return this.docToObj<User>(doc);
   }
 
+  async getUserByEntraOid(entraOid: string): Promise<User | null> {
+    const doc = await this.col('users').findOne({ entra_oid: entraOid });
+    return this.docToObj<User>(doc);
+  }
+
+  async setUserEntraOid(id: number, entraOid: string): Promise<void> {
+    await this.col('users').updateOne({ id }, { $set: { entra_oid: entraOid } });
+  }
+
   async getAllUsers(): Promise<User[]> {
     const docs = await this.col('users').find().sort({ created_at: -1 }).toArray();
     return docs.map((d) => this.docToObj<User>(d)!);
