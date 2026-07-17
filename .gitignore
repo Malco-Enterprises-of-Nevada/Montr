@@ -66,3 +66,7 @@ scripts/packaging/**/build/
 # Media files (local testing)
 test-media/*
 uploads/*
+
+# Local Claude Code state + build output
+.claude/
+build/
