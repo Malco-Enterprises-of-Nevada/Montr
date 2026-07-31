@@ -58,6 +58,12 @@ impl HttpClient {
         ca_cert_path: Option<&Path>,
         tls_skip_verify: bool,
     ) -> Result<Self> {
+        // Every request URL is built as `{server_url}/api/...`, so a trailing
+        // slash in the configured URL yields `//api/...` — a path the server's
+        // route mounting does not match (it 404s). Normalize here so the
+        // config can be written either way.
+        let server_url = server_url.trim_end_matches('/').to_string();
+
         // Restrict redirects to the configured server host. The client only
         // ever fetches resources owned by `server_url`, so a cross-host
         // redirect would either be a server misconfiguration or an attempt to
@@ -649,6 +655,40 @@ mod tests {
         let server_url = "http://192.168.1.100:3000".to_string();
         let client = HttpClient::new(server_url.clone(), None, false).unwrap();
         assert_eq!(client.server_url, server_url);
+    }
+
+    #[test]
+    fn test_http_client_trims_trailing_slash() {
+        let client =
+            HttpClient::new("http://192.168.1.100:3000/".to_string(), None, false).unwrap();
+        assert_eq!(client.server_url, "http://192.168.1.100:3000");
+    }
+
+    #[tokio::test]
+    async fn test_download_media_with_trailing_slash_server_url() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/api/media/5/download")
+            .with_status(200)
+            .with_body(b"data")
+            .create_async()
+            .await;
+
+        // A trailing slash in the configured URL must not produce //api/...
+        let client = HttpClient::new(format!("{}/", server.url()), None, false).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("out.bin");
+        let options = DownloadOptions {
+            show_progress: false,
+            resume: false,
+            timeout_secs: 5,
+            max_retries: 1,
+            api_key: None,
+        };
+
+        client.download_media(5, &dest, options).await.unwrap();
+        mock.assert_async().await;
+        assert_eq!(std::fs::read(&dest).unwrap(), b"data");
     }
 
     #[tokio::test]

@@ -23,6 +23,7 @@ import notificationRoutes from './api/routes/notification.routes';
 import adminLogsRoutes from './api/routes/admin-logs.routes';
 import authRoutes from './api/routes/auth.routes';
 import { requireAuth } from './api/middleware/jwt-auth';
+import { normalizePath } from './api/middleware/normalize-path';
 import { webSocketServer } from './websocket/server';
 import { scheduleService } from './services/schedule.service';
 import { notificationService } from './services/notification.service';
@@ -93,6 +94,12 @@ class MontrServer {
    * Configures Express middleware
    */
   private configureMiddleware(): void {
+    // Collapse duplicate slashes (e.g. //api/media/1/download) before any
+    // routing. Clients with a trailing slash in their configured server URL
+    // produce these, and Express route mounts don't match them — every
+    // download would otherwise 404.
+    this.app.use(normalizePath());
+
     // Security middleware - configure helmet to allow inline scripts for web UI
     this.app.use(
       helmet({
