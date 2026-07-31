@@ -34,6 +34,11 @@ impl ConfigLoader {
 
         let mut config: Config = toml::from_str(&config_str)?;
 
+        // Normalize the server URL: request URLs are built by concatenating
+        // `/api/...` onto it, and a trailing slash would produce `//api/...`
+        // paths the server 404s on.
+        config.server.url = config.server.url.trim_end_matches('/').to_string();
+
         // Store the config path for later (UUID persistence)
         config.config_path = Some(config_path.clone());
 
@@ -52,7 +57,8 @@ impl ConfigLoader {
     /// Apply CLI argument overrides to config
     pub fn apply_overrides(&self, config: &mut Config, args: &CliArgs) -> Result<()> {
         if let Some(ref server_url) = args.server_url {
-            config.server.url = server_url.clone();
+            // Same normalization as `load()` — see the trailing-slash note there.
+            config.server.url = server_url.trim_end_matches('/').to_string();
         }
 
         if let Some(ref client_name) = args.client_name {
@@ -493,6 +499,38 @@ log_file = "./client.log"
 
         // Should fail validation
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_config_trims_trailing_slash_from_server_url() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        let content = create_test_config_with_uuid()
+            .replace("http://localhost:3000", "http://localhost:3000/");
+        fs::write(&config_path, content).unwrap();
+
+        let loader = ConfigLoader::new(Some(config_path));
+        let config = loader.load().unwrap();
+
+        assert_eq!(config.server.url, "http://localhost:3000");
+    }
+
+    #[test]
+    fn test_cli_override_trims_trailing_slash_from_server_url() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        fs::write(&config_path, create_test_config_with_uuid()).unwrap();
+
+        let loader = ConfigLoader::new(Some(config_path));
+        let mut config = loader.load().unwrap();
+
+        let cli_args =
+            CliArgs::parse_from(&["montr-client", "--server-url", "http://192.168.1.200:4000/"]);
+        loader.apply_overrides(&mut config, &cli_args).unwrap();
+
+        assert_eq!(config.server.url, "http://192.168.1.200:4000");
     }
 
     #[test]
